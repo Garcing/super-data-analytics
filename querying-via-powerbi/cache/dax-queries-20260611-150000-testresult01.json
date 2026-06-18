@@ -1,0 +1,7 @@
+{
+  "artifactId": "c85590e6-770f-411f-a716-10d0147ad68b",
+  "maxRows": 5,
+  "daxQueries": [
+    "EVALUATE TOPN(1, ROW(\"test\", 1))"
+  ]
+}

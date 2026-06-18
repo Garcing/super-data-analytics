@@ -1,0 +1,114 @@
+# ============================================
+# GraphRAG 配置 — 唯一真相来源
+# 改字段/改关系只改这里，不改代码
+# ============================================
+
+feishu:
+  app_token: BHINbLiOKa4rXDsLTlQcRwuSn9c
+
+neo4j:
+  uri: bolt://localhost:7687
+  database: neo4j
+  # user/password 从 .env 读取
+
+embedding:
+  model: BAAI/bge-small-zh-v1.5
+  model_path: sync/models/bge-small-zh-v1.5
+  dimensions: 512
+
+# ============================================
+# 实体定义：每张飞书表 → 一个 Neo4j 标签
+# search_text 自动拼接所有字段：字段名：值。
+# vector_index 默认 true，改为 false 则跳过向量索引
+# ============================================
+entities:
+  业务线:
+    table_id: tbljp4PEWKQcjQzD
+    key_field: 业务线名称
+
+  业务板块:
+    table_id: tbl3LKdowDu3KLQm
+    key_field: 业务板块名称
+
+  业务小点:
+    table_id: tblmwx8jwrZVX49t
+    key_field: 业务小点名称
+
+  指标:
+    table_id: tblDiMrN7GaGVtpc
+    key_field: 指标名称
+
+  维度:
+    table_id: tblzgo2FcMG7eSwR
+    key_field: 维度名称
+
+  数据看板:
+    table_id: tblaOZqdUnySDDMG
+    key_field: 数据看板名称
+    vector_index: false
+
+  数据域:
+    table_id: tblJY0BfS8LAPTcf
+    key_field: 数据域名称
+    vector_index: false
+
+  表:
+    table_id: tbl6Ri6dTIwTWGch
+    key_field: 表名称
+
+# ============================================
+# 关系定义
+# ============================================
+relationships:
+  - type: 包含
+    from: 业务线
+    to: 业务板块
+    match:
+      source_field: 业务线名称
+      target_field: 业务线名称
+
+  - type: 包含
+    from: 业务板块
+    to: 业务小点
+    match:
+      source_field: 业务板块名称
+      target_field: 业务板块名称
+
+  - type: 涉及
+    from: 业务小点
+    to: 指标
+    match:
+      source_field: 指标名称
+      target_field: 指标名称
+
+  - type: 展示
+    from: 数据看板
+    to: 指标
+    match:
+      source_field: 数据看板名称
+      target_field: 数据看板名称
+
+  - type: 筛选
+    from: 维度
+    to: 指标
+    match:
+      source_field: 维度板块
+      target_field: 维度板块
+
+  - type: 包含
+    from: 数据域
+    to: 表
+    match:
+      source_field: 数据域主题
+      target_field: 数据域主题
+
+  - type: 关联
+    from: 表
+    to: 表
+    via:
+      table_id: tblhMmvHGmEh9MWx
+      from_field: 从表
+      to_field: 到表
+      properties:
+        - 关联类型
+        - 关联表达式

@@ -1,0 +1,19 @@
+{
+  "semantic-model-ids": [
+    {
+      "id": "c85590e6-770f-411f-a716-10d0147ad68b",
+      "name": "平台治理经营看板",
+      "is_default": true
+    },
+    {
+      "id": "3041d238-c8dc-4b8d-aff7-8c262c631b6c",
+      "name": "超级VIP经营看板",
+      "is_default": false
+    },
+    {
+      "id": "05a31944-8f4a-49d3-8168-62ce49da936d",
+      "name": "私域Agent项目",
+      "is_default": false
+    }
+  ]
+}

@@ -1,0 +1,338 @@
+/* ================================================================
+   Power BI Web Reports — Warm Parchment Theme
+   ================================================================ */
+
+/* ── CSS Custom Properties ──────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-primary: #faf7f2;
+  --bg-secondary: #ece5d8;
+  --bg-tertiary: #e2dacf;
+  --bg-card: #faf7f2;
+  --bg-card-hover: #ffffff;
+
+  /* Accents */
+  --accent-terracotta: #c45c3c;
+  --accent-forest: #2d5a4a;
+  --accent-gold: #d4a853;
+  --accent-sage: #8ba888;
+  --accent-rust: #a0522d;
+
+  /* Text */
+  --text-primary: #3d3630;
+  --text-secondary: #5c544b;
+  --text-tertiary: #7a7067;
+  --text-muted: #9e9589;
+
+  /* Borders */
+  --border-subtle: rgba(61, 54, 48, 0.08);
+  --border-medium: rgba(61, 54, 48, 0.15);
+  --border-strong: rgba(61, 54, 48, 0.25);
+
+  /* Importance */
+  --importance-high: #c45c3c;
+  --importance-medium: #d4a853;
+  --importance-low: #8ba888;
+
+  /* Chart palette */
+  --chart-1: #2d5a4a;
+  --chart-2: #c45c3c;
+  --chart-3: #d4a853;
+  --chart-4: #8ba888;
+  --chart-5: #a0522d;
+  --chart-6: #6b8e7d;
+  --chart-7: #d98a5c;
+}
+
+/* ── Tailwind Base ──────────────────────────────────────────── */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base Reset & Defaults ──────────────────────────────────── */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary font-sans;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-bold leading-tight;
+  }
+
+  a {
+    @apply text-accent-forest transition-colors duration-200;
+  }
+
+  a:hover {
+    @apply text-accent-terracotta;
+  }
+}
+
+/* ── Keyframes ──────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Component: Badges ──────────────────────────────────────── */
+@layer components {
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium tracking-wide uppercase;
+  }
+
+  .badge-importance-high {
+    @apply badge;
+    background-color: rgba(196, 92, 60, 0.12);
+    color: var(--importance-high);
+    border: 1px solid rgba(196, 92, 60, 0.2);
+  }
+
+  .badge-importance-medium {
+    @apply badge;
+    background-color: rgba(212, 168, 83, 0.12);
+    color: var(--importance-medium);
+    border: 1px solid rgba(212, 168, 83, 0.2);
+  }
+
+  .badge-importance-low {
+    @apply badge;
+    background-color: rgba(139, 168, 136, 0.12);
+    color: var(--importance-low);
+    border: 1px solid rgba(139, 168, 136, 0.2);
+  }
+
+  .badge-accent {
+    @apply badge;
+    background-color: rgba(45, 90, 74, 0.1);
+    color: var(--accent-forest);
+    border: 1px solid rgba(45, 90, 74, 0.15);
+  }
+
+  .badge-muted {
+    @apply badge;
+    background-color: rgba(61, 54, 48, 0.05);
+    color: var(--text-muted);
+    border: 1px solid var(--border-subtle);
+  }
+}
+
+/* ── Component: Cards ───────────────────────────────────────── */
+@layer components {
+  .card {
+    @apply bg-bg-card rounded-lg border transition-all duration-300;
+    border-color: var(--border-subtle);
+    box-shadow: 0 1px 2px rgba(61, 54, 48, 0.04), 0 4px 8px rgba(61, 54, 48, 0.04), 0 12px 24px rgba(61, 54, 48, 0.06);
+  }
+
+  .card:hover {
+    border-color: var(--border-medium);
+    box-shadow: 0 2px 4px rgba(61, 54, 48, 0.04), 0 8px 16px rgba(61, 54, 48, 0.06), 0 24px 48px rgba(61, 54, 48, 0.08);
+  }
+
+  .kpi-metric-card {
+    @apply rounded-lg border p-5 transition-all duration-300;
+    background-color: var(--bg-secondary);
+    border-color: var(--border-subtle);
+    animation-fill-mode: both;
+  }
+
+  .kpi-metric-card:hover {
+    border-color: var(--border-medium);
+    box-shadow: 0 4px 12px rgba(61, 54, 48, 0.06);
+  }
+
+  .kpi-metric-label {
+    @apply text-xs uppercase tracking-wider mb-2;
+    color: var(--text-muted);
+  }
+
+  .kpi-metric-value {
+    @apply text-2xl md:text-3xl font-display font-bold tabular-nums mb-1;
+    color: var(--text-primary);
+  }
+
+  .kpi-metric-trend {
+    @apply text-sm font-medium;
+  }
+}
+
+/* ── Component: Typography ──────────────────────────────────── */
+@layer components {
+  .heading-1 {
+    @apply text-4xl md:text-5xl font-display font-bold tracking-tight text-text-primary;
+  }
+
+  .heading-2 {
+    @apply text-2xl md:text-3xl font-display font-bold tracking-tight text-text-primary;
+  }
+
+  .heading-3 {
+    @apply text-xl md:text-2xl font-display font-semibold text-text-primary;
+  }
+
+  .body-large {
+    @apply text-lg leading-relaxed text-text-secondary;
+  }
+
+  .body-base {
+    @apply text-base leading-relaxed text-text-secondary;
+  }
+
+  .caption {
+    @apply text-sm text-text-muted font-mono;
+  }
+
+}
+
+/* ── Component: Buttons ─────────────────────────────────────── */
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-5 py-2.5 rounded-md text-sm font-medium transition-all duration-200;
+    background-color: var(--accent-forest);
+    color: #faf7f2;
+  }
+
+  .btn-primary:hover {
+    background-color: #234a3c;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(45, 90, 74, 0.3);
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium transition-all duration-200;
+    color: var(--text-secondary);
+  }
+
+  .btn-ghost:hover {
+    background-color: rgba(61, 54, 48, 0.05);
+    color: var(--text-primary);
+  }
+}
+
+/* ── Scrollbar styling ──────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-medium);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
+}
+
+/* ── Print Styles ───────────────────────────────────────────── */
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm 12mm;
+  }
+
+  body {
+    background: white !important;
+    color: #1a1a1a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide interactive elements */
+  .no-print,
+  button,
+  nav {
+    display: none !important;
+  }
+
+  /* Ensure cards print with borders */
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+    break-inside: avoid;
+  }
+
+  .kpi-metric-card {
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+    break-inside: avoid;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Ensure charts print in color */
+  svg, canvas {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+  }
+
+  /* Avoid breaking inside key sections */
+  section, article {
+    break-inside: avoid;
+  }
+
+  h1, h2, h3, h4 {
+    break-after: avoid;
+  }
+
+  /* Print background colors */
+  .badge {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* PDF export mode adjustments */
+  body.pdf-exporting {
+    background: white !important;
+  }
+
+  body.pdf-exporting .card {
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+  }
+
+  /* Footer for print */
+  .print-footer {
+    display: block !important;
+    text-align: center;
+    font-size: 10px;
+    color: #999;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+    margin-top: 24px;
+  }
+}
+
+/* ── Responsive adjustments ─────────────────────────────────── */
+@media (max-width: 640px) {
+  .heading-1 {
+    @apply text-3xl;
+  }
+
+  .heading-2 {
+    @apply text-xl;
+  }
+}

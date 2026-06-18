@@ -1,0 +1,9 @@
+{
+  "name": "image-report",
+  "private": true,
+  "type": "module",
+  "description": "调用 apimart gpt-image-2 生成图片报告，下载到本地并返回公网 URL",
+  "dependencies": {
+    "undici": "^8.4.1"
+  }
+}

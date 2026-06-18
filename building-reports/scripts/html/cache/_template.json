@@ -1,0 +1,47 @@
+{
+  "meta": {
+    "title": "示例报告标题",
+    "generated_at": "2026-04-15T10:00:00Z",
+    "model": "语义模型名称"
+  },
+  "summary": {
+    "overall": "整体结论概述，2-3 句话。列表页会截取前 100 字作为预览。",
+    "total_conclusions": 2,
+    "high_importance_count": 1,
+    "kpis": [
+      { "label": "核心指标", "value": "1,234", "trend": "up", "trend_value": "环比 +12%" },
+      { "label": "另一指标", "value": "56%", "trend": "down", "trend_value": "同比 -3%" }
+    ]
+  },
+  "conclusions": [
+    {
+      "id": 1,
+      "title": "结论一：柱状图示例",
+      "description": "详细描述这条结论。",
+      "data_support": "数据支撑说明。",
+      "importance": "high",
+      "chart_type": "bar",
+      "chart_data": {
+        "xKey": "name",
+        "yKey": "value",
+        "data": [
+          { "name": "A", "value": 100 },
+          { "name": "B", "value": 200 },
+          { "name": "C", "value": 150 }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "title": "结论二：折线图示例",
+      "description": "详细描述这条结论。",
+      "data_support": "数据支撑说明。",
+      "importance": "medium",
+      "chart_type": "line",
+      "chart_data": {
+        "x_labels": ["1月", "2月", "3月"],
+        "series": { "指标A": [100, 150, 200] }
+      }
+    }
+  ]
+}

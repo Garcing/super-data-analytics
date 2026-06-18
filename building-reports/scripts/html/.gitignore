@@ -1,0 +1,5 @@
+.vercel
+.env*.local
+
+# 本地报告缓存（生成的报告 JSON；正本在 Vercel Blob）
+cache/report-*.json

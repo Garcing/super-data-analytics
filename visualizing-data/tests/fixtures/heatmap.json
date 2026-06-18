@@ -1,0 +1,13 @@
+{
+  "type": "heatmap",
+  "title": "Cohort retention",
+  "subtitle": "Rows are cohorts, columns are weeks",
+  "data": [
+    { "cohort": "2026-05-01", "week": "W1", "retention": 0.62 },
+    { "cohort": "2026-05-01", "week": "W2", "retention": 0.44 },
+    { "cohort": "2026-05-08", "week": "W1", "retention": 0.59 },
+    { "cohort": "2026-05-08", "week": "W2", "retention": 0.41 }
+  ],
+  "encoding": { "x": "week", "y": "cohort", "value": "retention" },
+  "options": { "width": 900, "height": 560, "value_format": ".0%" }
+}

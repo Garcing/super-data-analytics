@@ -1,0 +1,8 @@
+{
+  "name": "powerbi-mcp",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@azure/identity": "^4.0.0"
+  }
+}

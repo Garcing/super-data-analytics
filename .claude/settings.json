@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(node -e \"import\\('./powerbi-client.mjs'\\).then\\(m => console.log\\('OK:', Object.keys\\(m\\)\\)\\)\")",
+      "Bash(node -e \"import\\('./powerbi-client.mjs'\\).then\\(m => { try { new m.PowerBIClient\\(\\) } catch\\(e\\) { console.log\\('PASS:', e.message.includes\\('Missing'\\)\\) } }\\)\")",
+      "Bash(node powerbi-client.mjs help)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(node powerbi-client.mjs schema)",
+      "Bash(node -e ' *)",
+      "Bash(node feishu-briefs.js read IGcQdtVdNo9mgTxGspPcSaMInTb)",
+      "Bash(node feishu-briefs.js create --title \"验证测试\" --file cache/create-验证测试-20260514-130000.md)",
+      "Bash(node feishu-briefs.js delete Zq84dzDJhoXQgyxaMjKcII3yn2d --password \"\")",
+      "Bash(cat)",
+      "Bash(node feishu-briefs.js create --title \"v2验证\" --file cache/create-v2test.md)",
+      "Bash(node feishu-briefs.js read FNaVd7Vbco1yhKx6Sa0cKhdFnff)",
+      "Bash(node feishu-briefs.js update FNaVd7Vbco1yhKx6Sa0cKhdFnff --file cache/update-v2test.md --drop)",
+      "Bash(node feishu-briefs.js delete FNaVd7Vbco1yhKx6Sa0cKhdFnff --password \"\")",
+      "Bash(node feishu-briefs.js delete RVD8d2T5MoBCKAxLLDgcaAhxneh --password \"\")",
+      "Bash(node feishu-briefs.js update RxRzdZrJNoLgwex3PwJcBxb3nAd --file cache/update-final.md --drop)",
+      "Bash(node feishu-briefs.js read RxRzdZrJNoLgwex3PwJcBxb3nAd)",
+      "Bash(node feishu-briefs.js delete RxRzdZrJNoLgwex3PwJcBxb3nAd --password \"\")",
+      "Bash(node feishu-briefs.js create --title \"MD格式测试\" --file cache/create-mdtest.md)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(lark-cli --help)",
+      "Bash(lark-cli bitable *)",
+      "Bash(lark-cli base *)",
+      "Bash(lark-cli schema *)",
+      "Bash(python -c \"import yaml; c=yaml.safe_load\\(open\\('c:/Users/Administrator/.agents/skills/super-data-analyst/retrieving-business-context/graph-config.yaml'\\)\\); print\\(len\\(c['entities']\\), 'entities,', len\\(c['relationships']\\), 'relationships'\\)\")",
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat\\(graphrag\\): config files and project scaffold *)",
+      "Bash(python -c \"from sync.feishu_reader import fetch_table_fields, fetch_table_records; fields = fetch_table_fields\\('BHINbLiOKa4rXDsLTlQcRwuSn9c', 'tbl3LKdowDu3KLQm'\\); print\\(f'{len\\(fields\\)} fields:', [f['name'] for f in fields]\\); records = fetch_table_records\\('BHINbLiOKa4rXDsLTlQcRwuSn9c', 'tbl3LKdowDu3KLQm', fields\\); print\\(f'{len\\(records\\)} records'\\); print\\(records[0]\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git commit *)",
+      "Bash(python -c \"from sync.graph_builder import build_nodes, build_relationships, clear_graph; print\\('graph_builder OK'\\)\")",
+      "Bash(python -c \"from sync.sync import load_config, load_env; load_env\\(\\); cfg = load_config\\(\\); print\\(f'{len\\(cfg[\\\\\"entities\\\\\"]\\)} entities'\\); print\\('sync OK'\\)\")",
+      "Bash(node -e \"const pkg = require\\('./node_modules/neo4j-driver/package.json'\\); console.log\\(pkg.version\\)\")"
+    ]
+  }
+}

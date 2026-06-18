@@ -1,0 +1,12 @@
+{
+  "type": "waterfall",
+  "title": "Revenue bridge",
+  "subtitle": "Start value plus signed component deltas",
+  "data": [
+    { "component": "Expansion", "delta": 80 },
+    { "component": "Churn", "delta": -30 },
+    { "component": "New", "delta": 45 }
+  ],
+  "encoding": { "label": "component", "delta": "delta" },
+  "options": { "start_label": "Start", "start_value": 300, "end_label": "End", "width": 960, "height": 560 }
+}

@@ -1,0 +1,12 @@
+{
+  "type": "bar",
+  "title": "各区域销售额",
+  "subtitle": "2026年6月，单位：万元，包含负值测试",
+  "data": [
+    { "region": "华东", "sales": 120 },
+    { "region": "华北", "sales": -35 },
+    { "region": "华南", "sales": 88 }
+  ],
+  "encoding": { "x": "region", "y": "sales" },
+  "options": { "sort": "desc", "value_labels": "auto", "width": 900, "height": 560 }
+}

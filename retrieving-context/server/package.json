@@ -1,0 +1,8 @@
+{
+  "name": "graphrag-query",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "neo4j-driver": "^5.0.0"
+  }
+}

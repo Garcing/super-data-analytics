@@ -1,0 +1,13 @@
+{
+  "type": "line",
+  "title": "Weekly active users",
+  "subtitle": "Last 8 weeks",
+  "data": [
+    { "week": "W1", "users": 1200 },
+    { "week": "W2", "users": 1320 },
+    { "week": "W3", "users": 1290 },
+    { "week": "W4", "users": 1480 }
+  ],
+  "encoding": { "x": "week", "y": "users" },
+  "options": { "width": 900, "height": 560 }
+}
