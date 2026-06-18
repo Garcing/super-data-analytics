@@ -46,7 +46,7 @@ streamlit run app.py
 
 ## 云部署（Streamlit Community Cloud）
 
-线上地址：**https://super-data-analysis.streamlit.app/**（每份报告直达链接 = `线上地址/<报告title>`，如 `…/区域销售分析`）
+线上地址：**https://super-data-analytics.streamlit.app/**（每份报告直达链接 = `线上地址/<报告title>`，如 `…/区域销售分析`）
 
 `scripts/streamlit/` 子目录经 `git subtree` 推成独立仓库 `Garcing/streamlit-reports` 的根，Streamlit Community Cloud 监听其 `main` 分支自动重新部署。
 

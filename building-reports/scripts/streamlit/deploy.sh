@@ -17,7 +17,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 PREFIX="building-reports/scripts/streamlit"
 REMOTE="streamlit-reports"
-URL="https://super-data-analysis.streamlit.app/"
+URL="https://super-data-analytics.streamlit.app/"
 TMP="_streamlit_deploy"
 
 # 清理可能残留的临时分支

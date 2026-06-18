@@ -5,7 +5,7 @@ description: 把分析结论做成可分享的 Streamlit 交互式报告（多�
 
 # Streamlit 报告（report → streamlit）
 
-把分析结论做成**交互式**分析报告，挂在线上看板里。一份报告 = `reports/` 下一个 `.py`，由你（agent）编写。Plotly 图表，结论驱动结构。线上看板：**https://super-data-analysis.streamlit.app/**
+把分析结论做成**交互式**分析报告，挂在线上看板里。一份报告 = `reports/` 下一个 `.py`，由你（agent）编写。Plotly 图表，结论驱动结构。线上看板：**https://super-data-analytics.streamlit.app/**
 
 ## 何时用 Streamlit 报告
 
@@ -28,7 +28,7 @@ META = {
 }
 ```
 
-- `title` 会同时作为该报告的 **URL 路径**，所以直达链接就是 `https://super-data-analysis.streamlit.app/<title>`（如 `…/区域销售分析`）。**避免 title 里出现空格和斜杠**。
+- `title` 会同时作为该报告的 **URL 路径**，所以直达链接就是 `https://super-data-analytics.streamlit.app/<title>`（如 `…/区域销售分析`）。**避免 title 里出现空格和斜杠**。
 - 把报告 `.py` 丢进 `reports/`（文件名不要以 `_` 开头）即自动进导航；主页会按 `group` 列出全部报告卡，无需手建。
 
 ## 报告 .py 标准结构（结论驱动）
@@ -135,7 +135,7 @@ C.conclusion_block("结论句。", actions=["行动1","行动2"])
    bash scripts/streamlit/deploy.sh
    ```
    脚本会自动 cd 到仓库根，subtree push 到 `Garcing/streamlit-reports`，Cloud 约 1-2 分钟自动重新部署
-5. 把**直达链接**发给用户：`https://super-data-analysis.streamlit.app/<报告title>`
+5. 把**直达链接**发给用户：`https://super-data-analytics.streamlit.app/<报告title>`
 
 ## 备注
 
