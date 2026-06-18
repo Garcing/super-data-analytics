@@ -27,3 +27,6 @@ skills/
 # OS
 .DS_Store
 Thumbs.db
+
+# deploy 临时分支同名目录防误提交
+_streamlit_deploy/
