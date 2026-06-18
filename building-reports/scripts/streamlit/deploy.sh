@@ -34,6 +34,15 @@ git push --force "$REMOTE" "$TMP:main"
 # 清理临时分支
 git branch -D "$TMP"
 
+# 清理 GCM（.NET System.CommandLine 库）可能在工作目录残留的 dotnet-suggest sentinel 文件。
+# 根因见 https://github.com/git-ecosystem/git-credential-manager/issues/505：
+# git push 触发的 git-credential-manager 偶尔会在 cwd 留下 <某目录>/system-commandline-sentinel-files/...
+# 精准匹配该子目录并删除，顺手清掉空壳父目录，保证 skill 跑完工作区干净。
+find . -maxdepth 3 -name "system-commandline-sentinel-files" -type d 2>/dev/null | while IFS= read -r d; do
+  rm -rf "$d"
+  rmdir "$(dirname "$d")" 2>/dev/null || true
+done
+
 echo ""
 echo "✓ 已推送 $PREFIX → $REMOTE:main"
 echo "✓ Streamlit Cloud 正在重新部署（约 1-2 分钟）"
