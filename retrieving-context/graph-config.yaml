@@ -13,7 +13,7 @@ neo4j:
 
 embedding:
   model: BAAI/bge-small-zh-v1.5
-  model_path: sync/models/bge-small-zh-v1.5
+  model_path: scripts/pipeline/models/bge-small-zh-v1.5
   dimensions: 512
 
 # ============================================

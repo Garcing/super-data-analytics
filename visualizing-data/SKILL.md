@@ -1,6 +1,9 @@
 ---
 name: visualizing-data
 description: 当用户或工作流需要从结构化数据生成确定性的单图图表、PNG/SVG、静态图表素材、报告插图，或需要数值与标签准确可复现的数据可视化时使用。数值、标签或图表资产必须准确时，优先使用本技能而不是 AI 生图。
+metadata: 
+  skill-series: super-data-analytics
+  chinese-name: 可视化数据
 ---
 
 # Visualizing Data

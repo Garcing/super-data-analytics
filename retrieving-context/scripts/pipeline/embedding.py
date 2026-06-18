@@ -33,8 +33,8 @@ _SKIP_PROPS = frozenset({
     "embedding_updated_at",
 })
 
-# Default YAML config path (relative to this file's parent)
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "graph-config.yaml"
+# scripts/pipeline/embedding.py → project root is two levels up
+_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "graph-config.yaml"
 
 
 # ---------------------------------------------------------------------------

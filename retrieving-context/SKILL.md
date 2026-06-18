@@ -1,9 +1,12 @@
 ---
 name: retrieving-context
 description: 检索业务知识图谱，回答业务概念、指标定义、数据来源、业务关系等问题。触发词：业务上下文、指标含义、哪张表、数据来源、业务板块
+metadata: 
+  skill-series: super-data-analytics
+  chinese-name: 检索业务知识
 ---
 
-# 业务知识检索（GraphRAG）
+# 业务知识检索
 
 通过本地 Neo4j 图数据库 + 向量语义检索，获取业务上下文。
 
@@ -18,19 +21,19 @@ description: 检索业务知识图谱，回答业务概念、指标定义、数�
 ## 前置条件
 
 - Neo4j 本地运行 (`bolt://localhost:7687`)
-- 数据已同步（运行过 `node server/sync.js`）
+- 数据已同步（运行过 `node scripts/sync.js`）
 
 ## CLI 命令
 
 **语义检索模式**（问"是什么"、"去哪找"）：
 ```bash
-node server/query.js "用户问题" [--top-k 5] [--targets 表,指标]
+node scripts/query.js "用户问题" [--top-k 5] [--targets 表,指标]
 ```
 
 **Cypher 查询模式**（问"有几个"、"有哪些"、"属于XX的"）：
 ```bash
-node server/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 数量"
-node server/query.js --cypher "MATCH (d:\`数据域\`)-[:包含]->(t:\`表\`) WHERE d.\`数据域名称\` = 'dw_ops' RETURN t.\`表名称\`, t.\`表中文名称\`"
+node scripts/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 数量"
+node scripts/query.js --cypher "MATCH (d:\`数据域\`)-[:包含]->(t:\`表\`) WHERE d.\`数据域名称\` = 'dw_ops' RETURN t.\`表名称\`, t.\`表中文名称\`"
 ```
 
 参数：
@@ -43,8 +46,8 @@ node server/query.js --cypher "MATCH (d:\`数据域\`)-[:包含]->(t:\`表\`) WH
 
 ### 第一步：选择查询模式
 
-- **语义检索**（"X是什么意思"、"去哪找X"）→ `node server/query.js "问题"`
-- **结构化查询**（"有几个X"、"X下面有哪些Y"、"列出所有X"）→ `node server/query.js --cypher "MATCH ..."`
+- **语义检索**（"X是什么意思"、"去哪找X"）→ `node scripts/query.js "问题"`
+- **结构化查询**（"有几个X"、"X下面有哪些Y"、"列出所有X"）→ `node scripts/query.js --cypher "MATCH ..."`
 
 ### 第二步：语义检索模式 — 智能路由 targets
 
@@ -110,7 +113,7 @@ node server/query.js --cypher "MATCH (d:\`数据域\`)-[:包含]->(t:\`表\`) WH
 
 Python 解释器路径在 `.env` 的 `PYTHON_PATH` 中配置，sync.js 自动读取，无需关心 Python 环境。
 
-### `node server/sync.js`（无参数）— 全流程重建
+### `node scripts/sync.js`（无参数）— 全流程重建
 
 从零重建整个图数据库，按顺序执行三个阶段：
 1. **拉飞书数据**：9 张表全拉下来
@@ -119,33 +122,33 @@ Python 解释器路径在 `.env` 的 `PYTHON_PATH` 中配置，sync.js 自动读
 
 **使用场景**：飞书表结构有变化（加了新字段、新表、新关系），或想彻底重建。
 
-### `node server/sync.js --only graph` — 只建图
+### `node scripts/sync.js --only graph` — 只建图
 
 拉数据 + 建节点和关系，**不重建向量索引**。
 
 **使用场景**：飞书数据有增删改（比如新增了几个指标），但不需要重新生成 embedding。
 
-### `node server/sync.js --only embed` — 只重建向量
+### `node scripts/sync.js --only embed` — 只重建向量
 
 跳过拉数据和建图，在现有图上重新生成 search_text 和 embedding。已有 embedding 的节点默认跳过。
 
 **使用场景**：图结构没变，只想重建向量（比如换了 embedding 模型、调整了 search_text 逻辑）。
 
-### `node server/sync.js --force-embed` — 强制重建所有 embedding
+### `node scripts/sync.js --force-embed` — 强制重建所有 embedding
 
 全流程执行，且即使节点已有 embedding 也全部重新生成。
 
 **使用场景**：换了 embedding 模型，或需要全量重算。
 
-### `node server/sync.js --dry-run` — 预览模式
+### `node scripts/sync.js --dry-run` — 预览模式
 
 只拉飞书数据并打印统计（每张表多少条记录、多少字段），**不写入 Neo4j**。
 
 **使用场景**：验证飞书数据是否正常，确认数据量。
 
-### `node server/sync.js --download-model` — 下载模型
+### `node scripts/sync.js --download-model` — 下载模型
 
-把 embedding 模型下载到 `sync/models/` 本地目录，后续操作不联网。
+把 embedding 模型下载到 `scripts/pipeline/models/` 本地目录，后续操作不联网。
 
 **使用场景**：第一次搭建环境，或换了机器。
 

@@ -2,7 +2,7 @@
 name: aligning-requirements
 description: 对齐数据需求，明确分析需求的场景、目的、指标口径、维度和时间范围、交付形式，并且编排和调用合适的技能去完成；当对话内容涉及数据分析场景时触发，如查数问数/数据分析报告/数据播报/异动归因/业务洞察/了解数据指标、表、维度/数据可视化等等
 metadata: 
-  skill-series: super-data-analysis
+  skill-series: super-data-analytics
   chinese-name: 对齐数据需求
 ---
 

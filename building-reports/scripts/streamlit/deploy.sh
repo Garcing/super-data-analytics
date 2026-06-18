@@ -15,10 +15,6 @@ git subtree split --prefix="$PREFIX" -b "$TMP" # 子目录切出独立历史
 git push "$REMOTE" "$TMP:main"                 # fast-forward 推到远程 main
 git branch -D "$TMP"                           # 清理临时分支
 
-# 备注：git push 触发的 git-credential-manager 偶尔会在工作目录留下
-# <某目录>/system-commandline-sentinel-files/... 残留（GCM 已知问题 #505，无害）。
-# 如需清理：find . -maxdepth 3 -name system-commandline-sentinel-files -type d -exec rm -rf {} +
-
 echo ""
 echo "✓ 已推送 $PREFIX → $REMOTE:main"
 echo "✓ Streamlit Cloud 正在重新部署（约 1-2 分钟）"

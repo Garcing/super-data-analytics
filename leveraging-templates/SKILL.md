@@ -1,8 +1,8 @@
 ---
-name: leveraging-report-templates
+name: leveraging-templates
 description: 数据分析报告模板的全生命周期管理（列表/查询/增加/删除/修改）。模板存储在飞书个人文件夹中，通过 scripts/templates.js CLI 工具进行增删改查，报告模板分为数据播报、周期性报告、复盘性报告、专题分析报告；当用户提到"数据播报"、"参照/按照xxx报告模板"时使用此 skill
-metadata:
-  skill-series: super-data-analysis
+metadata: 
+  skill-series: super-data-analytics
   chinese-name: 调用报告模板
 ---
 

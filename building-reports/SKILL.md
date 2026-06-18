@@ -1,9 +1,12 @@
 ---
 name: building-reports
 description: 报告生成板块，支持 Web/PDF/PPT/图片多种报告格式
+metadata: 
+  skill-series: super-data-analytics
+  chinese-name: 构建数据报告
 ---
 
-# 生成洞察报告
+# 构建数据报告
 
 ## 概览
 

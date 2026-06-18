@@ -3,7 +3,7 @@
  * query.js — Node.js vector search + graph expansion CLI for GraphRAG
  *
  * Usage:
- *   node query.js "用户问题" [--top-k 5] [--targets 表,指标]
+ *   node scripts/query.js "用户问题" [--top-k 5] [--targets 表,指标]
  *
  * Flow:
  *   1. Encode question via Python embedding subprocess
@@ -13,16 +13,10 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import neo4j from "neo4j-driver";
 
-// ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PROJECT_ROOT = resolve(__dirname, "..");
+import { PROJECT_ROOT, SCRIPTS_DIR, loadEnv, pythonPath } from "./env.js";
 
 // ---------------------------------------------------------------------------
 // Internal properties to exclude from output
@@ -38,28 +32,6 @@ const INTERNAL_PROPS = new Set([
 // ---------------------------------------------------------------------------
 // 1. Config loading
 // ---------------------------------------------------------------------------
-
-/**
- * Simple KEY=VALUE .env parser (no dotenv dependency).
- */
-function loadEnv(envPath) {
-  const env = {};
-  try {
-    const content = readFileSync(envPath, "utf-8");
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eqIndex = trimmed.indexOf("=");
-      if (eqIndex === -1) continue;
-      const key = trimmed.slice(0, eqIndex).trim();
-      const value = trimmed.slice(eqIndex + 1).trim();
-      env[key] = value;
-    }
-  } catch {
-    console.error(`Warning: could not read ${envPath}`);
-  }
-  return env;
-}
 
 /**
  * Minimal YAML parser for graph-config.yaml.
@@ -195,18 +167,18 @@ function parseGraphConfig(configPath) {
  * Call Python embedding.py to encode text into a vector.
  * Returns a float array.
  */
-function encodeQuestion(text, modelPath, pythonPath) {
-  const scriptPath = join(PROJECT_ROOT, "sync", "embedding.py");
+function encodeQuestion(text, modelPath, pyPath) {
+  const scriptPath = join(SCRIPTS_DIR, "pipeline", "embedding.py");
   const absModelPath = resolve(PROJECT_ROOT, modelPath);
 
   console.error(`[query] Encoding question via Python...`);
-  console.error(`[query]   python: ${pythonPath}`);
+  console.error(`[query]   python: ${pyPath}`);
   console.error(`[query]   script: ${scriptPath}`);
   console.error(`[query]   model:  ${absModelPath}`);
 
   let stdout;
   try {
-    const buffer = execFileSync(pythonPath, [
+    const buffer = execFileSync(pyPath, [
       scriptPath,
       "encode",
       text,
@@ -463,8 +435,8 @@ function parseArgs(argv) {
 
   if (!question && !cypher) {
     console.error("Usage:");
-    console.error("  node query.js \"用户问题\" [--top-k 5] [--targets 表,指标]");
-    console.error("  node query.js --cypher \"MATCH ... RETURN ...\" [--params '{}']");
+    console.error("  node scripts/query.js \"用户问题\" [--top-k 5] [--targets 表,指标]");
+    console.error("  node scripts/query.js --cypher \"MATCH ... RETURN ...\" [--params '{}']");
     process.exit(1);
   }
 
@@ -493,7 +465,7 @@ async function main() {
   const { question, topK, targets, cypher, cypherParams } = parseArgs(process.argv);
 
   // Load config
-  const env = loadEnv(join(PROJECT_ROOT, ".env"));
+  const env = loadEnv();
   const config = parseGraphConfig(join(PROJECT_ROOT, "graph-config.yaml"));
 
   const neo4jUri = config.neo4j?.uri || "bolt://localhost:7687";
@@ -523,7 +495,7 @@ async function main() {
     // --- Vector search mode (default) ---
     const modelPath =
       config.embedding?.model_path ||
-      "sync/models/bge-small-zh-v1.5";
+      "scripts/pipeline/models/bge-small-zh-v1.5";
 
     // Determine which entities to search
     const entities = config.entities || {};
@@ -544,11 +516,11 @@ async function main() {
       `[query] Entities to search: ${Object.keys(targetEntities).join(", ")}`
     );
 
-    // Resolve Python interpreter path
-    const pythonPath = env.PYTHON_PATH || "python";
+    // Resolve Python interpreter path (via shared env.js)
+    const pyPath = pythonPath(env);
 
     // Step 1: Encode question
-    const embedding = encodeQuestion(question, modelPath, pythonPath);
+    const embedding = encodeQuestion(question, modelPath, pyPath);
     console.error(`[query] Embedding dimensions: ${embedding.length}`);
 
     // Step 2: Connect to Neo4j

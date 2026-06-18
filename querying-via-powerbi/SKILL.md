@@ -2,18 +2,18 @@
 name: querying-via-powerbi
 description: 从 PowerBI 语义模型查询数据，通过 Node.js 直接调用微软 MCP HTTP 端点，Client Credentials 认证
 metadata: 
-  skill-series: super-data-analysis
+  skill-series: super-data-analytics
   chinese-name: 查询数据通过PowerBI
 ---
 
-# PowerBI 数据获取
+# 查询数据通过PowerBI
 
 从 Power BI 语义模型查询数据，使用 Client Credentials 零交互认证
 
 ## 触发条件
 
 - 用户需要从 Power BI 获取数据
-- 用户使用 `/querying-data-via-powerbi` 命令
+- 用户使用 `/querying-via-powerbi` 命令
 - 其他 skill 需要查询 Power BI 数据时引用
 
 ## 环境要求

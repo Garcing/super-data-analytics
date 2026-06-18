@@ -1,6 +1,9 @@
 ---
 name: querying-via-sql
 description: 从 Hologres/PostgreSQL 数据库查询数据，文件驱动 SQL 执行，支持结果导出
+metadata: 
+  skill-series: super-data-analytics
+  chinese-name: 查询数据通过SQL
 ---
 
 # 查询数据通过SQL

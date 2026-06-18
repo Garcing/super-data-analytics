@@ -17,17 +17,20 @@ from embedding import (
     embed_nodes,
 )
 
+# scripts/pipeline/sync.py → project root is two levels up
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 
 def load_config(config_path=None):
     if config_path is None:
-        config_path = os.path.join(os.path.dirname(__file__), "..", "graph-config.yaml")
+        config_path = os.path.join(_PROJECT_ROOT, "graph-config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def load_env(env_path=None):
     if env_path is None:
-        env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        env_path = os.path.join(_PROJECT_ROOT, ".env")
     if not os.path.exists(env_path):
         return
     with open(env_path, "r", encoding="utf-8") as f:
@@ -97,7 +100,7 @@ def main():
     cfg = load_config()
 
     # Resolve paths
-    project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    project_dir = _PROJECT_ROOT
     model_path = os.path.join(project_dir, cfg["embedding"]["model_path"])
     dimensions = cfg["embedding"]["dimensions"]
 

@@ -7,23 +7,22 @@ GraphRAG 业务知识检索。从飞书多维表格同步业务知识到本地 N
 ```
 graph-config.yaml              唯一真相来源：实体、关系、向量配置
          │
-         ├── sync/ (Python)                 server/ (Node.js)
-         │   同步管线                         查询服务
-         │       │                               │
-         │   feishu_reader.py                   query.js
-         │   调 lark-cli 拉飞书数据              ① Python 子进程向量化问题
-         │       │                               ② Neo4j 向量检索 / Cypher 查询
-         │   graph_builder.py                    ③ 图关系扩展
-         │   按配置 MERGE 节点 + 建关系              │
-         │       │                               ↓
-         │   embedding.py                    JSON 输出给 Agent
-         │   search_text 拼接 + 向量化         Agent 基于上下文生成回答
-         │       │
-         │   sync.py
-         │   一键编排全流程
-         │
-         └── sync.js (Node.js 壳)
-             自动从 .env 读 Python 解释器路径
+         └── scripts/
+                 │
+                 Node.js 层
+                   sync.js                 壳：调用 pipeline/sync.py（自动读 .env 的 PYTHON_PATH）
+                   query.js                查询 CLI
+                   env.js                  共享：.env 读取 + Python 解释器解析
+                       │
+                       ↓
+                 pipeline/ (Python 层)
+                   sync.py                 一键编排全流程
+                   feishu_reader.py        调 lark-cli 拉飞书数据
+                   graph_builder.py        按配置 MERGE 节点 + 建关系
+                   embedding.py            search_text 拼接 + 向量化
+                       │
+                       ↓
+                 JSON 输出给 Agent → Agent 基于上下文生成回答
 ```
 
 **数据流**：飞书多维表格 → Python 同步到 Neo4j → Node.js 查询返回 JSON → Agent 总结回答
@@ -32,8 +31,8 @@ graph-config.yaml              唯一真相来源：实体、关系、向量配�
 
 | 模式 | 适用场景 | 命令 |
 |------|---------|------|
-| 语义检索 | "X 是什么意思"、"去哪找 X" | `node query.js "问题"` |
-| Cypher 查询 | "有几个 X"、"X 下面有哪些 Y" | `node query.js --cypher "MATCH ..."` |
+| 语义检索 | "X 是什么意思"、"去哪找 X" | `node scripts/query.js "问题"` |
+| Cypher 查询 | "有几个 X"、"X 下面有哪些 Y" | `node scripts/query.js --cypher "MATCH ..."` |
 
 ## 图模型
 
@@ -55,31 +54,31 @@ graph-config.yaml              唯一真相来源：实体、关系、向量配�
 
 ```bash
 # 下载 embedding 模型到本地（首次）
-node server/sync.js --download-model
+node scripts/sync.js --download-model
 ```
 
 ### 2. 同步数据（飞书有变动时执行）
 
 ```bash
 # 全流程重建（拉飞书 → 建图 → 向量化）
-node server/sync.js
+node scripts/sync.js
 
 # 其他场景
-node server/sync.js --only graph       # 只建图，不重建向量
-node server/sync.js --only embed       # 只重建向量，不动图
-node server/sync.js --dry-run          # 预览飞书数据量，不写入
+node scripts/sync.js --only graph       # 只建图，不重建向量
+node scripts/sync.js --only embed       # 只重建向量，不动图
+node scripts/sync.js --dry-run          # 预览飞书数据量，不写入
 ```
 
 ### 3. 查询（Agent 调用）
 
 ```bash
 # 语义检索
-node server/query.js "复购人数是什么意思？" --top-k 5
-node server/query.js "去哪张表查听课明细？" --targets 表,维度,数据域
+node scripts/query.js "复购人数是什么意思？" --top-k 5
+node scripts/query.js "去哪张表查听课明细？" --targets 表,维度,数据域
 
 #结构化查询
-node server/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 表数量"
-node server/query.js --cypher "MATCH (d:\`数据域\`)-[:包含]->(t:\`表\`) WHERE d.\`数据域名称\` = 'dw_ops' RETURN t.\`表名称\`, t.\`表中文名称\`"
+node scripts/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 表数量"
+node scripts/query.js --cypher "MATCH (d:\`数据域\`)-[:包含]->(t:\`表\`) WHERE d.\`数据域名称\` = 'dw_ops' RETURN t.\`表名称\`, t.\`表中文名称\`"
 ```
 
 ## 配置
