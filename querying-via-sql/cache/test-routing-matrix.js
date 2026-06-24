@@ -99,7 +99,7 @@ EOF`], { cwd: WORK, encoding: 'utf8' });
     ['D5 重复 --query',    ['query','--query','SELECT 1','--query','x'],    /重复参数/],
     ['D6 --save 缺值',     ['query','--query','SELECT 1','--save'],         /需要指定值/],
     ['D7 --query 缺值',    ['query','--query'],                             /需要指定值/],
-    ['D8 --trace-id 非法', ['query','--query','SELECT 1','--trace-id','bad id!'], /仅允许/],
+    ['D8 --trace-id 已删', ['query','--query','SELECT 1','--trace-id','x'], /未知 query 参数/],
     ['D9 --query 空串',    ['query','--query',''],                          /不能为空/],
   ];
   for (const [name, args, re] of cases) {

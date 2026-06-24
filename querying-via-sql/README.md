@@ -30,10 +30,9 @@ EOF
 | 参数 | 说明 |
 |---|---|
 | `--query <sql\|@path\|->` | 可选；直接写 SQL（≤500 字符单行纯 ASCII，含中文/引号/`$`/反引号/反斜杠会被拒），或 `@` + 文件路径，或 `-` 表示显式从管道 stdin 读；不传也等同 stdin |
-| `--save <path>` | 可选；结果保存地址，支持 `.json`、`.csv`、`.xlsx`；不传则落 `cwd/result-<trace_id>.json` |
-| `--trace-id <id>` | 可选；未提供时自动生成 UUID |
+| `--save <path>` | 可选；结果保存地址，支持 `.json`、`.csv`、`.xlsx`；不传则落 `cwd/result-<trace_id>.json`（`trace_id` 内部自动生成） |
 
-旧参数 `--file`、`--stdin`、`--source`、`--sql`、`--sql-path`、`--work-dir`、`--retain-sql` 已全部删除，统一为 `--query`。
+旧参数 `--file`、`--stdin`、`--source`、`--sql`、`--sql-path`、`--work-dir`、`--retain-sql`、`--trace-id` 已全部删除，统一为 `--query`。
 
 ## 结果
 

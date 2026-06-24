@@ -69,9 +69,8 @@ const SCHEMA_SQL_PATH = join(ROOT_DIR, 'references', 'get_table_schema.sql');
 export function parseQueryArgs(args) {
   let query = null;
   let savePath = null;
-  let traceId = null;
   const seen = new Set();
-  const knownFlags = new Set(['--query', '--save', '--trace-id']);
+  const knownFlags = new Set(['--query', '--save']);
 
   const markSeen = (arg) => {
     if (seen.has(arg)) throw new Error(`重复参数: ${arg}`);
@@ -92,9 +91,6 @@ export function parseQueryArgs(args) {
     } else if (arg === '--save') {
       markSeen(arg);
       savePath = readValue(arg, i++);
-    } else if (arg === '--trace-id') {
-      markSeen(arg);
-      traceId = readValue(arg, i++);
     } else {
       throw new Error(`未知 query 参数: ${arg}`);
     }
@@ -124,11 +120,7 @@ export function parseQueryArgs(args) {
     }
   }
 
-  if (traceId && !/^[A-Za-z0-9._-]+$/.test(traceId)) {
-    throw new Error('--trace-id 仅允许字母、数字、点、下划线和连字符');
-  }
-
-  return { source, sql, sqlPath, savePath, traceId };
+  return { source, sql, sqlPath, savePath };
 }
 
 export function readSqlFile(filePath) {
@@ -174,7 +166,7 @@ export async function readSqlSource(options, stream = process.stdin) {
 }
 
 export function resolveQueryOptions(options, cwd = process.cwd()) {
-  const traceId = options.traceId || randomUUID();
+  const traceId = randomUUID();
   // JS 不再决定产物/scratch 去向：结果由 --save 指定（默认落 cwd/result-<trace>.json），
   // SQL 文件路径由 --sql-path 指定。.super-data-analytics/{results,scratch} 的布局约定见 SKILL.md，由 agent 构造路径。
   const savePath = options.savePath

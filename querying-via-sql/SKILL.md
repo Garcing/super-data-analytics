@@ -30,7 +30,7 @@ node scripts/sql-query.js query --query @<文件>                    # @ + 文�
 node scripts/sql-query.js query --query - <<'EOF'                # 管道 stdin（heredoc 喂入；也支持父进程 spawn）
 SELECT ...;
 EOF
-# 通用可选：[--save <path>] [--trace-id <id>]
+# 通用可选：[--save <path>]
 ```
 
 ## 路径约定（JS 不管，agent 按 MD 约定构造）
@@ -45,7 +45,7 @@ EOF
 
 > **scratch 由 agent 全权管理**：写进去、复跑、清理都归 agent；JS 不会自动删任何 SQL 文件。建议在工作区项目根加一行 `.super-data-analytics/scratch/` 到 `.gitignore`（临时件不该进版本库）。技能不会自动改你的 `.gitignore`。
 
-旧参数 `query --stdin`、`query --file`、`--source`、`--sql`、`--sql-path`、`--work-dir`、`--retain-sql` 已全部删除，统一为 `--query`。
+旧参数 `query --stdin`、`query --file`、`--source`、`--sql`、`--sql-path`、`--work-dir`、`--retain-sql`、`--trace-id` 已全部删除，统一为 `--query`。`trace_id` 仍内部自动生成（用于结果文件名与信封），不再对外暴露。
 
 ## Agent 路由（--query 三种写法）
 
