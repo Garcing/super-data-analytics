@@ -27,8 +27,8 @@ if (OrigBufferReader && OrigBufferReader.prototype.cstring) {
   };
 }
 
-// 凭证/配置：config.json 是唯一来源（舰队共享一份），不再做环境变量优先回退。
-// config.json 缺失或字段不全时抛出明确错误，由 agent 引导用户提供后写回 config.json，再重试。
+// 凭证/配置：config.json 是唯一来源
+// config.json 缺失或字段不全时抛出明确错误，由 agent 引导用户提供后写回 config.json，再重试
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(homedir(), '.super-data-analytics', 'config.json');
 const CREDENTIAL_KEYS = ['HOLOGRES_HOST', 'HOLOGRES_PORT', 'HOLOGRES_DATABASE', 'HOLOGRES_USER', 'HOLOGRES_PASSWORD'];
@@ -54,18 +54,17 @@ function loadConfig() {
     throw new Error(`解析配置失败 ${CONFIG_PATH}: ${err.message}`);
   }
 
-  // config.json 唯一来源：直接灌进 process.env 供 HologresClient 读取（不再保留环境变量覆盖语义）。
+  // config.json 唯一来源：直接灌进 process.env 供 HologresClient 读取
   const env = cfg.env || {};
   for (const key of CREDENTIAL_KEYS) {
     if (env[key] !== undefined) process.env[key] = String(env[key]);
   }
-  return cfg;
 }
 
 const ROOT_DIR = dirname(__dirname);
 const SCHEMA_SQL_PATH = join(ROOT_DIR, 'references', 'get_table_schema.sql');
 
-export function parseQueryArgs(args) {
+function parseQueryArgs(args) {
   let query = null;
   let savePath = null;
   const seen = new Set();
@@ -98,7 +97,7 @@ export function parseQueryArgs(args) {
   // 把 --query 解析成内部 source（对外只剩一个 --query）：
   //   不传 或 -    → stdin（从管道读；- 是 Unix 惯用的"显式 stdin"）
   //   @<path>      → file
-  //   其他         → inline（短纯 ASCII 单行 SQL，shell 会解析所以做护栏）
+  //   其他         → inline（直接 SQL）
   let source;
   let sql = null;
   let sqlPath = null;
@@ -112,17 +111,12 @@ export function parseQueryArgs(args) {
     source = 'inline';
     sql = query;
     if (!sql) throw new Error('--query 不能为空');
-    if (/[\r\n]/.test(sql)) throw new Error('inline SQL 必须是单行');
-    if (sql.length > 500) throw new Error('inline SQL 不能超过 500 个字符');
-    if (/[^\x00-\x7F]|['"`$\\]/.test(sql)) {
-      throw new Error('inline SQL 禁止包含非 ASCII 字符（如中文）或 Shell 特殊字符（单/双引号、$、反引号、反斜杠），请改用 --query @<文件> 或管道 stdin');
-    }
   }
 
   return { source, sql, sqlPath, savePath };
 }
 
-export function readSqlFile(filePath) {
+function readSqlFile(filePath) {
   let content;
   try {
     content = readFileSync(filePath, 'utf-8').trim();
@@ -137,7 +131,7 @@ export function readSqlFile(filePath) {
   return content;
 }
 
-export async function readSqlFromStdin(stream = process.stdin) {
+async function readSqlFromStdin(stream = process.stdin) {
   if (typeof stream.setEncoding === 'function') {
     stream.setEncoding('utf8');
   }
@@ -155,7 +149,7 @@ export async function readSqlFromStdin(stream = process.stdin) {
   return content;
 }
 
-export async function readSqlSource(options, stream = process.stdin) {
+async function readSqlSource(options, stream = process.stdin) {
   if (options.source === 'stdin') return readSqlFromStdin(stream);
   if (options.source === 'file') return readSqlFile(options.sqlPath);
 
@@ -164,7 +158,7 @@ export async function readSqlSource(options, stream = process.stdin) {
   return sql;
 }
 
-export function resolveQueryOptions(options, cwd = process.cwd()) {
+function resolveQueryOptions(options, cwd = process.cwd()) {
   // JS 不决定产物去向：不传 --save 则不落盘（只输出到 stdout）；传 --save 才写到 agent 指定路径。
   // .super-data-analytics/{results,scratch} 的布局与命名约定见 SKILL.md，由 agent 构造路径。
   const savePath = options.savePath ? resolve(cwd, options.savePath) : null;
@@ -172,7 +166,7 @@ export function resolveQueryOptions(options, cwd = process.cwd()) {
   return { ...options, savePath, sqlPath };
 }
 
-export function createResultEnvelope({ source, resultPath, result }) {
+function createResultEnvelope({ source, resultPath, result }) {
   const envelope = {
     source,
     row_count: result.rows.length,
@@ -183,7 +177,7 @@ export function createResultEnvelope({ source, resultPath, result }) {
   return envelope;
 }
 
-export class HologresClient {
+class HologresClient {
   constructor() {
     const env = process.env;
     const host = env.HOLOGRES_HOST;
@@ -259,7 +253,7 @@ export class HologresClient {
   }
 }
 
-export async function saveResult(envelope, savePath) {
+async function saveResult(envelope, savePath) {
   const ext = savePath.slice(savePath.lastIndexOf('.')).toLowerCase();
   if (!['.json', '.csv', '.xlsx'].includes(ext)) {
     throw new Error(`不支持的文件格式: ${ext}（支持 .json / .csv / .xlsx）`);
@@ -360,7 +354,7 @@ if (command) {
             '命令:\n' +
             '  test-connection                              测试数据库连接\n' +
             '  schema <schema.table> [schema.table ...]     获取表结构\n' +
-            '  query --query "<SQL>"                        直接执行短 SQL\n' +
+            '  query --query "<SQL>"                        直接执行 SQL\n' +
             '  query --query @<文件>                         从文件读取 SQL\n' +
             '  query --query -                              从管道 stdin 读取 SQL（heredoc / 父进程 spawn 喂入）'
           );
@@ -373,5 +367,3 @@ if (command) {
     }
   })();
 }
-
-export { SCHEMA_SQL_PATH, CONFIG_PATH };

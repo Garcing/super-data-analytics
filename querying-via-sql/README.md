@@ -29,7 +29,7 @@ EOF
 
 | 参数 | 说明 |
 |---|---|
-| `--query <sql\|@path\|->` | 可选；直接写 SQL（≤500 字符单行纯 ASCII，含中文/引号/`$`/反引号/反斜杠会被拒），或 `@` + 文件路径，或 `-` 表示显式从管道 stdin 读；不传也等同 stdin |
+| `--query <sql\|@path\|->` | 可选；直接写 SQL，或 `@` + 文件路径，或 `-` 表示显式从管道 stdin 读；不传也等同 stdin。inline 不做字符护栏，含 `$`/反引号的 SQL 建议走 file/stdin（见 SKILL.md） |
 | `--save <path>` | 可选；传了才落盘（支持 `.json`/`.csv`/`.xlsx`），**不传则不写文件**，只把结果信封输出到 stdout |
 
 旧参数 `--file`、`--stdin`、`--source`、`--sql`、`--sql-path`、`--work-dir`、`--retain-sql`、`--trace-id` 已全部删除，统一为 `--query`。
@@ -38,13 +38,12 @@ EOF
 
 ## 结果
 
-结果地址由 `--save` 指定（不传则落当前工作目录 `result-<trace_id>.json`）。`.super-data-analytics/{results,scratch}` 的布局约定见 SKILL.md，由调用方/agent 构造路径传入，JS 不内置目录结构、不自动清理 SQL。
+结果地址由 `--save` 指定；**不传 `--save` 则不落盘**，只把结果信封输出到 stdout。`.super-data-analytics/{results,scratch}` 的布局与命名约定见 SKILL.md，由调用方/agent 构造路径传入，JS 不内置目录结构、不自动清理 SQL。
 
 stdout 同时输出完整执行信封：
 
 ```json
 {
-  "trace_id": "...",
   "source": "file",
   "result_path": "...",
   "row_count": 10,
@@ -52,6 +51,8 @@ stdout 同时输出完整执行信封：
   "rows": []
 }
 ```
+
+（`result_path` 仅在传了 `--save` 时出现）
 
 `.json` 保存完整信封；`.csv` 和 `.xlsx` 只保存表格数据。进度和错误写入 stderr。
 
