@@ -3,7 +3,6 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,26 +165,22 @@ export async function readSqlSource(options, stream = process.stdin) {
 }
 
 export function resolveQueryOptions(options, cwd = process.cwd()) {
-  const traceId = randomUUID();
-  // JS 不再决定产物/scratch 去向：结果由 --save 指定（默认落 cwd/result-<trace>.json），
-  // SQL 文件路径由 --sql-path 指定。.super-data-analytics/{results,scratch} 的布局约定见 SKILL.md，由 agent 构造路径。
-  const savePath = options.savePath
-    ? resolve(cwd, options.savePath)
-    : join(cwd, `result-${traceId}.json`);
+  // JS 不决定产物去向：不传 --save 则不落盘（只输出到 stdout）；传 --save 才写到 agent 指定路径。
+  // .super-data-analytics/{results,scratch} 的布局与命名约定见 SKILL.md，由 agent 构造路径。
+  const savePath = options.savePath ? resolve(cwd, options.savePath) : null;
   const sqlPath = options.sqlPath ? resolve(cwd, options.sqlPath) : null;
-
-  return { ...options, traceId, savePath, sqlPath };
+  return { ...options, savePath, sqlPath };
 }
 
-export function createResultEnvelope({ traceId, source, resultPath, result }) {
-  return {
-    trace_id: traceId,
+export function createResultEnvelope({ source, resultPath, result }) {
+  const envelope = {
     source,
-    result_path: resultPath,
     row_count: result.rows.length,
     columns: result.columns,
     rows: result.rows,
   };
+  if (resultPath) envelope.result_path = resultPath;
+  return envelope;
 }
 
 export class HologresClient {
@@ -345,14 +340,16 @@ if (command) {
           client = new HologresClient();
           const result = await client.query(sql);
           const envelope = createResultEnvelope({
-            traceId: options.traceId,
             source: options.source,
             resultPath: options.savePath,
             result,
           });
 
-          await saveResult(envelope, options.savePath);
-          console.error(`结果已保存到: ${options.savePath}`);
+          // 保存时机由 agent 决定：传 --save 才落盘，否则只输出到 stdout。
+          if (options.savePath) {
+            await saveResult(envelope, options.savePath);
+            console.error(`结果已保存到: ${options.savePath}`);
+          }
           console.log(JSON.stringify(envelope, null, 2));
           break;
         }

@@ -30,9 +30,11 @@ EOF
 | 参数 | 说明 |
 |---|---|
 | `--query <sql\|@path\|->` | 可选；直接写 SQL（≤500 字符单行纯 ASCII，含中文/引号/`$`/反引号/反斜杠会被拒），或 `@` + 文件路径，或 `-` 表示显式从管道 stdin 读；不传也等同 stdin |
-| `--save <path>` | 可选；结果保存地址，支持 `.json`、`.csv`、`.xlsx`；不传则落 `cwd/result-<trace_id>.json`（`trace_id` 内部自动生成） |
+| `--save <path>` | 可选；传了才落盘（支持 `.json`/`.csv`/`.xlsx`），**不传则不写文件**，只把结果信封输出到 stdout |
 
 旧参数 `--file`、`--stdin`、`--source`、`--sql`、`--sql-path`、`--work-dir`、`--retain-sql`、`--trace-id` 已全部删除，统一为 `--query`。
+
+**结果命名约定**（agent 构造 `--save` 路径时遵循）：经 SQL 文件查询的，结果名 = SQL 文件名把 `sql-query` 换成 `result`（`sql-query-20260625-abc.sql` → `result-20260625-abc.json`）；直接 SQL / stdin 的由 agent 自取名字；均落 `<工作区>/.super-data-analytics/results/`。
 
 ## 结果
 

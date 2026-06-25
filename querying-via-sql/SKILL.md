@@ -33,15 +33,21 @@ EOF
 # 通用可选：[--save <path>]
 ```
 
-## 路径约定（JS 不管，agent 按 MD 约定构造）
+## 路径与命名约定（JS 不管，agent 按 MD 约定构造）
 
-**JS 不内置任何目录结构**：结果由 `--save <path>` 指定（默认落 `cwd/result-<trace>.json`），SQL 文件路径由 `--query @<path>` 指定。`.super-data-analytics/{results,scratch}` 这套布局是 **MD 约定，由 agent 自己构造路径**传进去，JS 不创建、不清理、不假设。
+**JS 不内置任何目录结构，也不自动落盘**：不传 `--save` → 只把结果信封打到 stdout，**不写任何文件**；传 `--save <path>` → 写到 agent 指定的路径。`.super-data-analytics/{results,scratch}` 这套布局是 **MD 约定，由 agent 自己构造路径**传进去，JS 不创建、不清理、不假设。
 
 | 类别 | 去向 | 怎么传 |
 |---|---|---|
 | **凭证(home)** | `~/.super-data-analytics/config.json` 的 `env` 块 | JS 自己读，舰队共享一份 |
-| **产物(workspace)** | `<工作区>/.super-data-analytics/results/result-<trace>.json` | agent 构造路径，经 `--save` 传 |
-| **scratch(workspace)** | `<工作区>/.super-data-analytics/scratch/sql-query-<ts>-<rand>.sql` | agent 构造路径，经 `--query @<path>` 传 |
+| **产物(workspace)** | `<工作区>/.super-data-analytics/results/` | agent 构造路径，经 `--save` 传 |
+| **scratch(workspace)** | `<工作区>/.super-data-analytics/scratch/` | agent 构造路径，经 `--query @<path>` 传 |
+
+**结果命名约定（agent 构造 `--save` 路径时遵循）**：
+
+- 经 SQL 文件查询（`--query @<file>`）：结果名 = SQL 文件名，把 `sql-query` 换成 `result`，扩展名按需（`.json`/`.csv`/`.xlsx`）。
+  - 例：`scratch/sql-query-20260625-abc.sql` → `results/result-20260625-abc.json`
+- 直接 SQL / 管道 stdin：agent 自取一个有意义的名字，落 `<工作区>/.super-data-analytics/results/`。
 
 > **scratch 由 agent 全权管理**：写进去、复跑、清理都归 agent；JS 不会自动删任何 SQL 文件。建议在工作区项目根加一行 `.super-data-analytics/scratch/` 到 `.gitignore`（临时件不该进版本库）。技能不会自动改你的 `.gitignore`。
 
@@ -103,15 +109,15 @@ node scripts/sql-query.js schema <schema.table> [schema.table ...]
 ### Phase 3：执行与读取结果
 
 ```bash
-# --query @文件 读取 scratch 里的 SQL；--save 指定结果地址（不传则落 cwd/result-<trace>.json）
-node scripts/sql-query.js query --query @<工作区>/.super-data-analytics/scratch/<file.sql> --save <工作区>/.super-data-analytics/results/result-<trace>.json
+# --query @文件 读取 scratch 里的 SQL；--save 指定结果地址（命名按上面的约定：sql-query→result）。
+# 不传 --save 则不落盘，只输出信封到 stdout。
+node scripts/sql-query.js query --query @<工作区>/.super-data-analytics/scratch/sql-query-20260625-abc.sql --save <工作区>/.super-data-analytics/results/result-20260625-abc.json
 ```
 
-stdout 同时返回完整执行信封：
+stdout 返回执行信封（传了 `--save` 才有 `result_path`）：
 
 ```json
 {
-  "trace_id": "...",
   "source": "file",
   "result_path": "...",
   "row_count": 10,

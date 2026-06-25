@@ -132,10 +132,13 @@ EOF`], { cwd: WORK, encoding: 'utf8' });
   const before = readdirSync(WORK).filter(f => /^result-.*\.json$/.test(f)).length;
   const r = run(['query','--query','SELECT 42 AS n']);
   const after = readdirSync(WORK).filter(f => /^result-.*\.json$/.test(f)).length;
-  let ok = false; let where = '';
-  try { const env = JSON.parse(r.stdout); where = env.result_path || ''; ok = existsSync(where); } catch {}
-  record('F1 不传 --save 默认落 cwd', 'cwd 下新增 result-*.json + 文件存在',
-    r.status === 0 && after === before + 1 && ok, `exit=${r.status} where=${where}`);
+  let ok = false;
+  try {
+    const env = JSON.parse(r.stdout);
+    ok = r.status === 0 && after === before && env.result_path === undefined && env.trace_id === undefined && env.row_count === 1;
+  } catch {}
+  record('F1 不传 --save 不落盘', 'exit0 + 不写文件 + 信封无 result_path/trace_id',
+    ok, `exit=${r.status} newFiles=${after - before}`);
 }
 {
   const save = join(WORK, 'nested', 'dir', 'out.json');
