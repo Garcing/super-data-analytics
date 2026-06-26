@@ -1,6 +1,7 @@
 import { loadConfig, HologresClient, parseQueryArgs, resolveQueryOptions, readSqlSource, createResultEnvelope, saveResult } from './lib/sql.js';
+import { PowerBIClient, parseDaxPayload, savePowerBiResult } from './lib/powerbi.js';
 
-const SOURCES = new Set(['sql']); // powerbi 在 Task 4 加入
+const SOURCES = new Set(['sql', 'powerbi']);
 
 function parseGlobalArgs(args) {
   // 解析 --source，返回 { source, rest }
@@ -22,8 +23,6 @@ function parseGlobalArgs(args) {
 async function runSql(command, cliArgs) {
   let client;
   try {
-    // Task 2 阶段：sql 分支独立加载凭证。Task 4 才上提到 dispatcher 主入口共享给 powerbi。
-    loadConfig();
     switch (command) {
       case 'test-connection': {
         client = new HologresClient();
@@ -69,6 +68,45 @@ async function runSql(command, cliArgs) {
   }
 }
 
+async function runPowerBi(command, cliArgs) {
+  const client = new PowerBIClient();
+  switch (command) {
+    case 'list-tools': {
+      console.log(JSON.stringify(await client.listTools(), null, 2));
+      break;
+    }
+    case 'test-connection': {
+      const tools = await client.listTools();
+      console.log(JSON.stringify({ ok: true, message: 'PowerBI MCP 连接成功', tool_count: tools.length }, null, 2));
+      break;
+    }
+    case 'schema': {
+      const [artifactId] = cliArgs;
+      if (!artifactId) throw new Error('用法: query.js schema --source powerbi <artifactId>');
+      console.log(JSON.stringify(await client.getSchema(artifactId), null, 2));
+      break;
+    }
+    case 'query': {
+      const options = resolveQueryOptions(parseQueryArgs(cliArgs));
+      if (options.source === 'stdin' && process.stdin.isTTY) {
+        throw new Error('未提供 --query 且 stdin 是终端。请用 --query <JSON>、--query @<文件> 或管道传入');
+      }
+      const text = await readSqlSource(options);
+      const { artifactId, maxRows, daxQueries } = parseDaxPayload(text);
+      const result = await client.query(artifactId, daxQueries, maxRows);
+      const output = JSON.stringify(result, null, 2);
+      if (options.savePath) {
+        await savePowerBiResult(result, options.savePath);
+        console.error(`结果已保存到: ${options.savePath}`);
+      }
+      console.log(output);
+      break;
+    }
+    default:
+      throw new Error(`powerbi 未知命令: ${command}（支持：list-tools / test-connection / schema / query）`);
+  }
+}
+
 const [,, command, ...afterCommand] = process.argv;
 if (!command) {
   console.error('用法: node query.js <命令> --source <sql|powerbi> [参数]');
@@ -78,9 +116,13 @@ if (!command) {
 
 (async () => {
   try {
+    // 凭证统一在 dispatcher 主入口加载，sql / powerbi 共用
+    loadConfig();
     const { source, rest } = parseGlobalArgs(afterCommand);
     if (source === 'sql') {
       await runSql(command, rest);
+    } else if (source === 'powerbi') {
+      await runPowerBi(command, rest);
     } else {
       throw new Error(`source "${source}" 尚未接入`);
     }

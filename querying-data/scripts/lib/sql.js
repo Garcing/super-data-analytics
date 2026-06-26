@@ -31,7 +31,10 @@ if (OrigBufferReader && OrigBufferReader.prototype.cstring) {
 // config.json 缺失或字段不全时抛出明确错误，由 agent 引导用户提供后写回 config.json，再重试
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(homedir(), '.super-data-analytics', 'config.json');
-const CREDENTIAL_KEYS = ['HOLOGRES_HOST', 'HOLOGRES_PORT', 'HOLOGRES_DATABASE', 'HOLOGRES_USER', 'HOLOGRES_PASSWORD'];
+const CREDENTIAL_KEYS = [
+  'HOLOGRES_HOST', 'HOLOGRES_PORT', 'HOLOGRES_DATABASE', 'HOLOGRES_USER', 'HOLOGRES_PASSWORD',
+  'POWERBI_CLIENT_ID', 'POWERBI_CLIENT_SECRET', 'POWERBI_TENANT_ID',
+];
 
 function loadConfig() {
   let raw;
