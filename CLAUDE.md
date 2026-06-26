@@ -7,8 +7,7 @@
 ```
 retrieving-business-context/     拉取业务上下文（飞书文档）
 aligning-requirements/           对齐需求口径
-querying-data-via-powerbi/      经由 BI 提取（已实现）
-querying-data-via-sql/          经由数据库查询（已实现）
+querying-data/             统一数据查询（sql / powerbi，已实现）
 mining-business-insights/       挖掘业务洞察（骨架）
 generating-insights-report/     生成洞察报告
   scripts/html/                   HTML 报告（已实现，前端 + API + 发布）
@@ -86,7 +85,7 @@ React 18 + Vite 6 + Tailwind CSS 3 + Recharts 2 + React Router 7
 
 - **Vercel 构建缓存**：修改前端代码后必须 `rm -rf dist` 再部署
 - **API 路由**：`generating-insights-report/scripts/html/api/index.ts` 单文件，通过 URL 解析分发
-- **DAX 编写**：必须通过 `GetSemanticModelSchema` 确认字段名，参考 `querying-data-via-powerbi/references/`
+- **DAX 编写**：必须通过 `GetSemanticModelSchema` 确认字段名，参考 `querying-data/references/powerbi.md`
 - **@vercel/blob**：`put()` 必须指定 `access: 'public'`，读取用 `head()` + `fetch(url)`
 - **HTML 报告**：用 `scripts/html/report.js` 发布/列出/读取/删除报告（`publishReport` / `listReports` / `getReport` / `deleteReport` + 子命令 CLI）；接口与输入格式见 `generating-insights-report/references/report_to_html.md`
 - **图片报告**：用 `scripts/image/image.js` 生成图片（apimart gpt-image-2，异步提交→轮询→下载）；`node generating-insights-report/scripts/image/image.js "<提示词>" [--model|--size|--quality ...]`，`--dry-run` 零成本自检；接口与用法见 `generating-insights-report/references/report_to_image.md`
@@ -95,8 +94,8 @@ React 18 + Vite 6 + Tailwind CSS 3 + Recharts 2 + React Router 7
 ## 旧代码保留
 
 以下旧代码保留在原位置，待确认新框架稳定后清理：
-- `node_version/` — Node.js 旧位置（已迁移到 `querying-data-via-powerbi/`）
+- `node_version/` — Node.js 旧位置（已迁移到 `querying-data/`）
 - `scripts/` — Python 脚本旧位置（已迁移到 `generating-insights-report/`）
 - `web-report/` — 前端旧位置（已迁移到 `generating-insights-report/scripts/html/`）
-- `references/` — DAX 文档旧位置（已迁移到 `querying-data-via-powerbi/references/`）
+- `references/` — DAX 文档旧位置（已迁移到 `querying-data/references/`）
 - `SKILL.md`（根目录）— 原 Python 版 skill 定义

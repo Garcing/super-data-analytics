@@ -38,8 +38,7 @@ metadata:
 | aligning-requirements（当前技能） | 对齐数据需求        | 入口技能，对齐用户数据需求，统一编排调度套件内其他SKILL  |
 | leveraging-report-templates       | 调用报告模板        | 调用沉淀的报告模板，数据播报/周期报告/复盘报告/专题分析  |
 | retrieving-business-context       | 检索业务上下文      | 调用graph-rag能力获取业务背景和数据资产上下文            |
-| querying-data-via-powerbi         | 查询数据通过PowerBI | 调用PowerBI接口能力查询语义模型数据                      |
-| querying-data-via-sql             | 查询数据通过SQL     | 连接已配置好的数据库服务器提交SQL查询，获取查询结果      |
+| querying-data                     | 查询数据（统一入口） | 统一数据查询（`--source sql` 连接数据库提交 SQL；`--source powerbi` 查询 PowerBI 语义模型） |
 | mining-business-insights          | 挖掘业务洞察        | 从数据分析方法库选择合适分析方法，挖掘业务洞察结论       |
 | diagnosing-anomaly                | 指标异动归因        | 指标上涨、下跌、异常波动或告警后的严谨归因方法论         |
 | predicting_trends                 | 业务趋势预测        | 指标预测、趋势外推、目标制定、达成判断和资源预算预估     |
@@ -55,7 +54,7 @@ metadata:
 
 - [ ] 用户只是想查询业务上下文，比如查询某个指标定义，查询有什么数据表（调用 `retrieving-business-context` ）
 - [ ] 用户对数据报告模板做增删改查的管理（调用 `leveraging-report-templates` )
-- [ ] 用户提供SQL代码/DAX语句，简单跑一下数据（调用 `querying-data-via-powerbi` 或 `querying-data-via-sql` )
+- [ ] 用户提供SQL代码/DAX语句，简单跑一下数据（调用 `querying-data --source sql` 或 `querying-data --source powerbi` )
 - [ ] 用户提供现成数据，在此基础上挖掘洞察/可视化（调用 `mining-business-insights` 或 `generating-insights-report` ）
 - [ ] 用户提供现成的数据分析结论，需要生成可视化报告（调用 `generating-insights-report` )
 - [ ] 用户明确调用 `super-data-analysis` 系列套件技能
@@ -156,17 +155,17 @@ metadata:
 
 使用SKILL套件完成数据分析需求，基本流程是取数-分析-可视化
 
-取数：取决于是否提供SQL代码，若有则通过 `querying-data-via-sql` 执行，否则正常走 `querying-data-via-powerbi`
+取数：取决于是否提供SQL代码，若有则通过 `querying-data --source sql` 执行，否则正常走 `querying-data --source powerbi`
 
 ```text
 需求一：新注册引导流程用户次日留存下降分析
-querying-data-via-powerbi 获取注册用户数、次日留存率、APP使用时长等指标，mining-business-insights 对比新版和旧版注册流程的留存率是否存在显著差异，generating-insights-report 生成可视化web报告
+querying-data --source powerbi 获取注册用户数、次日留存率、APP使用时长等指标，mining-business-insights 对比新版和旧版注册流程的留存率是否存在显著差异，generating-insights-report 生成可视化web报告
 
 需求二：本月投诉率上升波动归因分析
-querying-data-via-powerbi 获取订单数、订单投诉工单数等指标，diagnosing-anomaly 选择异动归因拆解方法，mining-business-insights 挖掘出上升最大贡献的投诉原因，generating-insights-report 生成可视化图片报告
+querying-data --source powerbi 获取订单数、订单投诉工单数等指标，diagnosing-anomaly 选择异动归因拆解方法，mining-business-insights 挖掘出上升最大贡献的投诉原因，generating-insights-report 生成可视化图片报告
 
 需求三：下个月收入目标制定
-querying-data-via-powerbi 获取历史收入月度序列，predicting_trends 选择轻量预测方法并回测，输出保守/基准/挑战三档目标，visualizing-data 生成预测趋势图
+querying-data --source powerbi 获取历史收入月度序列，predicting_trends 选择轻量预测方法并回测，输出保守/基准/挑战三档目标，visualizing-data 生成预测趋势图
 ```
 
 

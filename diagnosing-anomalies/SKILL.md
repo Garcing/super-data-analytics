@@ -5,7 +5,7 @@ description: 指标异动归因方法论库。用于业务指标上涨、下跌�
 
 # 指标异动归因
 
-本技能提供异动归因的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-via-powerbi` 或 `querying-via-sql` 获取数据，调用 `visualizing-data` 生成精确图表，调用 `building-report` 承接报告交付。
+本技能提供异动归因的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取数据，调用 `visualizing-data` 生成精确图表，调用 `building-report` 承接报告交付。
 
 ## 核心原则
 
@@ -107,8 +107,8 @@ description: 指标异动归因方法论库。用于业务指标上涨、下跌�
 ## 与其他技能协作
 
 - 需要指标定义、业务层级、表名、口径：调用 `retrieving-context`。
-- 需要 Power BI 语义模型取数：调用 `querying-via-powerbi`。
-- 需要 SQL 明细或聚合取数：调用 `querying-via-sql`。
+- 需要 Power BI 语义模型取数：调用 `querying-data --source powerbi`。
+- 需要 SQL 明细或聚合取数：调用 `querying-data --source sql`。
 - 需要精确图表：调用 `visualizing-data`。
 - 需要沉淀成报告：调用 `building-report`。
 

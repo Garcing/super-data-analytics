@@ -1,1 +1,0 @@
-﻿{"artifactId":"c85590e6-770f-411f-a716-10d0147ad68b","maxRows":1000,"daxQueries":["EVALUATE TOPN(5, SUMMARIZE('日期表', '日期表'[报表年月周], '日期表'[报表年月周排序]), '日期表'[报表年月周排序], DESC)","EVALUATE VAR CW = [当前报表年月周] VAR CWS = CALCULATE(MAX('日期表'[报表年月周排序]), '日期表'[报表年月周] = CW) RETURN ROW(\"CW\", CW, \"CWS\", CWS, \"CWSm1\", CWS - 1)"]}

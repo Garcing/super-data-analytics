@@ -1,9 +1,0 @@
-{
-  "name": "sql-query",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "pg": "^8.13.0",
-    "xlsx": "^0.18.5"
-  }
-}

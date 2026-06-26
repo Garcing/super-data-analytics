@@ -15,12 +15,6 @@ dist/
 output/*.png
 output/*.py
 
-# PowerBI cache
-querying-data-via-powerbi/cache/
-
-# SQL query runtime cache
-querying-via-sql/.cache/
-
 # Data briefs cache
 dispatching-data-briefs/cache/
 

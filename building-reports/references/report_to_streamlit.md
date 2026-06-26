@@ -109,7 +109,7 @@ C.conclusion_block("结论句。", actions=["行动1","行动2"])
 
 ## 写报告的要点
 
-**数据从哪来**：内联 `pd.DataFrame({...})`（小数据集，零依赖）/ 仓库内 `reports/data/xxx.csv` 用 `load_df` 读 / 跨板块调 `querying-data-via-sql` 或 `querying-data-via-powerbi`。取数逻辑包进 `@cached` 函数。
+**数据从哪来**：内联 `pd.DataFrame({...})`（小数据集，零依赖）/ 仓库内 `reports/data/xxx.csv` 用 `load_df` 读 / 跨板块调 `querying-data --source sql` 或 `querying-data --source powerbi`。取数逻辑包进 `@cached` 函数。
 
 **交互**：页内筛选器 `st.multiselect / selectbox / date_input / toggle`（放图表上方）；Plotly 原生 hover/缩放/图例切换默认就有；分段 `st.tabs`；折叠 `st.expander`。
 
