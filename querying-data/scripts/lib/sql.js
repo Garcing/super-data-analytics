@@ -125,11 +125,11 @@ function readSqlFile(filePath) {
   try {
     content = readFileSync(filePath, 'utf-8').trim();
   } catch (e) {
-    throw new Error(`无法读取 SQL 文件 ${filePath}: ${e.message}`);
+    throw new Error(`无法读取查询文件 ${filePath}: ${e.message}`);
   }
 
   if (!content) {
-    throw new Error(`SQL 文件为空: ${filePath}`);
+    throw new Error(`查询文件为空: ${filePath}`);
   }
 
   return content;

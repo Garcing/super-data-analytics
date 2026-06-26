@@ -3,21 +3,32 @@ import { PowerBIClient, parseDaxPayload, savePowerBiResult, resolveArtifactId } 
 
 const SOURCES = new Set(['sql', 'powerbi']);
 
-function parseGlobalArgs(args) {
-  // 解析 --source，返回 { source, rest }
+function parseArgv(argv) {
+  // 位置无关：--source 可在命令前或后，避免 "命令槽里出现 --source" 时误报"缺少 --source"。
+  // command = 第一个未被 --source 消费为值的 token；其余（除 --source 及其值）入 rest。
+  const tokens = argv.slice(2);
   let source = null;
+  let command = null;
   const rest = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--source') {
-      source = args[++i];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === '--source') {
+      source = tokens[++i];
       if (!source) throw new Error('--source 需要指定值：sql | powerbi');
-    } else {
-      rest.push(args[i]);
+      continue;
     }
+    if (command === null) {
+      command = t;
+    } else {
+      rest.push(t);
+    }
+  }
+  if (!command) {
+    throw new Error('用法: node query.js <命令> --source <sql|powerbi> [参数]\n命令: test-connection / schema / query [/ powerbi 专属 list-tools]');
   }
   if (!source) throw new Error('缺少 --source（sql | powerbi）');
   if (!SOURCES.has(source)) throw new Error(`不支持的 --source: ${source}（当前支持：${[...SOURCES].join(', ')}）`);
-  return { source, rest };
+  return { command, source, rest };
 }
 
 async function runSql(command, cliArgs) {
@@ -108,18 +119,11 @@ async function runPowerBi(command, cliArgs) {
   }
 }
 
-const [,, command, ...afterCommand] = process.argv;
-if (!command) {
-  console.error('用法: node query.js <命令> --source <sql|powerbi> [参数]');
-  console.error('命令: test-connection / schema / query [/ powerbi 专属 list-tools]');
-  process.exit(1);
-}
-
 (async () => {
   try {
+    const { command, source, rest } = parseArgv(process.argv);
     // 凭证统一在 dispatcher 主入口加载，sql / powerbi 共用
     loadConfig();
-    const { source, rest } = parseGlobalArgs(afterCommand);
     if (source === 'sql') {
       await runSql(command, rest);
     } else if (source === 'powerbi') {
