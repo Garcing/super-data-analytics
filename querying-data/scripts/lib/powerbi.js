@@ -32,12 +32,16 @@ export function resolveArtifactId(payload) {
     throw new Error('payload 未带 artifactId，且 config.json 未配置 powerbi-semantic-models');
   }
   const byName = payload.model && models.find(m => m.name === payload.model);
+  if (payload.model && !byName) {
+    console.error(`警告: config.json 未找到 model "${payload.model}"，回落到默认/首条模型`);
+  }
   const picked = byName || models.find(m => m.is_default) || models[0];
   if (!picked || !picked.id) {
     throw new Error('payload 未带 artifactId，且 config.json 的 powerbi-semantic-models 无可用条目');
   }
   return picked.id;
 }
+
 const SCOPE = 'https://analysis.windows.net/powerbi/api/.default';
 const POLL_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 1_000;
