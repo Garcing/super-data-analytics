@@ -65,8 +65,7 @@ function loadConfig() {
 }
 
 // scripts/lib/ → querying-data/（多了一层 lib，向上两级）
-const ROOT_DIR = dirname(dirname(__dirname));
-const SCHEMA_SQL_PATH = join(ROOT_DIR, 'references', 'get_table_schema.sql');
+const SCHEMA_SQL_PATH = join(__dirname, 'get_table_schema.sql');
 
 function parseQueryArgs(args) {
   let query = null;
