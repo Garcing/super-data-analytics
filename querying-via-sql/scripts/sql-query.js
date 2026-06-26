@@ -136,12 +136,41 @@ async function readSqlFromStdin(stream = process.stdin) {
     stream.setEncoding('utf8');
   }
 
-  let content = '';
-  for await (const chunk of stream) {
-    content += chunk;
+  // 非 TTY（脚本/管道/agent 子进程）里，若调用方忘了带 --query 且 stdin 没关闭，
+  // for-await 会永久挂起。加一个首字节超时：到点没收完就主动报错退出，不再卡死。
+  const timeoutMs = Number(process.env.SQL_QUERY_STDIN_TIMEOUT_MS) || 15_000;
+
+  const readPromise = (async () => {
+    let content = '';
+    for await (const chunk of stream) {
+      content += chunk;
+    }
+    return content.trim();
+  })();
+
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('STDIN_READ_TIMEOUT')), timeoutMs);
+  });
+
+  let content;
+  try {
+    content = await Promise.race([readPromise, timeoutPromise]);
+  } catch (err) {
+    // 超时：销毁流以解除挂起的 for-await；其他读取异常原样抛出
+    if (stream.destroy) stream.destroy();
+    if (err && err.message === 'STDIN_READ_TIMEOUT') {
+      throw new Error(
+        `等待 stdin 超时（${timeoutMs / 1000}s 内未收到 SQL）。\n` +
+        '常见原因：在非交互环境（脚本/管道/agent）里既没传 --query "<SQL>" / --query @<文件>，stdin 也没关闭。\n' +
+        '解决：用 --query 显式传入，或确保管道写完后关闭 stdin。'
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 
-  content = content.trim();
   if (!content) {
     throw new Error('stdin 中的 SQL 为空');
   }
@@ -275,12 +304,15 @@ async function saveResult(envelope, savePath) {
     }).join(','));
     writeFileSync(savePath, [header, ...dataRows].join('\n'), 'utf-8');
   } else if (ext === '.xlsx') {
-    let XLSX;
+    let raw;
     try {
-      XLSX = await import('xlsx');
+      raw = await import('xlsx');
     } catch {
       throw new Error('xlsx 格式需要安装 xlsx 依赖: npm install xlsx');
     }
+    // xlsx 0.18.5 的 ESM 顶层只有 read/write/writeFile/utils，readFile 等挂在 default 上；
+    // 归一化成同一个对象，免得不同版本/导入方式踩 export 形态差异。
+    const XLSX = raw.default || raw;
     const { columns, rows } = envelope;
     const header = columns.map(c => c.name);
     const dataRows = rows.map(row => columns.map(c => row[c.name]));

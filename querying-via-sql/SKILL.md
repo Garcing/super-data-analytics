@@ -64,7 +64,7 @@ node scripts/sql-query.js query --query -
 | bash/zsh | 管道 stdin | quoted heredoc `<<'EOF'`（引号抑制 `$`或反引号展开） |
 | PowerShell | 管道 stdin | 统一显式设置 `$OutputEncoding` 为 UTF-8 without BOM；单引号 here-string `@'...'@`；`$sql` 管道到 `node ... --query -` |
 | SQL 需要审阅、复跑或留痕<br />管道stdin写法报错 | @文件 | agent 把 SQL 写入 `<工作区>/.super-data-analytics/scratch/`，经 `--query @` 传入 |
-| 简单 SQL | 直接SQL | SQL 直接写入命令行；含 `$` 或反引号时不建议 inline，复杂 SQL 走 file/stdin 更稳 |
+| 简短 SQL | 直接SQL | SQL 直接写入命令行；含 `$` 或反引号时不建议 inline，复杂 SQL 走 file/stdin 更稳 |
 
 **注意事项**
 
