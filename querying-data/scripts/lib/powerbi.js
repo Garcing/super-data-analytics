@@ -202,9 +202,10 @@ export function parseDaxPayload(text) {
 export async function savePowerBiResult(json, savePath) {
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const { dirname } = await import('node:path');
-  const ext = savePath.slice(savePath.lastIndexOf('.')).toLowerCase();
+  const dotIdx = savePath.lastIndexOf('.');
+  const ext = dotIdx === -1 ? '' : savePath.slice(dotIdx).toLowerCase();
   if (ext !== '.json') {
-    throw new Error(`PowerBI --save 仅支持 .json（原始 MCP 结果）；收到 ${ext}。csv/xlsx 暂不支持`);
+    throw new Error(`PowerBI --save 仅支持 .json（原始 MCP 结果）；收到 ${ext || '(无扩展名)'}。csv/xlsx 暂不支持`);
   }
   mkdirSync(dirname(savePath), { recursive: true });
   writeFileSync(savePath, typeof json === 'string' ? json : JSON.stringify(json, null, 2), 'utf-8');
