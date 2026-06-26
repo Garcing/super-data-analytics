@@ -29,8 +29,9 @@ querying-data/
     powerbi.md                # PowerBI 的 CLI + JSON payload schema + DAX 函数参考
     get_table_schema.sql      # SQL schema 查询模板（保留原位）
   templates/style.sql         # SQL 风格模板（保留）
-  semantic-model-ids.json     # PowerBI 默认模型路由（保留；agent 读它填 artifactId）
 ```
+
+注：原 `querying-via-powerbi/semantic-model-ids.json` 不再单独存文件，并入 config.json（见「config.json 凭证与配置统一」）。
 
 旧的 `querying-via-sql/`、`querying-via-powerbi/` 在新 skill 验证稳定后删除。
 
@@ -68,7 +69,7 @@ node scripts/query.js query           --source <sql|powerbi> --query <inline|@fi
 - inline：`--query '{"artifactId":"...","maxRows":250,"daxQueries":["EVALUATE ..."]}'`
 - 文件：`--query @request.json`
 - stdin：`--query -`，heredoc/stdin 喂 JSON
-- `artifactId` 由 agent 读 `semantic-model-ids.json`（默认 `is_default` 或指定业务线）后填入 payload，**不进 CLI flag**
+- `artifactId` 由 agent 填入 payload，**不进 CLI flag**；上游没给时脚本回落到 config.json 的 `powerbi-semantic-models`（保底，见下文）
 - 内部仍组装 MCP 请求并走 202 轮询，逻辑零改动
 
 **偏好**：PowerBI inline JSON 在 shell 里引号/换行转义很丑，实际以 `@file` 与 stdin/heredoc 为主，inline 仅用于极短请求。references/powerbi.md 要写明此偏好。
@@ -89,19 +90,36 @@ node scripts/query.js query           --source <sql|powerbi> --query <inline|@fi
 - **powerbi**：**只支持 `.json`**（原样落盘 MCP 结果）。csv/xlsx 暂不支持——PowerBI 原始 MCP JSON 不是简单表格（多条 DAX → 多张表，结构会随微软改），强行拍平等于赌形状稳定，现在不做。后续若需要，再加一个「提取首张表」的归一器。
 - **删除** PowerBI 现有强制写 `cache/dax-queries-*.json` + `KEEP_DAX_FILE` / `KEEP_DAX_RESULT` 那套：payload 现经 `--query` 传入，不再需要强制落盘请求文件。
 
-## config.json 凭证统一
+## config.json 凭证与配置统一
 
-SQL 已用 `~/.super-data-analytics/config.json` 的 `env` 块作为唯一来源。PowerBI 现用脚本旁 `.env`。合并后统一进同一 config.json：
+SQL 已用 `~/.super-data-analytics/config.json` 的 `env` 块作为唯一来源。合并后把 PowerBI 的 `.env` 凭证、以及原 `semantic-model-ids.json` 的模型路由表，**全部并入同一个 config.json**：
 
 ```json
-{ "env": {
+{
+  "env": {
     "HOLOGRES_HOST": "...", "HOLOGRES_PORT": "...", "HOLOGRES_DATABASE": "...",
     "HOLOGRES_USER": "...", "HOLOGRES_PASSWORD": "...",
     "POWERBI_CLIENT_ID": "...", "POWERBI_CLIENT_SECRET": "...", "POWERBI_TENANT_ID": "..."
-}}
+  },
+  "powerbi-semantic-models": [
+    { "id": "c85590e6-...", "name": "平台治理经营看板", "is_default": true,  "description": "..." },
+    { "id": "3041d238-...", "name": "超级VIP经营看板",  "is_default": false, "description": "..." },
+    { "id": "05a31944-...", "name": "私域Agent项目",    "is_default": false, "description": "..." }
+  ]
+}
 ```
 
-PowerBI 侧改为从 config.json 读 `POWERBI_*`，删掉 `.env` 加载逻辑。config.json 缺字段时，脚本报错并指引 agent 引导用户补全后写回（沿用 SQL 现有错误模式）。
+- PowerBI 侧改为从 config.json 读 `POWERBI_*`，删掉 `.env` 加载逻辑。config.json 缺字段时，脚本报错并指引 agent 引导用户补全后写回（沿用 SQL 现有错误模式）。
+- 原 `semantic-model-ids.json` 的三条记录迁入 `powerbi-semantic-models`，**补全 `description` 字段**（现文件里没有）。迁完后删除该文件。
+
+### `powerbi-semantic-models` 是保底手段
+
+`artifactId` 的优先级（references/powerbi.md 要写明）：
+
+1. **上游直接提供**（agent 在 payload 里填好 `artifactId`）——正常路径，脚本直接用。
+2. **上游没提供**（被单独调用，或 agent 没给）——脚本回落到读 config.json 的 `powerbi-semantic-models`，取 `is_default: true` 的那条；若 agent 指定了业务线/模型名，按 `name` 匹配。
+
+config.json 里的这张表是**保底**，不是主路径。references/powerbi.md 的规则要体现：能从上游拿到 `artifactId` 就别去读 config，读 config 只是兜底。
 
 ## 入口 SKILL.md = 路由器
 
@@ -118,6 +136,7 @@ per-source 的 CLI、payload schema、DAX 编写清单、stdin/heredoc/PowerShel
 
 1. 新建 `querying-data/`，按上面布局迁入两套脚本，合并依赖。
 2. 凭证迁移：先读 `querying-via-powerbi/.env` 现值 → 写入 config.json `env` → `test-connection --source powerbi` 验证通过 → 删 `.env`。
+3. 模型路由迁移：读 `querying-via-powerbi/semantic-model-ids.json` 三条记录 → 补全 `description` 后写入 config.json `powerbi-semantic-models` → 验证保底回落能命中默认模型 → 删原文件。
 3. 旧 `querying-via-sql/`、`querying-via-powerbi/` 在新 skill 跑通后删除。
 4. 更新根 `CLAUDE.md` / `AGENTS.md` 里 `querying-data-via-*`、`querying-via-*` 的过时路径与板块说明。
 
@@ -128,7 +147,7 @@ per-source 的 CLI、payload schema、DAX 编写清单、stdin/heredoc/PowerShel
 3. **PowerBI `--save` 不支持 csv/xlsx**：强行支持 = 赌 MCP 形状稳定，不做。
 4. **schema 参数语义两源不同**：SQL 是 `schema.table` 列表，PowerBI 是单个 artifactId GUID。`schema --source X <args>` 的 args 含义按源走，各自 references 写清。
 5. **依赖合并**：两个 `node_modules` 合一个；`pg` 的 Hologres BufferReader monkey-patch（处理 null 字段名）必须原样保留。
-6. **PowerBI schema「缓存 24h」是现 SKILL.md 写了但代码没有的能力**：迁移时要么实现要么从 references 删掉，不把虚假承诺带进来。
+6. **PowerBI schema「缓存 24h」是现 SKILL.md 写了但代码没有的虚假承诺**：迁移时直接从 references 删掉，不实现、不带进来。
 7. **`list-tools` 留作 PowerBI 专属**：预览期保留，用于发现 MCP 后续新工具；不进统一契约。
 8. **旧目录与根文档清理**：迁移稳定后删旧 skill 目录，更新 CLAUDE.md / AGENTS.md 过时路径。
 
