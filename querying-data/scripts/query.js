@@ -1,5 +1,5 @@
 import { loadConfig, HologresClient, parseQueryArgs, resolveQueryOptions, readSqlSource, createResultEnvelope, saveResult } from './lib/sql.js';
-import { PowerBIClient, parseDaxPayload, savePowerBiResult } from './lib/powerbi.js';
+import { PowerBIClient, parseDaxPayload, savePowerBiResult, resolveArtifactId } from './lib/powerbi.js';
 
 const SOURCES = new Set(['sql', 'powerbi']);
 
@@ -92,8 +92,9 @@ async function runPowerBi(command, cliArgs) {
         throw new Error('未提供 --query 且 stdin 是终端。请用 --query <JSON>、--query @<文件> 或管道传入');
       }
       const text = await readSqlSource(options);
-      const { artifactId, maxRows, daxQueries } = parseDaxPayload(text);
-      const result = await client.query(artifactId, daxQueries, maxRows);
+      const payload = parseDaxPayload(text);
+      const artifactId = resolveArtifactId(payload);   // 保底回落
+      const result = await client.query(artifactId, payload.daxQueries, payload.maxRows);
       const output = JSON.stringify(result, null, 2);
       if (options.savePath) {
         await savePowerBiResult(result, options.savePath);
