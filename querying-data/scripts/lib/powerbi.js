@@ -1,47 +1,13 @@
 import { ClientSecretCredential } from '@azure/identity';
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 // 凭证由 dispatcher（query.js）调 lib/sql.js 的 loadConfig() 灌进 process.env。
 // PowerBIClient 构造函数照旧从 process.env 读 POWERBI_*，本文件不再读 .env。
+//
+// artifactId 必须由调用方在 payload 里提供（上游 agent 已选定语义模型）。
+// 若上游上下文里没有 artifactId，由 agent 自行读 ~/.super-data-analytics/config.json 的
+// powerbi-semantic-models 表选出合适的 id 后再传入——脚本不做运行时回落。
 
 const MCP_URL = 'https://api.fabric.microsoft.com/v1/mcp/powerbi';
-
-// 保底回落：payload 没带 artifactId 时，从舰队共享 config.json 读默认语义模型
-const CONFIG_PATH = join(homedir(), '.super-data-analytics', 'config.json');
-
-// 解析 artifactId：
-//   1) payload 自带 → 直接用（正常路径）
-//   2) 没带 → 读 config.json 的 powerbi-semantic-models，按 payload.model 命名匹配；
-//      命中不到 name 时回落 is_default:true；再不行回落第一个条目
-export function resolveArtifactId(payload) {
-  // 1) payload 自带 → 直接用（正常路径）
-  if (payload.artifactId && typeof payload.artifactId === 'string' && payload.artifactId.trim()) {
-    return payload.artifactId;
-  }
-  // 2) 没带 → 读 config.json powerbi-semantic-models（保底）
-  let cfg;
-  try {
-    cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
-  } catch (e) {
-    throw new Error(`保底回落失败：payload 未带 artifactId 且无法读取 ${CONFIG_PATH}: ${e.message}`);
-  }
-  const models = Array.isArray(cfg['powerbi-semantic-models']) ? cfg['powerbi-semantic-models'] : [];
-  if (models.length === 0) {
-    throw new Error('payload 未带 artifactId，且 config.json 未配置 powerbi-semantic-models');
-  }
-  const byName = payload.model && models.find(m => m.name === payload.model);
-  if (payload.model && !byName) {
-    console.error(`警告: config.json 未找到 model "${payload.model}"，回落到默认/首条模型`);
-  }
-  const picked = byName || models.find(m => m.is_default) || models[0];
-  if (!picked || !picked.id) {
-    throw new Error('payload 未带 artifactId，且 config.json 的 powerbi-semantic-models 无可用条目');
-  }
-  return picked.id;
-}
-
 const SCOPE = 'https://analysis.windows.net/powerbi/api/.default';
 const POLL_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 1_000;
@@ -207,8 +173,8 @@ export class PowerBIClient {
   }
 }
 
-// PowerBI --query 载荷解析：JSON 对象 { artifactId?, daxQueries, maxRows, model? }
-// artifactId 可缺（交给 resolveArtifactId 保底回落）；model 为可选字符串（按名回落）
+// PowerBI --query 载荷解析：JSON 对象 { artifactId, daxQueries, maxRows? }
+// artifactId 必填（上游 agent 已选定语义模型）；maxRows 可选，默认 250
 export function parseDaxPayload(text) {
   let request;
   try {
@@ -219,10 +185,9 @@ export function parseDaxPayload(text) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new Error('PowerBI 载荷必须是 JSON 对象: { "artifactId": "...", "daxQueries": ["EVALUATE ..."] }');
   }
-  const { artifactId, daxQueries, maxRows = 250, model } = request;
-  // artifactId 可缺（由 resolveArtifactId 兜底）
-  if (model !== undefined && typeof model !== 'string') {
-    throw new Error('model 必须是字符串');
+  const { artifactId, daxQueries, maxRows = 250 } = request;
+  if (typeof artifactId !== 'string' || !artifactId.trim()) {
+    throw new Error('PowerBI 载荷缺少 artifactId（上游 agent 应在 payload 里提供；若未知，请先读 config.json 的 powerbi-semantic-models 选定）');
   }
   if (!Array.isArray(daxQueries) || daxQueries.length === 0 || daxQueries.length > 4) {
     throw new Error('daxQueries 必须是 1 到 4 条 DAX 的数组');
@@ -234,7 +199,7 @@ export function parseDaxPayload(text) {
   if (!Number.isInteger(maxRows) || maxRows < 1 || maxRows > 1000) {
     throw new Error('maxRows 必须是 1 到 1000 之间的整数');
   }
-  return { artifactId, maxRows, daxQueries: normalizedQueries, model };
+  return { artifactId, maxRows, daxQueries: normalizedQueries };
 }
 
 // PowerBI --save 仅支持 .json（原样写 MCP 结果）；csv/xlsx 直接报错

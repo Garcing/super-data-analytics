@@ -39,7 +39,6 @@ node scripts/query.js query --source powerbi --query @./payload.json --save ./.s
 {
   "artifactId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "maxRows": 250,
-  "model": "主业务模型",
   "daxQueries": [
     "EVALUATE ROW(\"test\", 1)",
     "EVALUATE ROW(\"test\", 2)"
@@ -49,10 +48,9 @@ node scripts/query.js query --source powerbi --query @./payload.json --save ./.s
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
+| `artifactId` | string (GUID) | 是 | 语义模型 ID。调用方必须提供准确值（见下"artifactId 怎么拿"） |
 | `daxQueries` | string[] | 是 | 1 到 4 条 DAX 语句数组，每条非空 |
-| `artifactId` | string (GUID) | 否 | 语义模型 ID。缺省时走保底回落（见下） |
 | `maxRows` | int | 否 | 1..1000，默认 250 |
-| `model` | string | 否 | 按名匹配保底模型；命中不到会 warn 并继续回落 |
 
 ### stdin / 文件示例
 
@@ -74,25 +72,22 @@ EOF
 node scripts/query.js query --source powerbi --query @./payload.json
 ```
 
-## artifactId 保底规则
+## artifactId 怎么拿
 
-PowerBI 的 `artifactId` 可缺省，脚本按以下顺序解析（见 `scripts/lib/powerbi.js` 的 `resolveArtifactId`）：
+`artifactId` 是 **payload 必填字段**，脚本不做任何运行时回落——payload 没带就直接报错。这个查询技能就是一把工具，理应由上游（调用方 agent）在调用前把准确的模型 ID 选好、填进 payload。
 
-1. **payload.artifactId 存在** → 直接使用（正常路径，**优先**）。
-2. **payload.artifactId 缺失** → 读 `~/.super-data-analytics/config.json` 的 `powerbi-semantic-models` 数组回落：
-   - 若 payload 带 `model` 字段 → 按 `name === model` 命中；命中不到则 `console.error` 警告后继续往下回落。
-   - 否则取 `is_default: true` 的条目。
-   - 再不行取数组第一个条目。
+获取顺序：
 
-**原则**：上游能提供 `artifactId` 就提供——`config.json` 只是兜底。`model` 字段在 `config.json` 没匹配到时只是 **stderr 警告**，不会硬失败，会继续回落到默认/首条。
+1. **上游上下文已给**（业务方明确指定了看板/模型） → 直接用。
+2. **上游上下文没有** → agent 自己读 `~/.super-data-analytics/config.json` 的 `powerbi-semantic-models` 表，看有哪些可用模型，结合请求意图选对那条，再把它的 `id` 填进 payload。
 
-`config.json` 中 `powerbi-semantic-models` 的形态：
+`config.json` 中 `powerbi-semantic-models` 的形态（agent 查阅用，脚本本身不读它）：
 
 ```json
 {
   "powerbi-semantic-models": [
-    {"id": "11111111-2222-3333-4444-555555555555", "name": "主业务模型", "is_default": true},
-    {"id": "99999999-aaaa-bbbb-cccc-dddddddddddd", "name": "财务模型"}
+    {"id": "11111111-2222-3333-4444-555555555555", "name": "主业务模型", "is_default": true, "description": "..."},
+    {"id": "99999999-aaaa-bbbb-cccc-dddddddddddd", "name": "财务模型", "is_default": false, "description": "..."}
   ]
 }
 ```

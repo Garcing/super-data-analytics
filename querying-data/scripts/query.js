@@ -1,5 +1,5 @@
 import { loadConfig, HologresClient, parseQueryArgs, resolveQueryOptions, readSqlSource, createResultEnvelope, saveResult } from './lib/sql.js';
-import { PowerBIClient, parseDaxPayload, savePowerBiResult, resolveArtifactId } from './lib/powerbi.js';
+import { PowerBIClient, parseDaxPayload, savePowerBiResult } from './lib/powerbi.js';
 
 const SOURCES = new Set(['sql', 'powerbi']);
 
@@ -104,8 +104,7 @@ async function runPowerBi(command, cliArgs) {
       }
       const text = await readSqlSource(options);
       const payload = parseDaxPayload(text);
-      const artifactId = resolveArtifactId(payload);   // 保底回落
-      const result = await client.query(artifactId, payload.daxQueries, payload.maxRows);
+      const result = await client.query(payload.artifactId, payload.daxQueries, payload.maxRows);
       const output = JSON.stringify(result, null, 2);
       if (options.savePath) {
         await savePowerBiResult(result, options.savePath);
