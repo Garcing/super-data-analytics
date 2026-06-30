@@ -1,66 +1,41 @@
 """Streamlit 报告看板入口。
 
-扫描 reports/*.py，用 ast 提取每份报告的 META（不执行报告代码），
-按 group 分组，用 st.navigation + st.Page 动态建页。
-首个「主页」展示全部报告概览，其余页为各报告。
+从 Vercel Blob 读报告索引（streamlit-reports-index.json），用 st.Page(callable)
+动态建页：每个 page 的 callable 在被访问时 fetch 对应 .py 源码并 exec 渲染。
+
+框架（本文件 + lib/ + store.py）部署一次；报告推到 Blob 即生效，无需重新部署。
 """
 from __future__ import annotations
 
-import ast
 import sys
 from pathlib import Path
 
 import streamlit as st
 
+from store import fetch_index, make_runner
+
 _HERE = Path(__file__).resolve().parent
-# 让报告 .py 里的 `from lib import ...` 可解析
+# 让报告 .py 里的 `from lib import ...` 可解析（exec 报告源码时用到）
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
-
-REPORTS_DIR = _HERE / "reports"
 
 st.set_page_config(page_title="数据分析报告", page_icon="📈", layout="wide")
 
 
-def extract_meta(path: Path) -> dict:
-    """从报告 .py 顶层 META = {...} 字典提取元信息，不执行代码。"""
-    defaults = {
-        "title": path.stem,
-        "icon": "📄",
-        "group": "其他",
-        "summary": "",
-    }
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except Exception:
-        return defaults
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            tgt = node.targets[0]
-            if isinstance(tgt, ast.Name) and tgt.id == "META":
-                try:
-                    val = ast.literal_eval(node.value)
-                    if isinstance(val, dict):
-                        defaults.update(val)
-                except Exception:
-                    pass
-                break
-    return defaults
-
-
 def build_entries() -> list[tuple[dict, object]]:
-    """扫描 reports/，返回 [(meta, StreamlitPage), ...]。"""
+    """读 Blob 索引，返回 [(meta, StreamlitPage), ...]。"""
     entries: list[tuple[dict, object]] = []
-    for py in sorted(REPORTS_DIR.glob("*.py")):
-        if py.name.startswith("_"):
+    for meta in fetch_index():
+        rid = meta.get("id")
+        if not rid:
             continue
-        meta = extract_meta(py)
-        # url_path = 报告标题，使每份报告有固定直达链接 base/<标题>
+        title = meta.get("title", rid)
         page = st.Page(
-            str(py),
-            title=meta["title"],
+            make_runner(rid),
+            title=title,
             icon=meta.get("icon", "📄"),
-            url_path=meta["title"],
+            # url_path = 报告标题，使每份报告有固定直达链接 base/<标题>
+            url_path=title,
         )
         entries.append((meta, page))
     return entries
@@ -71,11 +46,7 @@ def main() -> None:
 
     if not entries:
         st.title("📈 数据分析报告")
-        st.info("暂无报告。把报告 .py 放到 `reports/` 目录（参考 `reports/_template.py`），重启即可。")
-        # 占位页：模板（若有）。无模板时 st.info 已渲染，无需空 navigation
-        template = REPORTS_DIR / "_template.py"
-        if template.exists():
-            st.navigation([st.Page(str(template), title="模板", icon="📄")]).run()
+        st.info("暂无报告。用 `streamlit.js publish` 把报告 .py 推到 Blob 即可生效。")
         return
 
     # 按 group 聚合，供导航与主页使用

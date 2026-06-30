@@ -1,15 +1,29 @@
-"""报告模板 —— 复制此文件、改名、改 META、改内容，即得一份新报告。
+"""报告模板 —— 复制此文件、改名、改内容，本地跑通后用 streamlit.js publish 推到 Blob。
+
+报告**不再放仓库**：本地写 .py → `streamlit run` 冒烟 → 推到 Vercel Blob →
+线上 app.py 运行时 fetch + exec 渲染。加报告不动 git、不重新部署。
+
+约定：
+  - 顶层写 st.* 调用即可（线上 exec 时注入 __name__=="__main__"，与本地 run 一致）。
+  - 自包含：只能 `import` 已装包 + `from lib import ...`；不要 import 兄弟报告或外部文件。
+  - meta（title/icon/group/summary）在 publish 时用 flag 传，不写在本文件里。
+  - 新包要进 requirements.txt（需重新部署框架）。
 
 标准结构（结论驱动）：
   0. 标题 + 元信息
   1. 摘要 + KPI（结论先行）
   2. 洞察章节（叙事 + 交互图，可重复 N 段）
-  3.（可选）侧边栏筛选
+  3.（可选）页内筛选（侧边栏留给导航）
   4. 方法论 / 数据说明（折叠）
   5. 结论与下一步
 
-注意：文件名以 _ 开头会被 app.py 跳过（不进导航）。复制后改名为
-report-xxx.py 即自动出现在导航里。
+本地冒烟（在 scripts/streamlit/ 目录下，lib 才能解析）：
+  streamlit run templates/report-template.py
+
+发布（在 building-reports/ 目录下）：
+  node scripts/streamlit/streamlit.js publish \\
+    --id report-xxx --title "标题" --icon 📊 --group 销售 --summary "一句话" \\
+    --source @<工作区>/.super-data-analytics/scratch/report-xxx.py
 """
 from __future__ import annotations
 
@@ -19,13 +33,6 @@ import streamlit as st
 from lib import charts
 from lib import components as C
 from lib.data import cached
-
-META = {
-    "title": "报告模板（示例）",
-    "icon": "📋",
-    "group": "示例",
-    "summary": "报告结构示例（文件名以 _ 开头，不进导航）。",
-}
 
 
 @cached

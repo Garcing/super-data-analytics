@@ -9,7 +9,7 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 
 > 一句话定位：分析做完了，数据和结论已经在手，要把它们「画」成一张可以直接看、可以下载、可以贴进 PPT / 飞书 / 微信的图。
 
-## 架构一瞥
+## 架构概览
 
 ```
 调用方 ──POST /images/generations + Bearer key──▶ apimart ──task_id──▶ 调用方
@@ -17,7 +17,7 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 调用方 ──GET /tasks/{task_id}（轮询）─────────────────────┘
                        │ status=completed
                        ▼
-            result.images[0].url[0]  ──fetch──▶ 下载到 scripts/image/output/
+            result.images[0].url[0]  ──fetch──▶ 下载到指定路径
 ```
 
 - **异步**：提交返回 `task_id`，轮询 `/v1/tasks/{task_id}` 直到 `completed`，单张通常 ~30s。
@@ -26,7 +26,7 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 
 ---
 
-## 何时用图片报告（对比 HTML）
+## 适用场景对比
 
 | 维度 | 图片报告 | HTML 报告 |
 |------|---------|----------|
@@ -45,7 +45,7 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 
 ---
 
-## 提示词写法（核心）
+## 提示词写法
 
 图片报告的质量**几乎完全取决于提示词**。模型不会自己脑补数据，必须把「数据 + 图表 + 结论 + 场景」全部喂进去。一个合格的提示词包含**六要素**：
 
@@ -55,7 +55,7 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 
 > 例：「这是一份**给运营周会**看的 GMV 周环比异动简报，受众是业务负责人，需要 10 秒内定位问题。」
 
-### 2. 数据（真实数据 JSON 或结构化文本，**必填**）
+### 2. 数据
 
 把要呈现的真实数值原样喂进去：KPI、分项、时间序列。**不要让模型自己编数。**
 
@@ -92,9 +92,9 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 
 > 例：「商务扁平风，主色 #2563EB 蓝 + 中性灰，大量留白，中文，数字用粗体突出。」
 
-### 6. ⚠️ 强制规则（最重要，每次都要带）
+### 6.  强制规则
 
-> **所有图表必须带数据标签**：每个柱子、折线节点、饼图扇区旁边都要**直接标出具体数值**。
+> **⚠️所有图表必须带数据标签**：每个柱子、折线节点、饼图扇区旁边都要**直接标出具体数值**。
 >
 > **理由**：当前大模型生成图片时，**无法保证数值与坐标轴刻度精确对齐**——柱子的高度、折线的位置、扇区的角度都可能有视觉偏差，读者凭坐标轴估读会被误导。**加数据标签把准确数值直接写在图上**，是规避这个问题的唯一可靠办法。
 >
@@ -119,27 +119,45 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 把上面的内容拼成一个 prompt，用 CLI 生成：
 
 ```bash
-node generating-insights-report/scripts/image/image.js "生成一张数据分析报告信息图。
+node scripts/image/image.js "生成一张数据分析报告信息图。
 【主题】给运营周会看的 GMV 周环比异动简报，受众是业务负责人，10 秒内要能定位问题。
 【数据】GMV 本周 1280 万、上周 1150 万、周环比 +11.3%；分渠道：渠道A 520万(+18%)、渠道B 430万(+5%)、渠道C 330万(+12%)；近8周GMV：820,910,980,1020,1100,1080,1150,1280。
 【图表】顶部标题区+3个KPI卡(GMV/周环比/拉动渠道)；中部柱状图各渠道GMV占比；中下折线图近8周趋势并高亮本周；底部2条结论卡。
 【结论】1.[高亮]周环比+11.3%，渠道A(+18%)主拉；2.渠道B增速放缓(+5%)需关注；3.趋势连续3周上行。
 【风格】商务扁平，主色蓝#2563EB+中性灰，大量留白，中文，数字粗体。
 【强制规则】所有图表必须带数据标签(每个柱/点/扇区旁标具体数值)；数值须与提供数据完全一致不得编造；不画未指定的图。" \
-  --size 3:4 --resolution 2k
+  --size 3:4 --resolution 2k \
+  --save ./.super-data-analytics/results/gmv-weekly-20260630.png
 ```
 
 > 选 `3:4` / `9:16` 适合竖版信息图；`16:9` 适合汇报封面。报告类建议 `--resolution 2k` 保证文字清晰。
 
 ---
 
-## 可调用的接口
 
-### A. CLI（从仓库根运行）
+
+## CLI命令
+
+异步生图分三步，**任意一步可断点续跑**（每步幂等、可重复调用），从 building-reports/ 目录运行
 
 ```bash
-node generating-insights-report/scripts/image/image.js "<提示词>" [选项]
+# 一键到底（提交 → 轮询 → 下载），适合不会中断的场景
+node scripts/image/image.js "<提示词>" --save <路径> [选项]
+
+# 三步拆开（agent 中途断开后，从任一步接着跑）
+node scripts/image/image.js submit   "<提示词>" [选项] [--dry-run]     # 只提交，打印 task_id
+node scripts/image/image.js status   <task_id>                        # 轮询到终态，打印状态 + 图片 URL
+node scripts/image/image.js download <task_id> --save <路径>           # 下载图片
 ```
+
+| 子命令 | 输入 | 输出（stdout） | 计费 |
+|--------|------|------|------|
+| 默认 | 提示词 + `--save` | `URL:` / `本地:` / `task_id` / `cost` | 是 |
+| `submit` | 提示词 + 生成选项 | `{ task_id, cost? }` JSON | 是（`--dry-run` 时不计费） |
+| `status` | `task_id` | `{ task_id, status, cost?, images?:[{url}], error? }` JSON | 否（只查询） |
+| `download` | `task_id` + `--save` | `URL:` / `本地:` / `task_id` / `cost` | 否（只下载，图已生成） |
+
+**生成选项**（`submit` / 一键用，均有默认值）：
 
 | 选项 | 默认 | 说明 |
 |------|------|------|
@@ -149,28 +167,17 @@ node generating-insights-report/scripts/image/image.js "<提示词>" [选项]
 | `--quality` | `auto` | auto/low/medium/high（**仅 official**） |
 | `--format` | `png` | png/jpeg/webp（**仅 official**） |
 | `--n` | `1` | 张数，official 允许 1–4，generation 仅 1 |
-| `-o, --output` | 自动 | 自定义输出路径 |
-| `--dry-run` | — | 只打印请求体，不调用 API、不计费 |
+| `--dry-run` | — | 只打印请求体，不调用 API、不计费（仅 `submit` / 一键） |
 
-成功输出两行：公网 `URL:` 与 `本地:` 路径（多张则逐张打印）。
+**`--save <路径>`**（`download` / 一键必填）：
+- `--save <路径>` → 落到指定路径（多张自动追加 `-<index>`）。
+- 裸 `--save`（不跟值）→ 兜底 `~/Downloads/<时间戳>-<index>.<ext>`。
+- 完全不传 → 报错（下载类命令必须显式 `--save`）。
+- **agent 建议：**落在 `<工作区>/.super-data-analytics/results/<名字>.<ext>`，落盘根目录由 agent 决定
 
-### B. JS 便捷接口（`image.js`）
+**两个模型的字段差异（关键）**
 
-封装了提交→轮询→下载，自动处理 `.env` 加载、代理。导出：`generateImage` / `buildRequestBody` / `submitImageTask` / `getTaskStatus`。
-
-```js
-import { generateImage } from './scripts/image/image.js'
-
-const prompt = `生成一张数据分析报告信息图……（同上完整提示词）`
-const { results, taskId, cost } = await generateImage(prompt, {
-  size: '3:4', resolution: '2k',
-})
-// results: [{ url, localPath }]
-```
-
-### C. 两个模型的字段差异（关键）
-
-同一端点，靠 `model` 区分渠道，**支持字段不同**，`buildRequestBody` 按白名单自动裁剪：
+同一端点，靠 `model` 区分渠道，**支持字段不同**，脚本内部按白名单自动裁剪：
 
 | 字段 | `gpt-image-2`（默认） | `gpt-image-2-official` |
 |------|:---:|:---:|
@@ -184,19 +191,21 @@ const { results, taskId, cost } = await generateImage(prompt, {
 
 ---
 
-## 环境变量
+## 配置（config.json）
 
-从最近的 `.env` 自动加载（`generating-insights-report/.env`）：
+凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（脚本不读 `.env`）：
 
 | 变量 | 用途 |
 |------|------|
 | `APIMART_API_KEY` | apimart 中转接口密钥（必填） |
 | `APIMART_BASE_URL` | 接口基址，默认 `https://api.apimart.ai/v1` |
 
+配置缺失或字段不全时报错指引补全；由 agent 引导用户提供后写回 config.json 再重试。
+
 ### 依赖与代理
 
-- **依赖**：首次使用前在 `scripts/image` 下 `npm install`（装 `undici`）。
-- **代理**：自动检测 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`，经 `undici` 的 `ProxyAgent` 走代理。代理下未装 `undici` 会明确报错。退出前会主动关闭代理连接池，避免 Windows 下句柄未关导致的崩溃。
+- **依赖**：代理用 `undici`，已挂在 `scripts/node_modules`（供 `lib/shared.js` 解析）；`scripts/image` 子目录另有独立 `node_modules`。
+- **代理**：自动检测 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`，经 `undici` 的 `ProxyAgent` 走代理。代理下 `undici` 解析不到会明确报错。退出前会主动关闭代理连接池，避免 Windows 下句柄未关导致的崩溃。
 - Node 自带 `fetch`（Node 18+），除 `undici` 外无其它外部依赖。
 
 ---
