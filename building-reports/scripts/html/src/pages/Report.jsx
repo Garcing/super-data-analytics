@@ -6,6 +6,7 @@ import KpiStrip from '../components/KpiStrip'
 import ExportButton from '../components/ExportButton'
 import DataSourceBadge from '../components/DataSourceBadge'
 import { exportToPDF, generateFilename } from '../utils/pdfExporter'
+import { reportUrl } from '../utils/blob'
 
 export default function Report() {
   const { id } = useParams()
@@ -18,7 +19,7 @@ export default function Report() {
     setLoading(true)
     setNotFound(false)
 
-    fetch(`/api/reports/${encodeURIComponent(id)}`)
+    fetch(reportUrl(id))
       .then(res => {
         if (!res.ok) throw new Error('Not found')
         return res.json()

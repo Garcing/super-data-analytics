@@ -24,7 +24,7 @@ metadata:
 
 ### 凭证：config.json 唯一来源
 
-- html / image / streamlit 的凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`VERCEL_REPORTS_URL` / `VERCEL_API_SECRET` / `APIMART_API_KEY` / `APIMART_BASE_URL` / `BLOB_READ_WRITE_TOKEN`）。
+- html / image / streamlit 的凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`VERCEL_REPORTS_URL` / `APIMART_API_KEY` / `APIMART_BASE_URL` / `BLOB_READ_WRITE_TOKEN`）。html/streamlit 直连 Blob 写（token 在客户端），**不需要在 Vercel 项目设置里配环境变量**；`VERCEL_REPORTS_URL` 仅用于拼 html 可分享链接。
 - 脚本**不读 `.env`、不依赖环境变量导出**；配置缺失或字段不全时报错指引补全，由 agent 引导用户提供后写回 config.json 再重试。
 - 飞书的配置项见各自指引。
 

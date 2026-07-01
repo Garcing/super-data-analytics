@@ -3,13 +3,14 @@ import Header from '../components/Header'
 import ReportCard from '../components/ReportCard'
 import StatsOverview from '../components/StatsOverview'
 import EmptyState from '../components/EmptyState'
+import { indexUrl } from '../utils/blob'
 
 export default function Dashboard() {
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/reports')
+    fetch(indexUrl())
       .then(res => res.json())
       .then(data => {
         const sorted = (Array.isArray(data) ? data : data.reports || []).sort(

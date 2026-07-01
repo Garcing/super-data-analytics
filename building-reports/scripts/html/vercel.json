@@ -1,12 +1,8 @@
 {
-  "version": 2,
   "builds": [
-    { "src": "api/index.ts", "use": "@vercel/node" },
     { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
   ],
   "rewrites": [
-    { "source": "/api/reports(.*)", "destination": "/api" },
-    { "source": "/api/reports", "destination": "/api" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
   ]
 }

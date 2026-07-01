@@ -16,14 +16,17 @@
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadConfig, setupProxy, closeProxy, parseInputFlag, readContentSource } from '../lib/shared.js'
+import { loadConfig, setupProxy, closeProxy, parseInputFlag, readContentSource, withOptimisticLock, sleep } from '../lib/shared.js'
 
 const CREDENTIAL_KEYS = ['BLOB_READ_WRITE_TOKEN']
 
 loadConfig(CREDENTIAL_KEYS)
 const proxyState = await setupProxy()
 
-const { put, head, del, list } = await import('@vercel/blob')
+const { put, head, del } = await import('@vercel/blob')
+
+const INDEX_PATH = 'streamlit-reports-index.json'
+const CACHE_MAX_AGE = 60 // 索引/源码 CDN 缓存 60s，保证线上 app 新报告 ~1min 内可见
 
 // ---------------------------- Blob 读写封装 ----------------------------
 /** head 在 blob 不存在时抛 BlobNotFoundError；这里吞掉"不存在"返回 null。 */
@@ -37,9 +40,15 @@ async function safeHead(pathname) {
   }
 }
 
-/** put 公开、确定性 URL；同 id 重发即覆盖（allowOverwrite）。 */
-async function putText(pathname, text) {
-  return put(pathname, text, { access: 'public', addRandomSuffix: false, allowOverwrite: true })
+/** put 公开、确定性 URL；同 id 重发即覆盖；cacheControlMaxAge 让 CDN 不长期缓存。 */
+async function putText(pathname, text, { ifMatch } = {}) {
+  return put(pathname, text, {
+    access: 'public',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    cacheControlMaxAge: CACHE_MAX_AGE,
+    ...(ifMatch ? { ifMatch } : {}),
+  })
 }
 
 /** 取某份报告源码的公开 URL；不存在返回 null。 */
@@ -48,36 +57,56 @@ async function getSourceUrl(id) {
   return blob && blob.url ? blob.url : null
 }
 
-// ---------------------------- 索引（每报告 meta 为唯一真相，避免共享文件读写竞争） ----------------------------
-// 不再对单一 index 文件做 read-modify-write（CDN/最终一致性下并发发布会互相覆盖）。
-// 每份报告的 meta 存到 streamlit-reports/<id>.meta.json；list() 枚举它们重建索引，
-// 再写一份合并的 streamlit-reports-index.json 供线上 app 公开读（app 无 token，不能 list）。
-async function rebuildIndex() {
-  const metas = []
-  let cursor
-  do {
-    const res = await list({ prefix: 'streamlit-reports/', cursor, limit: 1000 })
-    const metaBlobs = (res.blobs || []).filter((b) => b.pathname.endsWith('.meta.json'))
-    const fetched = await Promise.all(
-      metaBlobs.map(async (b) => {
-        try {
-          const r = await fetch(b.url)
-          return await r.json()
-        } catch {
-          return null
-        }
-      }),
-    )
-    metas.push(...fetched.filter(Boolean))
-    cursor = res.hasMore ? res.cursor : undefined
-  } while (cursor)
+// ---------------------------- 索引（单文件 + 乐观锁；head 强一致 + 公开读对比校验） ----------------------------
+// head() — SDK 带 token，返回当前强 etag（强一致，不经 CDN）。
+// fetch(public_url) — 公开读，可能走 CDN 缓存（cacheControlMaxAge=60，最多 60s 陈旧）。
+// 读到内容后对比 fetch 响应的 etag 与 head 的强 etag：一致 → 内容就是当前版本，可用；
+// 不一致 → CDN 陈旧，退避重读直到一致（最多 12 次，覆盖 60s 刷新窗口）。
+async function readIndexWithEtag() {
+  for (let i = 0; i < 12; i++) {
+    const blob = await safeHead(INDEX_PATH)
+    if (!blob || !blob.url) return { data: { reports: [] }, etag: undefined }
+    const headEtag = (blob.etag || '').replace(/^W\//, '')
+    const res = await fetch(blob.url)
+    if (!res.ok) return { data: { reports: [] }, etag: undefined }
+    const fetchEtag = (res.headers.get('etag') || '').replace(/^W\//, '')
 
-  metas.sort(
-    (a, b) =>
-      (a.group || '').localeCompare(b.group || '') || (a.title || '').localeCompare(b.title || ''),
-  )
-  await putText('streamlit-reports-index.json', JSON.stringify({ reports: metas }, null, 2))
-  return metas
+    if (fetchEtag === headEtag) {
+      const text = await res.text()
+      let data = { reports: [] }
+      if (text) {
+        try { data = JSON.parse(text) } catch { /* 索引损坏，当空 */ }
+      }
+      return { data, etag: headEtag }
+    }
+    // CDN 还没回源，退避等刷新
+    if (i < 11) await sleep(1000 * (i + 1))
+  }
+  throw new Error('索引读取一直陈旧（CDN 缓存未刷新）。请稍后重试——新报告约 1 分钟可见。')
+}
+
+function upsertEntry(index, entry) {
+  const reports = Array.isArray(index.reports) ? [...index.reports] : []
+  const i = reports.findIndex((r) => r.id === entry.id)
+  if (i >= 0) reports[i] = entry
+  else reports.unshift(entry)
+  return { reports }
+}
+
+async function writeIndexEntry(entry) {
+  return withOptimisticLock({
+    read: readIndexWithEtag,
+    modify: (index) => upsertEntry(index, entry),
+    write: (next, etag) => putText(INDEX_PATH, JSON.stringify(next, null, 2), { ifMatch: etag }),
+  })
+}
+
+async function removeIndexEntry(id) {
+  return withOptimisticLock({
+    read: readIndexWithEtag,
+    modify: (index) => ({ reports: (index.reports || []).filter((r) => r.id !== id) }),
+    write: (next, etag) => putText(INDEX_PATH, JSON.stringify(next, null, 2), { ifMatch: etag }),
+  })
 }
 
 // ---------------------------- 业务操作 ----------------------------
@@ -98,15 +127,13 @@ async function publish({ id, title, icon, group, summary, options }) {
     // 不用 Date.now()（某些运行环境受限）；用 Blob 返回的 uploadedAt
     updated_at: blob.uploadedAt || null,
   }
-  await putText(`streamlit-reports/${id}.meta.json`, JSON.stringify(meta, null, 2))
-
-  await rebuildIndex() // 从权威 meta 重建合并索引（供线上 app 读）
+  await writeIndexEntry(meta)
   return { ...meta, url: blob.url }
 }
 
 async function listReports() {
-  // CLI 侧每次 list 都重建，保证最新
-  return await rebuildIndex()
+  const { data } = await readIndexWithEtag()
+  return data.reports || []
 }
 
 async function getReport(id) {
@@ -119,9 +146,7 @@ async function getReport(id) {
 async function deleteReport(id) {
   const srcUrl = await getSourceUrl(id)
   if (srcUrl) await del(srcUrl)
-  const metaBlob = await safeHead(`streamlit-reports/${id}.meta.json`)
-  if (metaBlob && metaBlob.url) await del(metaBlob.url)
-  const before = (await rebuildIndex()).length
+  const next = await removeIndexEntry(id)
   return { id, removed: true }
 }
 

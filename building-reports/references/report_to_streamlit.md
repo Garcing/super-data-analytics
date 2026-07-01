@@ -11,7 +11,7 @@ description: 把分析结论做成可分享的 Streamlit 交互式报告；框�
 
 - **静态（仓库，部署一次）**：`app.py` + `store.py` + `lib/` + `requirements.txt` —— 框架。
 - **动态（Vercel Blob，按报告推）**：每份报告 = 一个 `.py` 源码，经 `streamlit.js publish` 推到 Blob；`app.py` 运行时 `fetch + exec` 渲染。**加报告不动 git、不重新部署。**
-- 报告源码存在 `streamlit-reports/<id>.py`，meta 存 `streamlit-reports/<id>.meta.json`，合并索引 `streamlit-reports-index.json` 供线上 app 公开读。
+- 报告源码存 `streamlit-reports/<id>.py`，meta（title/icon/group/summary）随发布写进单文件索引 `streamlit-reports-index.json` 供线上 app 公开读。
 
 ## 何时用 Streamlit 报告
 
@@ -38,7 +38,7 @@ node scripts/streamlit/streamlit.js delete <id>            # 删除
 - meta flag 默认：`title=id`、`icon=📄`、`group=其他`、`summary=""`。
 - 同 id 重发即覆盖（不留痕，与 html 一致）。
 - `title` 同时是 **URL 路径**，直达链接 = `https://super-data-analytics.streamlit.app/<title>`（如 `…/区域销售分析`）。**避免 title 出现空格和斜杠**，且全库唯一。
-- 索引由 CLI 从每份 `.meta.json` 重建（避免并发发布互相覆盖），`list` 每次都重建保证最新。
+- 索引是单文件 `streamlit-reports-index.json`，CLI 用 **ifMatch 乐观锁 + 重试**写（读走 SDK `get()` 强一致，防并发/陈旧读丢失更新）。所有 blob 设 `cacheControlMaxAge=60`，新报告对线上 app 约 1 分钟可见。
 
 > 凭证 `BLOB_READ_WRITE_TOKEN` 来自 `~/.super-data-analytics/config.json`；该 token = 整个 Blob store 的写权限，注意保管。线上 `app.py` 只读公开 URL，无需 token。
 

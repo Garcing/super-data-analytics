@@ -143,3 +143,40 @@ export async function readContentSource(options, stream = process.stdin, opts = 
   if (!content) throw new Error(`inline ${opts.label || '输入'} 为空`);
   return content;
 }
+
+// ---------- 通用乐观锁写（搭配 Blob 的 ifMatch） ----------
+// 用于"读索引 → 改 → 写回"场景，防止并发/陈旧读导致的丢失更新。
+// 关键：read 必须强一致（带 token 走 SDK get()，不要走公开 URL 的 CDN），
+//       返回 { data, etag }；write 用 ifMatch=etag 落盘，不匹配就退避重试。
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function isPreconditionFailed(err) {
+  if (!err) return false;
+  if (err.name === 'BlobPreconditionFailedError') return true;
+  return /precondition|if[-_]match|412/i.test(String(err.message || err));
+}
+
+/**
+ * @param {object}  opts
+ * @param {() => Promise<{data: any, etag?: string}>} opts.read  读当前状态 + etag（强一致）
+ * @param {(data: any) => any|Promise<any>}            opts.modify 在当前 data 上算出下一个状态
+ * @param {(next: any, etag?: string) => Promise<void>} opts.write 带 ifMatch 落盘
+ * @param {number} [opts.attempts=5]
+ */
+export async function withOptimisticLock({ read, modify, write, attempts = 5, baseDelay = 300 }) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    const { data, etag } = await read();
+    const next = await modify(data);
+    try {
+      await write(next, etag);
+      return next;
+    } catch (err) {
+      lastErr = err;
+      if (!isPreconditionFailed(err) || i === attempts - 1) throw err;
+      await sleep(baseDelay * (i + 1) + Math.random() * baseDelay);
+    }
+  }
+  throw lastErr;
+}
+

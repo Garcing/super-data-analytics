@@ -7,7 +7,7 @@ description: 把分析结果发布为可分享的 HTML 报告（Vercel + Blob）
 
 把分析结论发布成在线 HTML 报告，托管在 Vercel（数据存 Blob），返回公网链接。
 
-**读写模型**：浏览器打开链接是公开 GET（无需密钥）；发布 / 删除是 POST / DELETE，需鉴权。链路：发布方 → Vercel serverless 函数 → Blob，Blob 令牌只在服务端，客户端只持一个密钥。
+**读写模型**：数据存在 Vercel Blob（公开读）。前端直读 Blob 公开 URL（无需密钥）；发布/删除由 skill 侧 `report.js` 直连 Blob 写（持 token）。**没有 serverless 函数**，前端和 CLI 都直接对接 Blob——与 streamlit 完全对称。
 
 ## CLI（从 building-reports/ 目录）
 
@@ -71,17 +71,15 @@ node scripts/html/report.js delete <reportId>                  # 删除
 
 | 变量 | 用途 |
 |------|------|
-| `VERCEL_REPORTS_URL` | Vercel 项目 URL |
-| `VERCEL_API_SECRET` | POST / DELETE 鉴权密钥 |
+| `BLOB_READ_WRITE_TOKEN` | 直连 Blob 读写（整个 store 写权限，注意保管） |
+| `VERCEL_REPORTS_URL` | 仅用于拼可分享的前端链接（如 `https://project-6hzz6.vercel.app`） |
 
-> 服务端（Vercel serverless 运行时）另读 `BLOB_READ_WRITE_TOKEN`、`API_SECRET`，**只在 Vercel 项目设置里配**，不进 config.json；`API_SECRET` 与 `VERCEL_API_SECRET` 同值。
+**不需要在 Vercel 项目设置里配任何环境变量**（旧版的 `BLOB_READ_WRITE_TOKEN` / `API_SECRET` 可删）。Blob 命名：报告 `html-reports/<id>.json`，索引 `html-reports-index.json`；索引用 **ifMatch 乐观锁**写、blob 设 `cacheControlMaxAge=60`（新报告对前端约 1 分钟可见）。配置缺失时报错指引补全，代理（`HTTPS_PROXY` 等）由 `undici` 自动接管。
 
-配置缺失时报错指引补全，由 agent 引导用户写回 config.json 后重试。代理（`HTTPS_PROXY` 等）由 `undici` 自动接管。
-
-## 部署（前端 / API 代码变更后）
+## 部署（前端代码变更后）
 
 ```bash
 cd building-reports/scripts/html && rm -rf dist && vercel deploy --prod --force
 ```
 
-必须先 `rm -rf dist` 清构建缓存；部署后在 Vercel 项目设置配 `BLOB_READ_WRITE_TOKEN`、`API_SECRET` 并关联 Public 模式 Blob Store。域名固定，之后发报告只调接口，无需重新部署。
+必须先 `rm -rf dist` 清构建缓存。无需配 Vercel 环境变量（前端直读 Blob 公开 URL），只需项目关联一个 Public 模式 Blob Store。域名固定，之后发报告只推 Blob，无需重新部署。

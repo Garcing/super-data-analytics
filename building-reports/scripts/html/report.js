@@ -1,8 +1,9 @@
 /**
  * HTML 报告客户端（report.js）
  * ============================================================================
- * 封装与 Vercel 报告 API 的全部交互：发布 / 列出 / 读取 / 删除。只暴露 CLI，
- * 不导出 JS 编程接口——发布/读取逻辑为内部函数。
+ * 直连 Vercel Blob（@vercel/blob SDK）管理 HTML 报告：把报告 JSON 推到
+ * `html-reports/<id>.json`，并维护 `html-reports-index.json` 索引（ifMatch 乐观锁）。
+ * 不走 serverless 函数；线上前端直读 Blob 公开 URL。与 streamlit.js 完全对称。
  *
  * CLI（从 building-reports/ 目录运行）：
  *   node scripts/html/report.js publish --id <reportId> [--report "<json>" | --report @<file> | --report -]
@@ -10,8 +11,8 @@
  *   node scripts/html/report.js get <reportId>
  *   node scripts/html/report.js delete <reportId>
  *
- * 凭证统一来自 ~/.super-data-analytics/config.json 的 env 块（VERCEL_REPORTS_URL /
- * VERCEL_API_SECRET）；脚本不读 .env、不依赖环境变量导出。
+ * 凭证 BLOB_READ_WRITE_TOKEN 来自 ~/.super-data-analytics/config.json 的 env 块；
+ * VERCEL_REPORTS_URL 仅用于拼"可分享的前端链接"。脚本不读 .env。
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,91 +21,153 @@ import {
   setupProxy,
   parseInputFlag,
   readContentSource,
+  withOptimisticLock,
+  sleep,
 } from '../lib/shared.js'
 
-const CREDENTIAL_KEYS = ['VERCEL_REPORTS_URL', 'VERCEL_API_SECRET']
+const CREDENTIAL_KEYS = ['BLOB_READ_WRITE_TOKEN', 'VERCEL_REPORTS_URL']
+const INDEX_PATH = 'html-reports-index.json'
+const CACHE_MAX_AGE = 60 // CDN 缓存 60s，保证新报告 ~1min 内对前端可见
 
-// 模块加载时注入凭证 + 代理（与 querying-data 同构：config.json 唯一来源）
 loadConfig(CREDENTIAL_KEYS)
 const proxyState = await setupProxy()
 
-/** 读取并校验基础配置（URL + 密钥 + 代理）。 */
+const { put, head, del } = await import('@vercel/blob')
+
+// ---------------------------- Blob 读写封装 ----------------------------
 function getConfig() {
   if (proxyState.proxyUrl && !proxyState.proxyConfigured) {
     throw new Error(
-      `检测到代理 ${proxyState.proxyUrl}，但 undici 未安装，无法走代理。请在 scripts/html 下运行: npm install undici`,
+      `检测到代理 ${proxyState.proxyUrl}，但 undici 未安装。请在 scripts 下运行: npm install undici`,
     )
   }
-  const vercelUrl = (process.env.VERCEL_REPORTS_URL || '').replace(/\/+$/, '')
-  const apiSecret = process.env.VERCEL_API_SECRET || ''
-  if (!vercelUrl) {
-    throw new Error('VERCEL_REPORTS_URL 未配置。请写入 ~/.super-data-analytics/config.json 的 env 块后重试。')
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error('BLOB_READ_WRITE_TOKEN 未配置。请写入 ~/.super-data-analytics/config.json 的 env 块后重试。')
   }
-  if (!apiSecret) {
-    throw new Error('VERCEL_API_SECRET 未配置。请写入 ~/.super-data-analytics/config.json 的 env 块后重试。')
+  return {
+    frontendUrl: (process.env.VERCEL_REPORTS_URL || '').replace(/\/+$/, ''),
   }
-  return { vercelUrl, apiSecret }
 }
 
-/** 统一请求：GET 公开，POST/DELETE 带 Bearer 鉴权。返回解析后的 JSON。 */
-async function request(path, { method = 'GET', body } = {}) {
-  const { vercelUrl, apiSecret } = getConfig()
-  const res = await fetch(`${vercelUrl}${path}`, {
-    method,
-    headers: {
-      ...(method !== 'GET' ? { Authorization: `Bearer ${apiSecret}` } : {}),
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
+async function safeHead(pathname) {
+  try {
+    return await head(pathname)
+  } catch (e) {
+    const msg = String((e && e.message) || e)
+    if (msg.includes('does not exist') || msg.includes('not found')) return null
+    throw e
+  }
+}
+
+async function putJson(pathname, obj, { ifMatch } = {}) {
+  return put(pathname, JSON.stringify(obj, null, 2), {
+    access: 'public',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    cacheControlMaxAge: CACHE_MAX_AGE,
+    contentType: 'application/json',
+    ...(ifMatch ? { ifMatch } : {}),
   })
-  if (res.status === 401) throw new Error('API Secret 无效，请检查 config.json 里的 VERCEL_API_SECRET')
-  if (!res.ok) throw new Error(`请求失败 (${res.status}): ${await res.text()}`)
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
 }
 
-/**
- * 发布一份报告，返回公网 URL。
- * @param {object} reportData — 报告 JSON（meta + summary + conclusions，格式见 references/report_to_html.md）
- * @param {string} reportId   — 报告唯一标识，如 'report-20260415-流失分析'
- * @returns {Promise<string>} 公网 URL
- */
+// ---------------------------- 索引（单文件 + 乐观锁；head 强一致 + 公开读对比校验） ----------------------------
+// head() — SDK 带 token，返回当前强 etag（强一致，不经 CDN）。
+// fetch(public_url) — 公开读，可能走 CDN 缓存（cacheControlMaxAge=60，最多 60s 陈旧）。
+// 读到内容后对比 fetch 响应的 etag 与 head 的强 etag：一致 → 内容就是当前版本，可用；
+// 不一致 → CDN 陈旧，退避重读直到一致（最多 10 次，覆盖 60s 刷新窗口）。
+async function readIndexWithEtag() {
+  for (let i = 0; i < 12; i++) {
+    const blob = await safeHead(INDEX_PATH)
+    if (!blob || !blob.url) return { data: { reports: [] }, etag: undefined }
+    const headEtag = (blob.etag || '').replace(/^W\//, '')
+    const res = await fetch(blob.url)
+    if (!res.ok) return { data: { reports: [] }, etag: undefined }
+    const fetchEtag = (res.headers.get('etag') || '').replace(/^W\//, '')
+
+    if (fetchEtag === headEtag) {
+      const text = await res.text()
+      let data = { reports: [] }
+      if (text) {
+        try { data = JSON.parse(text) } catch { /* 损坏当空 */ }
+      }
+      return { data, etag: headEtag }
+    }
+    // CDN 还没回源，退避等刷新
+    if (i < 11) await sleep(1000 * (i + 1))
+  }
+  throw new Error('索引读取一直陈旧（CDN 缓存未刷新）。请稍后重试——新报告约 1 分钟可见。')
+}
+
+function buildIndexEntry(id, body, uploadedAt) {
+  const overall = body?.summary?.overall || ''
+  const summaryPreview = overall.slice(0, 100) + (overall.length > 100 ? '...' : '')
+  return {
+    id,
+    title: body?.meta?.title || id,
+    created_at: body?.meta?.generated_at || uploadedAt || null,
+    summary_preview: summaryPreview,
+    stats: {
+      total_conclusions: body?.summary?.total_conclusions || 0,
+      high_importance: body?.summary?.high_importance_count || 0,
+    },
+  }
+}
+
+function upsertEntry(index, entry) {
+  const reports = Array.isArray(index.reports) ? [...index.reports] : []
+  const i = reports.findIndex((r) => r.id === entry.id)
+  if (i >= 0) reports[i] = entry
+  else reports.unshift(entry)
+  return { reports }
+}
+
+async function writeIndexEntry(entry) {
+  return withOptimisticLock({
+    read: readIndexWithEtag,
+    modify: (index) => upsertEntry(index, entry),
+    write: (next, etag) => putJson(INDEX_PATH, next, { ifMatch: etag }),
+  })
+}
+
+async function removeIndexEntry(id) {
+  return withOptimisticLock({
+    read: readIndexWithEtag,
+    modify: (index) => ({ reports: (index.reports || []).filter((r) => r.id !== id) }),
+    write: (next, etag) => putJson(INDEX_PATH, next, { ifMatch: etag }),
+  })
+}
+
+// ---------------------------- 业务操作 ----------------------------
 async function publishReport(reportData, reportId) {
   if (!reportId || !reportData?.meta?.title) {
     throw new Error('缺少必要字段: reportId 与 reportData.meta.title')
   }
-  const { vercelUrl } = getConfig()
-  const result = await request('/api/reports', { method: 'POST', body: { ...reportData, id: reportId } })
-  return `${vercelUrl}${result.url}`
+  const { frontendUrl } = getConfig()
+  const body = { ...reportData, id: reportId }
+  const blob = await putJson(`html-reports/${reportId}.json`, body)
+  await writeIndexEntry(buildIndexEntry(reportId, body, blob.uploadedAt))
+  return `${frontendUrl}/report/${reportId}`
 }
 
-/**
- * 列出全部报告（读索引，公开）。
- * @returns {Promise<Array>} 索引条目数组（id / title / created_at / summary_preview / stats）
- */
 async function listReports() {
-  const data = await request('/api/reports')
-  return Array.isArray(data) ? data : (data.reports || [])
+  const { data } = await readIndexWithEtag()
+  return data.reports || []
 }
 
-/**
- * 读取单份报告（公开）。
- * @param {string} id — 报告 id
- * @returns {Promise<object>} 完整报告 JSON
- */
 async function getReport(id) {
   if (!id) throw new Error('缺少 reportId')
-  return request(`/api/reports/${encodeURIComponent(id)}`)
+  const blob = await safeHead(`html-reports/${id}.json`)
+  if (!blob || !blob.url) throw new Error(`找不到报告: ${id}`)
+  const res = await fetch(blob.url)
+  return await res.json()
 }
 
-/**
- * 删除一份报告（需鉴权，同步更新索引）。
- * @param {string} id — 报告 id
- * @returns {Promise<{success: boolean}>}
- */
 async function deleteReport(id) {
   if (!id) throw new Error('缺少 reportId')
-  return request(`/api/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  const blob = await safeHead(`html-reports/${id}.json`)
+  if (blob && blob.url) await del(blob.url)
+  await removeIndexEntry(id)
+  return { success: true }
 }
 
 // ---------------------------- CLI 入口 ----------------------------
@@ -126,9 +189,8 @@ const USAGE = `用法（从 building-reports/ 目录运行）:
   其它:
     node scripts/html/report.js list                                          # 列出全部报告
     node scripts/html/report.js get <reportId>                                # 打印某份报告 JSON
-    node scripts/html/report.js delete <reportId>                             # 删除某份报告`
+    node scripts/html/report.js delete <reportId>                             # 删除`
 
-// publish 专属参数：位置无关，--id / --report 各取所需。
 function parsePublishArgs(args) {
   const known = new Set(['--id', '--report'])
   let id = null
