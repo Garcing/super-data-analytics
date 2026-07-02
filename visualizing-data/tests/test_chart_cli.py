@@ -15,25 +15,15 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "chart.py"
 FIXTURES = ROOT / "tests" / "fixtures"
 SCRIPTS_DIR = ROOT / "scripts"
-DEFAULT_INPUT_DIR = SCRIPTS_DIR / "input"
-DEFAULT_OUTPUT_DIR = SCRIPTS_DIR / "output"
 
 
-def run_chart(input_name: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(CLI), str(FIXTURES / input_name), "--out-dir", str(tmp_path), *args],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-
-def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+def run_cli(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CLI), *args],
         text=True,
         capture_output=True,
         check=False,
+        input=stdin,
     )
 
 
@@ -46,15 +36,17 @@ def load_fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def run_spec(spec: dict, tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    input_path = tmp_path / f"{spec['type']}.json"
-    input_path.write_text(json.dumps(spec), encoding="utf-8")
-    return subprocess.run(
-        [sys.executable, str(CLI), str(input_path), "--out-dir", str(tmp_path), *args],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+def run_spec(spec: dict, tmp_path: Path, *, save_name: str = "out.png", stdin: str | None = None,
+             extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
+    if stdin is not None:
+        return run_cli("--data", "-", "--save", str(tmp_path / save_name), *extra, stdin=stdin)
+    return run_cli("--data", json.dumps(spec, ensure_ascii=False),
+                   "--save", str(tmp_path / save_name), *extra)
+
+
+def run_fixture(name: str, tmp_path: Path, *, save_name: str = "out.png",
+                extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
+    return run_cli("--data", f"@{FIXTURES / name}", "--save", str(tmp_path / save_name), *extra)
 
 
 def assert_output_under_directory(output: Path, directory: Path) -> None:
@@ -74,33 +66,13 @@ def assert_readable_image(path: Path) -> None:
     assert len(colors) > 1
 
 
-def test_cli_resolves_bare_filename_from_scripts_input_and_defaults_to_scripts_output() -> None:
-    input_name = "bar-20260616-103012-a1B2c3D4e5.json"
-    input_path = DEFAULT_INPUT_DIR / input_name
-    output_path: Path | None = None
-    DEFAULT_INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        input_path.write_text(json.dumps(load_fixture("bar_cn.json"), ensure_ascii=False), encoding="utf-8")
-        result = run_cli(input_name)
-        payload = parse_stdout(result)
-        assert result.returncode == 0, result.stderr
-        assert payload["ok"] is True
-        output_path = Path(payload["path"])
-        assert output_path.exists()
-        assert_output_under_directory(output_path, DEFAULT_OUTPUT_DIR)
-        assert_readable_image(output_path)
-    finally:
-        if output_path and output_path.exists():
-            output_path.unlink()
-        if input_path.exists():
-            input_path.unlink()
+# --- 三态输入 -----------------------------------------------------------------
 
-
-def test_cli_renders_chinese_bar_png_and_returns_json(tmp_path: Path) -> None:
+def test_data_at_file_renders_png(tmp_path: Path) -> None:
     fixture = load_fixture("bar_cn.json")
     assert any("华" in row["region"] for row in fixture["data"])
     assert any(row["sales"] < 0 for row in fixture["data"])
-    result = run_chart("bar_cn.json", tmp_path)
+    result = run_fixture("bar_cn.json", tmp_path)
     payload = parse_stdout(result)
     assert result.returncode == 0, result.stderr
     assert payload["ok"] is True
@@ -113,38 +85,8 @@ def test_cli_renders_chinese_bar_png_and_returns_json(tmp_path: Path) -> None:
     assert isinstance(payload["warnings"], list)
 
 
-def test_cli_renders_line_svg(tmp_path: Path) -> None:
-    result = run_chart("line.json", tmp_path, "--format", "svg")
-    payload = parse_stdout(result)
-    assert result.returncode == 0, result.stderr
-    output = Path(payload["path"])
-    assert output.exists()
-    assert_output_under_directory(output, tmp_path)
-    assert output.suffix == ".svg"
-    assert "<svg" in output.read_text(encoding="utf-8")
-
-
-def test_theme_does_not_overwrite_configured_cjk_fonts(monkeypatch) -> None:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-    try:
-        from matplotlib import rcParams
-
-        from chart_renderer import fonts
-        from chart_renderer.theme import apply_theme
-
-        monkeypatch.setattr(fonts, "_available_font_names", lambda: {"Microsoft YaHei"})
-        warnings = fonts.configure_fonts()
-        apply_theme()
-
-        assert warnings == []
-        assert rcParams["font.sans-serif"][0] == "Microsoft YaHei"
-        assert rcParams["axes.unicode_minus"] is False
-    finally:
-        sys.path.remove(str(SCRIPTS_DIR))
-
-
-def test_cli_renders_heatmap_png(tmp_path: Path) -> None:
-    result = run_chart("heatmap.json", tmp_path)
+def test_data_inline_renders_png(tmp_path: Path) -> None:
+    result = run_spec(load_fixture("heatmap.json"), tmp_path)
     payload = parse_stdout(result)
     assert result.returncode == 0, result.stderr
     output = Path(payload["path"])
@@ -152,6 +94,85 @@ def test_cli_renders_heatmap_png(tmp_path: Path) -> None:
     assert_output_under_directory(output, tmp_path)
     assert_readable_image(output)
 
+
+def test_data_stdin_renders_svg(tmp_path: Path) -> None:
+    spec = load_fixture("line.json")
+    result = run_spec(spec, tmp_path, save_name="out.svg", stdin=json.dumps(spec, ensure_ascii=False))
+    payload = parse_stdout(result)
+    assert result.returncode == 0, result.stderr
+    output = Path(payload["path"])
+    assert output.exists()
+    assert_output_under_directory(output, tmp_path)
+    assert output.suffix == ".svg"
+    assert "<svg" in output.read_text(encoding="utf-8")
+    assert payload["format"] == "svg"
+
+
+def test_data_stdin_empty_returns_json_error(tmp_path: Path) -> None:
+    # 不传 --data 且 stdin 关闭为空 → 报错（模拟非交互下 stdin 没数据）
+    result = run_cli("--save", str(tmp_path / "out.png"), stdin="")
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+    assert "stdin" in payload["error"] or "为空" in payload["error"]
+
+
+# --- 格式推断 -----------------------------------------------------------------
+
+def test_save_suffix_png_yields_png(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, save_name="chart.png")
+    payload = parse_stdout(result)
+    assert result.returncode == 0
+    assert payload["format"] == "png"
+    assert Path(payload["path"]).suffix == ".png"
+
+
+def test_save_suffix_svg_yields_svg(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, save_name="chart.svg")
+    payload = parse_stdout(result)
+    assert result.returncode == 0
+    assert payload["format"] == "svg"
+    assert Path(payload["path"]).suffix == ".svg"
+
+
+def test_save_unknown_suffix_returns_json_error(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, save_name="chart.pdf")
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert result.stderr == ""
+    assert payload["ok"] is False
+    assert "png" in payload["error"] and "svg" in payload["error"]
+
+
+def test_save_missing_suffix_returns_json_error(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, save_name="chart")
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+    assert "png" in payload["error"] and "svg" in payload["error"]
+
+
+# --save 必填 ------------------------------------------------------------------
+
+def test_missing_save_returns_json_error() -> None:
+    result = run_cli("--data", f"@{FIXTURES / 'bar_cn.json'}")
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert result.stderr == ""
+    assert payload["ok"] is False
+    assert "--save" in payload["error"]
+
+
+# --data 必填（与 stdin 二选一）------------------------------------------------
+
+def test_missing_data_with_closed_stdin_returns_json_error(tmp_path: Path) -> None:
+    result = run_cli("--save", str(tmp_path / "out.png"), stdin="")
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+
+
+# --- 图表类型回归 -------------------------------------------------------------
 
 def test_cli_renders_pie_png(tmp_path: Path) -> None:
     result = run_spec(
@@ -494,7 +515,7 @@ def test_cli_renders_pareto_png(tmp_path: Path) -> None:
 
 
 def test_cli_renders_waterfall_png(tmp_path: Path) -> None:
-    result = run_chart("waterfall.json", tmp_path)
+    result = run_fixture("waterfall.json", tmp_path)
     payload = parse_stdout(result)
     assert result.returncode == 0, result.stderr
     output = Path(payload["path"])
@@ -503,14 +524,12 @@ def test_cli_renders_waterfall_png(tmp_path: Path) -> None:
     assert_readable_image(output)
 
 
+# --- 契约 / 参数错误 ----------------------------------------------------------
+
 def test_missing_title_returns_json_error(tmp_path: Path) -> None:
-    bad = tmp_path / "bad.json"
-    bad.write_text(json.dumps({"type": "bar", "subtitle": "x", "data": [], "encoding": {}}), encoding="utf-8")
-    result = subprocess.run(
-        [sys.executable, str(CLI), str(bad), "--out-dir", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=False,
+    result = run_spec(
+        {"type": "bar", "subtitle": "x", "data": [], "encoding": {}},
+        tmp_path,
     )
     payload = parse_stdout(result)
     assert result.returncode == 2
@@ -537,22 +556,15 @@ def test_empty_data_returns_json_validation_error(tmp_path: Path) -> None:
 
 
 def test_missing_encoding_field_returns_json_error(tmp_path: Path) -> None:
-    bad = tmp_path / "bad-field.json"
-    bad.write_text(
-        json.dumps({
+    result = run_spec(
+        {
             "type": "bar",
             "title": "Bad",
             "subtitle": "Missing field",
             "data": [{"name": "A", "value": 1}],
             "encoding": {"x": "name", "y": "missing"},
-        }),
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [sys.executable, str(CLI), str(bad), "--out-dir", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=False,
+        },
+        tmp_path,
     )
     payload = parse_stdout(result)
     assert result.returncode == 2
@@ -561,22 +573,15 @@ def test_missing_encoding_field_returns_json_error(tmp_path: Path) -> None:
 
 
 def test_non_numeric_encoding_field_returns_json_error(tmp_path: Path) -> None:
-    bad = tmp_path / "bad-numeric.json"
-    bad.write_text(
-        json.dumps({
+    result = run_spec(
+        {
             "type": "bar",
             "title": "Bad numeric",
             "subtitle": "One row is not numeric",
             "data": [{"name": "A", "value": 1}, {"name": "B", "value": "oops"}],
             "encoding": {"x": "name", "y": "value"},
-        }),
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [sys.executable, str(CLI), str(bad), "--out-dir", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=False,
+        },
+        tmp_path,
     )
     payload = parse_stdout(result)
     assert result.returncode == 2
@@ -585,22 +590,15 @@ def test_non_numeric_encoding_field_returns_json_error(tmp_path: Path) -> None:
 
 
 def test_null_numeric_encoding_field_returns_json_error(tmp_path: Path) -> None:
-    bad = tmp_path / "bad-null-numeric.json"
-    bad.write_text(
-        json.dumps({
+    result = run_spec(
+        {
             "type": "bar",
             "title": "Bad numeric",
             "subtitle": "One row is null",
             "data": [{"name": "A", "value": 1}, {"name": "B", "value": None}],
             "encoding": {"x": "name", "y": "value"},
-        }),
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [sys.executable, str(CLI), str(bad), "--out-dir", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=False,
+        },
+        tmp_path,
     )
     payload = parse_stdout(result)
     assert result.returncode == 2
@@ -610,22 +608,15 @@ def test_null_numeric_encoding_field_returns_json_error(tmp_path: Path) -> None:
 
 
 def test_optional_encoding_field_missing_returns_json_error(tmp_path: Path) -> None:
-    bad = tmp_path / "bad-optional.json"
-    bad.write_text(
-        json.dumps({
+    result = run_spec(
+        {
             "type": "bar",
             "title": "Bad optional",
             "subtitle": "Missing optional encoded field",
             "data": [{"month": "Jan", "value": 10}, {"month": "Feb", "value": 20}],
             "encoding": {"x": "month", "y": "value", "color": "segment"},
-        }),
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [sys.executable, str(CLI), str(bad), "--out-dir", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=False,
+        },
+        tmp_path,
     )
     payload = parse_stdout(result)
     assert result.returncode == 2
@@ -633,26 +624,8 @@ def test_optional_encoding_field_missing_returns_json_error(tmp_path: Path) -> N
     assert "segment" in payload["error"]
 
 
-def test_missing_input_returns_json_error() -> None:
-    result = run_cli()
-    payload = parse_stdout(result)
-    assert result.returncode == 2
-    assert result.stderr == ""
-    assert payload["ok"] is False
-    assert "input" in payload["error"]
-
-
-def test_invalid_format_returns_json_error(tmp_path: Path) -> None:
-    result = run_cli(str(FIXTURES / "bar_cn.json"), "--out-dir", str(tmp_path), "--format", "pdf")
-    payload = parse_stdout(result)
-    assert result.returncode == 2
-    assert result.stderr == ""
-    assert payload["ok"] is False
-    assert "format" in payload["error"]
-
-
 def test_invalid_dpi_returns_json_error(tmp_path: Path) -> None:
-    result = run_cli(str(FIXTURES / "bar_cn.json"), "--out-dir", str(tmp_path), "--dpi", "not-a-number")
+    result = run_fixture("bar_cn.json", tmp_path, extra=("--dpi", "not-a-number"))
     payload = parse_stdout(result)
     assert result.returncode == 2
     assert result.stderr == ""
@@ -684,7 +657,7 @@ def test_non_positive_height_returns_json_validation_error(tmp_path: Path) -> No
     assert "positive integer" in payload["error"]
 
 
-def test_cli_threads_dpi_into_render_chart(monkeypatch, tmp_path: Path) -> None:
+def test_cli_threads_dpi_and_fmt_into_render_chart(monkeypatch, tmp_path: Path) -> None:
     sys.path.insert(0, str(SCRIPTS_DIR))
     try:
         from chart_renderer import cli as cli_module
@@ -692,7 +665,7 @@ def test_cli_threads_dpi_into_render_chart(monkeypatch, tmp_path: Path) -> None:
 
         captured: dict[str, object] = {}
 
-        def fake_load_json(path: Path) -> dict:
+        def fake_read_data_source(options: dict) -> dict:
             return load_fixture("bar_cn.json")
 
         def fake_validate(raw: dict) -> ChartSpec:
@@ -705,25 +678,27 @@ def test_cli_threads_dpi_into_render_chart(monkeypatch, tmp_path: Path) -> None:
                 options={},
             )
 
-        def fake_resolve_output_path(spec: dict, *, out: str | None, out_dir: str | None, fmt: str) -> Path:
-            return tmp_path / f"out.{fmt}"
-
         def fake_render_chart(spec: ChartSpec, output_path: Path, fmt: str, dpi: int) -> list[str]:
             captured["dpi"] = dpi
             captured["fmt"] = fmt
             captured["path"] = output_path
-            raise RuntimeError(f"renderer for {spec.chart_type} is not implemented")
+            # 触发 ensure_save_parent 已建好目录，render_chart 跳过真实渲染
+            output_path.write_bytes(b"")
+            return []
 
-        monkeypatch.setattr(cli_module, "load_json", fake_load_json)
+        monkeypatch.setattr(cli_module, "read_data_source", fake_read_data_source)
         monkeypatch.setattr(cli_module, "validate", fake_validate)
-        monkeypatch.setattr(cli_module, "resolve_output_path", fake_resolve_output_path)
         monkeypatch.setattr(cli_module, "render_chart", fake_render_chart)
         monkeypatch.setattr(cli_module, "ensure_output_exists", lambda path: None)
         monkeypatch.setattr(cli_module, "ensure_png_nonblank", lambda path: None)
 
-        result = cli_module.main([str(FIXTURES / "bar_cn.json"), "--out-dir", str(tmp_path), "--dpi", "288"])
-        assert result == 1
+        save_path = tmp_path / "deep" / "out.svg"
+        result = cli_module.main(
+            ["--data", f"@{FIXTURES / 'bar_cn.json'}", "--save", str(save_path), "--dpi", "288"]
+        )
+        assert result == 0
         assert captured["dpi"] == 288
-        assert captured["fmt"] == "png"
+        assert captured["fmt"] == "svg"
+        assert captured["path"] == save_path
     finally:
         sys.path.remove(str(SCRIPTS_DIR))

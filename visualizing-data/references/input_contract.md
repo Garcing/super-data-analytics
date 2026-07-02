@@ -4,44 +4,75 @@
 
 ## CLI
 
-先把输入 JSON 写入 `visualizing-data/scripts/input/`，文件名格式为：
-
-```text
-<图表类型>-YYYYMMDD-HHMMSS-<random>.json
-```
-
-`<random>` 是 10 位随机英文大小写字母或数字。示例：`bar-20260616-103012-a1B2c3D4e5.json`。
-
-运行 CLI 时只传这个文件名；脚本会自动到 `visualizing-data/scripts/input/` 下读取。
-
-默认导出 PNG：
+CLI 形态：
 
 ```bash
-python visualizing-data/scripts/chart.py bar-20260616-103012-a1B2c3D4e5.json
+python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <file-path> [--dpi N]
 ```
 
-导出 SVG：
+参数：
+
+- `--data`（与 stdin 二选一）：图表 JSON 输入，三态：
+  - `--data '<JSON>'` inline JSON 字符串
+  - `--data @<file-path>` 从文件读取
+  - `--data -` 或不传 → 从 stdin（管道）读取
+- `--save`（**必填**）：输出文件路径。**扩展名决定输出格式**——`.png` 出 PNG，`.svg` 出 SVG，其他扩展名或缺扩展名直接报错。建议落到 `<工作区>/.super-data-analytics/results/`。
+- `--dpi`（可选，默认 `144`）：正整数。
+
+skills 文件夹不放动态资源：临时输入 JSON 写到 `<工作区>/.super-data-analytics/scratch/`，生成图片落到 `<工作区>/.super-data-analytics/results/`（该目录已在仓库根 `.gitignore`）。
+
+### 按环境选 `--data` 写法
+
+| 环境条件 | 写法 | 执行方式 |
+|---|---|---|
+| Agent 进程 API | 管道 stdin | `spawn` 子进程，向 stdin 写 UTF-8 JSON，传 `--data -`；不要为了用 spawn 把 JSON 落盘 |
+| bash/zsh | 管道 stdin | quoted heredoc `<<'EOF'`（引号抑制 `$` 或反引号展开） |
+| PowerShell | 管道 stdin | 显式设 `$OutputEncoding` 为 UTF-8 without BOM；单引号 here-string，管道到 `--data -` |
+| JSON 需要审阅、复跑或留痕 | @文件 | agent 把 JSON 写入 `<工作区>/.super-data-analytics/scratch/`，经 `--data @` 传入 |
+| 简短 JSON | inline | JSON 直接写入命令行 |
+
+### 参考示例
+
+**inline：**
 
 ```bash
-python visualizing-data/scripts/chart.py bar-20260616-103012-a1B2c3D4e5.json --format svg
+python visualizing-data/scripts/chart.py \
+  --data '{"type":"bar","title":"区域销售额","subtitle":"2026年6月","data":[{"区域":"华东","销售额":120}],"encoding":{"x":"区域","y":"销售额"}}' \
+  --save .super-data-analytics/results/bar-20260702-1030-area.png
 ```
 
-指定文件或目录：
+**@文件：**
 
 ```bash
-python visualizing-data/scripts/chart.py bar-20260616-103012-a1B2c3D4e5.json --out output/sales.png
-python visualizing-data/scripts/chart.py bar-20260616-103012-a1B2c3D4e5.json --out-dir output/charts
+python visualizing-data/scripts/chart.py \
+  --data @.super-data-analytics/scratch/bar-20260702-1030-area.json \
+  --save .super-data-analytics/results/bar-20260702-1030-area.svg
 ```
 
-可选 DPI：
+**bash quoted heredoc（stdin，不落盘、不展开）：**
 
 ```bash
-python visualizing-data/scripts/chart.py bar-20260616-103012-a1B2c3D4e5.json --dpi 192
+python visualizing-data/scripts/chart.py --data - \
+  --save .super-data-analytics/results/bar-20260702-1030-area.png <<'EOF'
+{"type":"bar","title":"区域销售额","subtitle":"2026年6月","data":[{"区域":"华东","销售额":120}],"encoding":{"x":"区域","y":"销售额"}}
+EOF
 ```
 
-默认输出目录是 `visualizing-data/scripts/output/`。传 `--out-dir` 时改用指定目录；传 `--out` 时使用指定文件路径。
+**PowerShell 单引号 here-string + 显式 UTF-8：**
 
-CLI 在成功和失败时都会向 stdout 写入 JSON。验证错误通常不应该向 stderr 写内容。
+```powershell
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = $Utf8NoBom
+[Console]::OutputEncoding = $Utf8NoBom
+
+$json = @'
+{"type":"bar","title":"区域销售额","subtitle":"2026年6月","data":[{"区域":"华东","销售额":120}],"encoding":{"x":"区域","y":"销售额"}}
+'@
+
+$json | python visualizing-data\scripts\chart.py --data - --save .super-data-analytics\results\bar-20260702-1030-area.png
+```
+
+CLI 在成功和失败时都会向 stdout 写入 JSON；落盘成功时额外在 stderr 打印 `结果已保存到: <path>`。验证错误不向 stderr 写内容。
 
 ## 顶层字段
 
@@ -167,7 +198,7 @@ CLI 在成功和失败时都会向 stdout 写入 JSON。验证错误通常不应
 ```json
 {
   "ok": true,
-  "path": "C:/absolute/path/output/chart.png",
+  "path": "C:/abs/path/.super-data-analytics/results/chart.png",
   "format": "png",
   "dpi": 144,
   "width": 1200,
@@ -197,8 +228,9 @@ CLI 在成功和失败时都会向 stdout 写入 JSON。验证错误通常不应
 
 常见验证错误：
 
-- `input is required`：传入 `scripts/input/` 下的 JSON 文件名，或显式传入完整/相对文件路径。
-- `format must be one of png, svg`：使用 `--format png` 或 `--format svg`。
+- `--save 是必填项`：必须传 `--save <file-path>`，没有默认输出目录。
+- `--save 扩展名必须是 .png 或 .svg`：输出格式由 `--save` 路径的扩展名决定，把路径改成 `.png` 或 `.svg`。
+- `未提供 --data 且 stdin 是终端` / `等待 stdin 超时`：用 `--data '<JSON>'` 或 `--data @<文件>` 显式传入，或确保管道写完后关闭 stdin。
 - `data is required and must be a non-empty list of objects`：至少提供一行数据。
 - `title is required and must be a non-empty string`：提供可见图表标题。
 - `subtitle is required and must be a non-empty string`：提供指标口径或范围说明。

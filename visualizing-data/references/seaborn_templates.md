@@ -83,18 +83,16 @@
 
 ## 导出规则
 
-支持格式：
+支持格式（由 `--save` 路径扩展名决定，无 `--format` 参数）：
 
-- PNG 是默认格式，适合报告图片、聊天附件和栅格预览。
-- SVG 适合可编辑文档、幻灯片，以及需要清晰缩放的工作流。
+- `.png` 适合报告图片、聊天附件和栅格预览。
+- `.svg` 适合可编辑文档、幻灯片，以及需要清晰缩放的工作流。
 
 输出行为：
 
-- 裸文件名输入会从 `visualizing-data/scripts/input/` 读取；运行时输入文件命名为 `<图表类型>-YYYYMMDD-HHMMSS-<10位随机英文数字>.json`。
-- 默认输出目录是 `visualizing-data/scripts/output/`。
-- `--out` 优先于 `--out-dir`。
-- `--out` 后缀缺失或与格式不匹配时，会替换成所选格式。
-- `--out-dir` 会根据 `title` 生成 slug，保留 ASCII、数字、中文、下划线和连字符。
+- `--save <file-path>` 是**必填**项；扩展名必须是 `.png` 或 `.svg`，否则报错退出。
+- 输入三态：`--data '<JSON>'` inline、`--data @<file-path>` 文件、`--data -` 或不传走 stdin。
+- skills 文件夹不放动态资源：临时 JSON 写到 `<工作区>/.super-data-analytics/scratch/`，生成图片落到 `<工作区>/.super-data-analytics/results/`。
 - 宽高来自 `options.width` 和 `options.height`，默认 `1200` × `720`。
 - DPI 默认 `144`，且必须是正整数。
 
@@ -160,8 +158,12 @@
 如果可能影响导出行为，同时手工渲染 PNG 和 SVG：
 
 ```bash
-.\venv\Scripts\python.exe visualizing-data/scripts/chart.py bar-20260616-103012-a1B2c3D4e5.json
-.\venv\Scripts\python.exe visualizing-data/scripts/chart.py line-20260616-103045-Z9y8X7w6V5.json --out-dir tmp/charts --format svg
+.\venv\Scripts\python.exe visualizing-data/scripts/chart.py \
+  --data @.super-data-analytics/scratch/bar.json \
+  --save .super-data-analytics/results/bar.png
+.\venv\Scripts\python.exe visualizing-data/scripts/chart.py \
+  --data @.super-data-analytics/scratch/line.json \
+  --save .super-data-analytics/results/line.svg
 ```
 
-手工渲染前，把对应 JSON 放到 `visualizing-data/scripts/input/`。检查 CLI JSON 结果，不要只看图片文件。
+手工渲染前，把对应 JSON 写到 `<工作区>/.super-data-analytics/scratch/`。检查 CLI JSON 结果，不要只看图片文件。
