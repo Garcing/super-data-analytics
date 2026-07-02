@@ -1,45 +1,60 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, isAbsolute, basename } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { execFileSync, execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
-// .env 加载 — 仅查找当前目录（scripts/）和上一级目录（skill 根目录）
+// 配置：~/.super-data-analytics/config.json 是唯一来源
+// 与 querying-data 同一约定：脚本不读 .env、不依赖环境变量导出，
+// config.json 的 env 块整体合并进 process.env。缺失时由 agent 引导补全后重试。
 // ---------------------------------------------------------------------------
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const parentDir = dirname(__dirname);
+const CONFIG_PATH = join(homedir(), '.super-data-analytics', 'config.json');
 
-function loadEnv(dir) {
+const TEMPLATE_KEYS = [
+  'FEISHU_TEMPLATE_FOLDER_TOKEN',
+  'FEISHU_TEMPLATE_DELETE_PASSWORD',
+];
+
+function loadConfig() {
+  let raw;
   try {
-    const envPath = join(dir, '.env');
-    const content = readFileSync(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-      if (!process.env[key]) process.env[key] = val;
+    raw = readFileSync(CONFIG_PATH, 'utf-8');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new Error(
+        `配置文件不存在: ${CONFIG_PATH}\n` +
+        `请把模板所需配置（${TEMPLATE_KEYS.join(' / ')}）告诉我，我会帮你写入 config.json 的 env 块后重试。`
+      );
     }
-  } catch {}
+    throw new Error(`读取配置失败 ${CONFIG_PATH}: ${err.message}`);
+  }
+
+  let cfg;
+  try {
+    cfg = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`解析配置失败 ${CONFIG_PATH}: ${err.message}`);
+  }
+
+  // config.json 的 env 块整体合并进 process.env（已有值不覆盖）
+  const env = cfg.env || {};
+  for (const key of Object.keys(env)) {
+    if (process.env[key] === undefined) process.env[key] = String(env[key]);
+  }
 }
-
-loadEnv(__dirname);   // scripts/.env
-loadEnv(parentDir);   // using-templates/.env
-
-const CACHE_DIR = join(__dirname, 'cache');
 
 // ---------------------------------------------------------------------------
 // lark-cli 封装（优先以 user 身份调用，失败后回退到 bot）
-// lark-cli 的 @文件路径相对于 CWD，所以始终先切换工作目录
+// lark-cli 的 @文件引用必须是「当前目录内的相对路径」，拒绝绝对路径和 CWD 外的路径。
+// 因此每次调用按 @引用文件所在目录设置 cwd，并传相对 basename。
 // ---------------------------------------------------------------------------
 
 /** 缓存已确认可用的身份，避免每次都重试 */
 let resolvedIdentity = null;
 
-function larkExec(args) {
-  const opts = { encoding: 'utf-8', cwd: __dirname };
+function larkExec(args, cwd) {
+  const opts = { encoding: 'utf-8' };
+  if (cwd) opts.cwd = cwd;
   if (process.platform === 'win32') opts.shell = true;
 
   // 如果已有缓存的可用身份，直接用
@@ -60,14 +75,15 @@ function larkExec(args) {
 }
 
 /** 异步版本 — 支持并行调用多个子进程 */
-function larkExecAsync(args) {
-  const opts = { encoding: 'utf-8', cwd: __dirname };
+function larkExecAsync(args, cwd) {
+  const opts = { encoding: 'utf-8' };
+  if (cwd) opts.cwd = cwd;
   if (process.platform === 'win32') opts.shell = true;
 
-  const tryWith = (identity) => new Promise((resolve, reject) => {
-    execFile('lark-cli', [...args, '--as', identity], opts, (err, stdout, stderr) => {
-      if (err) reject(err);
-      else resolve(stdout);
+  const tryWith = (identity) => new Promise((resolveP, rejectP) => {
+    execFile('lark-cli', [...args, '--as', identity], opts, (err, stdout) => {
+      if (err) rejectP(err);
+      else resolveP(stdout);
     });
   });
 
@@ -81,80 +97,46 @@ function larkExecAsync(args) {
 }
 
 // ---------------------------------------------------------------------------
-// 缓存文件辅助函数
+// 临时文件辅助函数（实现细节，落 OS tmpdir，不进工作区）
 // ---------------------------------------------------------------------------
-function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
-}
 
-function maybeDropFile(filePath, drop) {
-  if (drop && filePath && existsSync(filePath)) {
-    unlinkSync(filePath);
-    console.error(`已删除临时文件: ${filePath}`);
-  }
-}
-
-/** 将源文件复制到 cache/ 目录并加上时间戳命名，返回相对路径 */
-function stageInCache(srcPath) {
-  ensureCacheDir();
-  const rel = join('cache', `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
-  writeFileSync(join(__dirname, rel), readFileSync(resolve(srcPath), 'utf-8'));
-  return rel;
+/** 在 tmpdir 下建一个本调用专属子目录，返回其路径（lark-cli 要求 @文件在其 CWD 内） */
+function newTempDir(label) {
+  const dir = join(tmpdir(), `templates-${process.pid}-${label}-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 // ---------------------------------------------------------------------------
 // CLI 命令
 // ---------------------------------------------------------------------------
 
-/**
- * 列出单个文件夹下的文件（同步）。
- * 返回解析后的文件数组（可能包含子文件夹和文档）。
- */
-function listFolderFiles(folderToken) {
-  ensureCacheDir();
-  const paramsFile = join('cache', `params-list-${Date.now()}.json`);
-  writeFileSync(join(__dirname, paramsFile), JSON.stringify({ folder_token: folderToken, page_size: '200' }));
-
-  try {
-    const output = larkExec([
-      'drive', 'files', 'list',
-      '--params', `@${paramsFile}`,
-      '--format', 'json',
-      '--page-all',
-    ]);
-    const data = JSON.parse(output);
-    return data.data?.files || data.files || [];
-  } finally {
-    if (existsSync(join(__dirname, paramsFile))) unlinkSync(join(__dirname, paramsFile));
-  }
-}
-
-/** 异步版本 — 用于并行查询子文件夹 */
-async function listFolderFilesAsync(folderToken) {
-  ensureCacheDir();
-  const paramsFile = join('cache', `params-list-${Date.now()}.json`);
-  writeFileSync(join(__dirname, paramsFile), JSON.stringify({ folder_token: folderToken, page_size: '200' }));
+/** 列出单个文件夹下的文件，返回解析后的文件数组（含子文件夹和文档） */
+async function listFolderFiles(folderToken) {
+  const dir = newTempDir('list');
+  const paramsName = 'params.json';
+  writeFileSync(join(dir, paramsName), JSON.stringify({ folder_token: folderToken, page_size: '200' }));
 
   try {
     const output = await larkExecAsync([
       'drive', 'files', 'list',
-      '--params', `@${paramsFile}`,
+      '--params', `@${paramsName}`,
       '--format', 'json',
       '--page-all',
-    ]);
+    ], dir);
     const data = JSON.parse(output);
     return data.data?.files || data.files || [];
   } finally {
-    if (existsSync(join(__dirname, paramsFile))) unlinkSync(join(__dirname, paramsFile));
+    if (existsSync(join(dir, paramsName))) unlinkSync(join(dir, paramsName));
   }
 }
 
 async function cmdList() {
-  const folderToken = process.env.FEISHU_FOLDER_TOKEN;
-  if (!folderToken) throw new Error('.env 中未设置 FEISHU_FOLDER_TOKEN');
+  const folderToken = process.env.FEISHU_TEMPLATE_FOLDER_TOKEN;
+  if (!folderToken) throw new Error('config.json env 中未设置 FEISHU_TEMPLATE_FOLDER_TOKEN');
 
   // 第一步：列出根目录文件 — 收集 docx 文档 + 识别子文件夹
-  const rootFiles = listFolderFiles(folderToken);
+  const rootFiles = await listFolderFiles(folderToken);
 
   const results = [];
 
@@ -177,7 +159,7 @@ async function cmdList() {
 
   const subResults = await Promise.all(
     subFolders.map(async (folder) => {
-      const files = await listFolderFilesAsync(folder.token);
+      const files = await listFolderFiles(folder.token);
       return files
         .filter(f => f.type === 'docx' || f.type === 'doc')
         .map(f => ({
@@ -218,18 +200,16 @@ async function cmdRead(docId) {
 async function cmdCreate(args) {
   let title;
   let filePath;
-  let drop = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--title') title = args[++i];
     else if (args[i] === '--file') filePath = args[++i];
-    else if (args[i] === '--drop') drop = true;
   }
 
-  if (!title) throw new Error('用法: node templates.js create --title "标题" [--file <路径>] [--drop]');
+  if (!title) throw new Error('用法: node templates.js create --title "标题" [--file <路径>]');
 
-  const folderToken = process.env.FEISHU_FOLDER_TOKEN;
-  if (!folderToken) throw new Error('.env 中未设置 FEISHU_FOLDER_TOKEN');
+  const folderToken = process.env.FEISHU_TEMPLATE_FOLDER_TOKEN;
+  if (!folderToken) throw new Error('config.json env 中未设置 FEISHU_TEMPLATE_FOLDER_TOKEN');
 
   const cliArgs = [
     'docs', '+create',
@@ -237,58 +217,50 @@ async function cmdCreate(args) {
     '--parent-token', folderToken,
   ];
 
-  let stagedFile;
+  let absFilePath;
   if (filePath) {
-    stagedFile = stageInCache(filePath);
-    cliArgs.push('--content', `@${stagedFile}`, '--doc-format', 'markdown');
+    // 直接用 agent 提供的 scratch 文件：cwd 设到文件所在目录，@传相对 basename（lark-cli 要求 CWD 内相对路径）
+    absFilePath = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+    if (!existsSync(absFilePath)) throw new Error(`文件不存在: ${absFilePath}`);
+    cliArgs.push('--content', `@${basename(absFilePath)}`, '--doc-format', 'markdown');
   } else {
     cliArgs.push('--content', `# ${title}`, '--doc-format', 'markdown');
   }
 
-  try {
-    const output = larkExec(cliArgs);
-    const data = JSON.parse(output);
-    const docId = data.data?.doc_id || data.data?.document?.document_id || data.data?.document_id || data.document_id;
-    if (!docId) throw new Error(`创建文档失败: 未返回 document_id\n输出: ${output}`);
-    console.error(`已创建文档: ${docId}`);
-    console.log(JSON.stringify({ document_id: docId, title }, null, 2));
-  } finally {
-    if (stagedFile && existsSync(join(__dirname, stagedFile))) unlinkSync(join(__dirname, stagedFile));
-    if (filePath) maybeDropFile(resolve(filePath), drop);
-  }
+  const output = larkExec(cliArgs, absFilePath ? dirname(absFilePath) : undefined);
+  const data = JSON.parse(output);
+  const docId = data.data?.doc_id || data.data?.document?.document_id || data.data?.document_id || data.document_id;
+  if (!docId) throw new Error(`创建文档失败: 未返回 document_id\n输出: ${output}`);
+  console.error(`已创建文档: ${docId}`);
+  console.log(JSON.stringify({ document_id: docId, title }, null, 2));
 }
 
 async function cmdUpdate(args) {
   const docId = args[0];
-  if (!docId) throw new Error('用法: node templates.js update <doc_id> --file <路径> [--drop]');
+  if (!docId) throw new Error('用法: node templates.js update <doc_id> --file <路径>');
 
   let filePath;
-  let drop = false;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--file') filePath = args[++i];
-    else if (args[i] === '--drop') drop = true;
   }
 
-  if (!filePath) throw new Error('用法: node templates.js update <doc_id> --file <路径> [--drop]');
+  if (!filePath) throw new Error('用法: node templates.js update <doc_id> --file <路径>');
 
-  const stagedFile = stageInCache(filePath);
+  // 直接用 agent 提供的 scratch 文件：cwd 设到文件所在目录，@传相对 basename（lark-cli 要求 CWD 内相对路径）
+  const absFilePath = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+  if (!existsSync(absFilePath)) throw new Error(`文件不存在: ${absFilePath}`);
 
-  try {
-    larkExec([
-      'docs', '+update',
-      '--api-version', 'v2',
-      '--doc', docId,
-      '--command', 'overwrite',
-      '--content', `@${stagedFile}`,
-      '--doc-format', 'markdown',
-    ]);
+  larkExec([
+    'docs', '+update',
+    '--api-version', 'v2',
+    '--doc', docId,
+    '--command', 'overwrite',
+    '--content', `@${basename(absFilePath)}`,
+    '--doc-format', 'markdown',
+  ], dirname(absFilePath));
 
-    console.error(`已更新文档: ${docId}`);
-    console.log(JSON.stringify({ updated: true, document_id: docId }, null, 2));
-  } finally {
-    if (existsSync(join(__dirname, stagedFile))) unlinkSync(join(__dirname, stagedFile));
-    maybeDropFile(resolve(filePath), drop);
-  }
+  console.error(`已更新文档: ${docId}`);
+  console.log(JSON.stringify({ updated: true, document_id: docId }, null, 2));
 }
 
 async function cmdDelete(args) {
@@ -300,9 +272,9 @@ async function cmdDelete(args) {
     if (args[i] === '--password') password = args[++i];
   }
 
-  const envPassword = process.env.FEISHU_DELETE_PASSWORD;
+  const envPassword = process.env.FEISHU_TEMPLATE_DELETE_PASSWORD;
   if (envPassword) {
-    if (!password) throw new Error('需要密码（已设置 FEISHU_DELETE_PASSWORD）');
+    if (!password) throw new Error('需要密码（已设置 FEISHU_TEMPLATE_DELETE_PASSWORD）');
     if (password !== envPassword) throw new Error('密码错误');
   }
 
@@ -329,12 +301,15 @@ async function main() {
       '命令:\n' +
       '  list                                         列出文件夹中的文档\n' +
       '  read <doc_id>                                读取文档内容\n' +
-      '  create --title "标题" [--file 路径] [--drop]  创建文档\n' +
-      '  update <doc_id> --file <路径> [--drop]       更新文档（覆盖）\n' +
+      '  create --title "标题" [--file 路径]          创建文档\n' +
+      '  update <doc_id> --file <路径>               更新文档（覆盖）\n' +
       '  delete <doc_id> --password <密码>            删除文档',
     );
     process.exit(1);
   }
+
+  // 凭证/配置在主入口统一加载
+  loadConfig();
 
   try {
     switch (command) {
