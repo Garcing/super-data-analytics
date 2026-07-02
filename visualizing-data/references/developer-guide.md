@@ -13,18 +13,18 @@ visualizing-data/
   scripts/
     chart.py                       稳定 CLI 入口
     chart_renderer/
-      cli.py                       参数解析、主流程、JSON stdout
+      cli.py                       编排层：参数解析、三态 --data 读取、--save 格式推断、主流程
       contract.py                  输入契约校验，生成 ChartSpec
-      io.py                        三态 --data 读取、--save 格式推断
       fonts.py                     中文字体 fallback 和负号配置
       theme.py                     Seaborn/Matplotlib 共享主题与画布
-      render.py                    图表类型到 renderer 模块的分发与导出
-      quality.py                   输出文件和 PNG 非空检查
+      render.py                    图表分发、savefig 导出、导出后质量检查
       renderers/                   每种图表的 Matplotlib Figure 生成逻辑
   tests/
     test_chart_cli.py              CLI 合同、渲染 smoke、边界回归测试
     fixtures/                      典型输入样例
 ```
+
+模块分两层：`cli.py` 是**编排层**（参数 + 输入读取 + 格式推断 + 主流程），`contract.py` / `render.py` / `renderers/` 是**引擎层**（校验、渲染、导出）。没有独立的 `io.py` / `quality.py`——输入读取只服务 CLI，住在 `cli.py`；导出后检查紧贴 `savefig`，住在 `render.py`。
 
 skills 文件夹**不放动态资源**：临时输入 JSON 写到 `<工作区>/.super-data-analytics/scratch/`，生成图片落到 `<工作区>/.super-data-analytics/results/`（已在仓库根 `.gitignore`）。不再有 `scripts/input/`、`scripts/output/` 目录。
 
@@ -34,9 +34,9 @@ skills 文件夹**不放动态资源**：临时输入 JSON 写到 `<工作区>/.
 chart.py
   -> chart_renderer.cli.main()
     -> parse_args()                解析 --data / --save / --dpi；--save 扩展名决定格式
-    -> io.read_data_source()       三态路由：inline / @file / stdin
+    -> read_data_source()          三态路由：inline / @file / stdin（均在 cli.py）
     -> contract.validate()
-    -> io.ensure_save_parent()
+    -> ensure_save_parent()
     -> render.render_chart()
        -> fonts.configure_fonts()
        -> theme.apply_theme()
@@ -44,8 +44,8 @@ chart.py
        -> renderer.render(spec, dpi)
        -> fig.savefig(...)
        -> plt.close(fig)
-    -> quality.ensure_output_exists()
-    -> quality.ensure_png_nonblank()
+    -> render.ensure_output_exists()   导出后检查也住在 render.py
+    -> render.ensure_png_nonblank()
     -> stderr "结果已保存到: <path>"
     -> stdout JSON
 ```
@@ -54,10 +54,10 @@ chart.py
 
 `scripts/chart.py` 只做入口转发，尽量不要在这里加逻辑。
 
-`chart_renderer/cli.py` 负责：
+`chart_renderer/cli.py` 是编排层，负责：
 
 - 用 `JsonArgumentParser` 接管 argparse 错误，保证参数错误也输出 JSON。
-- `--data` 三态路由（对齐 querying-data 的 `--query`）：`-`/不传 → stdin；`@<path>` → file；其他 → inline JSON。
+- `--data` 三态读取（对齐 querying-data 的 `--query`）：`-`/不传 → stdin；`@<path>` → file；其他 → inline JSON。stdin 读取带 TTY 守卫 + 线程超时，避免非交互环境下挂死。
 - `--save` 必填；扩展名 `.png` / `.svg` 决定输出格式，非法或缺扩展名报错（exit 2）。没有默认输出目录。
 - 校验 `--dpi` 是正整数。
 - 成功时输出：
