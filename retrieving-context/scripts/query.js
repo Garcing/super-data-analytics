@@ -3,9 +3,16 @@
  * query.js — Node.js vector search + graph expansion CLI for GraphRAG
  *
  * Usage:
- *   node scripts/query.js "用户问题" [--top-k 5] [--targets 表,指标]
+ *   node scripts/query.js --schema
+ *   node scripts/query.js --question "<问题>" [--top-k 5] [--targets 表,指标]
+ *   node scripts/query.js --cypher "<CYPHER>"
  *
- * Flow:
+ * --question / --cypher 各支持三态输入：
+ *   --question "<文本>"   inline
+ *   --question @<file>    文件
+ *   --question -          stdin（管道）
+ *
+ * Flow (vector mode):
  *   1. Encode question via Python embedding subprocess
  *   2. Search Neo4j vector indexes for each target entity
  *   3. Expand graph context via relationships
@@ -16,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import neo4j from "neo4j-driver";
 
-import { PROJECT_ROOT, SCRIPTS_DIR, loadEnv, pythonPath } from "./env.js";
+import { PROJECT_ROOT, SCRIPTS_DIR, loadConfig, pythonPath } from "./env.js";
 
 // ---------------------------------------------------------------------------
 // Internal properties to exclude from output
@@ -30,143 +37,102 @@ const INTERNAL_PROPS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// 1. Config loading
+// Config + model path helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Minimal YAML parser for graph-config.yaml.
- * Only supports flat key-value, one-level nested maps, and simple list-of-maps.
- * Sufficient for our config structure.
+ * Local model directory is conventional, derived from the HF model id's
+ * last segment: BAAI/bge-small-zh-v1.5 → scripts/pipeline/models/bge-small-zh-v1.5
  */
-function parseGraphConfig(configPath) {
-  const content = readFileSync(configPath, "utf-8");
-  const lines = content.split("\n");
-
-  const root = {};
-  let currentSection = null;
-  let currentEntity = null;
-  let inEntities = false;
-  let inRelationships = false;
-  let currentRel = null;
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\t/g, "  "); // normalize tabs to spaces
-    const trimmed = line.trim();
-
-    // Skip empty and comment lines
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const indent = line.length - line.trimStart().length;
-
-    // Top-level sections
-    if (indent === 0 && trimmed.endsWith(":") && !trimmed.startsWith("-")) {
-      const sectionName = trimmed.slice(0, -1).trim();
-      currentSection = sectionName;
-      inEntities = sectionName === "entities";
-      inRelationships = sectionName === "relationships";
-      currentEntity = null;
-      currentRel = null;
-
-      if (!root[sectionName]) {
-        root[sectionName] = inEntities || inRelationships ? {} : {};
-      }
-      continue;
-    }
-
-    // --- entities section ---
-    if (inEntities && indent === 2 && !trimmed.startsWith("-")) {
-      // Entity label as key
-      if (trimmed.endsWith(":")) {
-        const entityLabel = trimmed.slice(0, -1).trim();
-        currentEntity = entityLabel;
-        root.entities[entityLabel] = {};
-      }
-      continue;
-    }
-
-    if (inEntities && indent === 4 && currentEntity) {
-      const colonIdx = trimmed.indexOf(":");
-      if (colonIdx !== -1) {
-        const key = trimmed.slice(0, colonIdx).trim();
-        const val = trimmed.slice(colonIdx + 1).trim();
-        if (key === "vector_index") {
-          root.entities[currentEntity][key] = val !== "false";
-        } else {
-          root.entities[currentEntity][key] = val;
-        }
-      }
-      continue;
-    }
-
-    // --- relationships section ---
-    if (inRelationships && trimmed.startsWith("- type:")) {
-      const colonIdx = trimmed.indexOf(":", trimmed.indexOf("type") + 4);
-      const relType = trimmed.slice(colonIdx + 1).trim();
-      currentRel = { type: relType, match: {} };
-      if (!root.relationships._list) root.relationships._list = [];
-      root.relationships._list.push(currentRel);
-      continue;
-    }
-
-    if (inRelationships && currentRel) {
-      if (indent === 4) {
-        const colonIdx = trimmed.indexOf(":");
-        if (colonIdx !== -1) {
-          const key = trimmed.slice(0, colonIdx).trim();
-          const val = trimmed.slice(colonIdx + 1).trim();
-          if (key === "match") {
-            // match is a sub-map, handled at indent 6
-          } else if (key === "via" || key === "properties") {
-            // Skip for now, not needed for query expansion
-          } else {
-            currentRel[key] = val;
-          }
-        }
-      }
-      if (indent === 6) {
-        const colonIdx = trimmed.indexOf(":");
-        if (colonIdx !== -1) {
-          const key = trimmed.slice(0, colonIdx).trim();
-          const val = trimmed.slice(colonIdx + 1).trim();
-          currentRel.match[key] = val;
-        }
-      }
-    }
-
-    // --- other top-level sections (neo4j, embedding, feishu) ---
-    if (
-      currentSection &&
-      !inEntities &&
-      !inRelationships &&
-      indent === 2 &&
-      !trimmed.startsWith("-")
-    ) {
-      const colonIdx = trimmed.indexOf(":");
-      if (colonIdx !== -1) {
-        const key = trimmed.slice(0, colonIdx).trim();
-        const val = trimmed.slice(colonIdx + 1).trim();
-        if (!root[currentSection]) root[currentSection] = {};
-        root[currentSection][key] = val;
-      }
-    }
-  }
-
-  // Convert relationships from _list to array
-  if (root.relationships && root.relationships._list) {
-    root.relationships = root.relationships._list;
-  }
-
-  return root;
+function modelDirFromConfig(gc) {
+  const model = gc?.embedding?.model;
+  if (!model) return null;
+  const basename = String(model).split("/").pop();
+  if (!basename) return null;
+  return `scripts/pipeline/models/${basename}`;
 }
 
 // ---------------------------------------------------------------------------
-// 2. Encode question via Python subprocess
+// Tri-state text source resolution (--question / --cypher)
 // ---------------------------------------------------------------------------
 
 /**
- * Call Python embedding.py to encode text into a vector.
- * Returns a float array.
+ * Resolve a tri-state input value into its raw text.
+ *   "@" + path  → read file
+ *   "-" / null  → stdin (with a first-byte timeout so non-TTY callers
+ *                 that forgot to close stdin don't hang forever)
+ *   other       → inline string as-is
  */
+async function resolveText(value, kind) {
+  if (value === null || value === "-") {
+    return readFromStdin(kind);
+  }
+  if (value.startsWith("@")) {
+    const filePath = value.slice(1);
+    if (!filePath) {
+      console.error(`[query] ${kind} 值为 "@"，缺少文件路径`);
+      process.exit(1);
+    }
+    try {
+      return readFileSync(filePath, "utf-8").trim();
+    } catch (err) {
+      console.error(`[query] 无法读取 ${kind} 文件 ${filePath}: ${err.message}`);
+      process.exit(1);
+    }
+  }
+  if (!value) {
+    console.error(`[query] ${kind} 内容为空`);
+    process.exit(1);
+  }
+  return value;
+}
+
+async function readFromStdin(kind) {
+  const stream = process.stdin;
+  if (typeof stream.setEncoding === "function") stream.setEncoding("utf8");
+
+  const timeoutMs = Number(process.env.QUERY_STDIN_TIMEOUT_MS) || 15000;
+
+  const readPromise = (async () => {
+    let content = "";
+    for await (const chunk of stream) content += chunk;
+    return content.trim();
+  })();
+
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("STDIN_READ_TIMEOUT")), timeoutMs);
+  });
+
+  let content;
+  try {
+    content = await Promise.race([readPromise, timeoutPromise]);
+  } catch (err) {
+    if (stream.destroy) stream.destroy();
+    if (err && err.message === "STDIN_READ_TIMEOUT") {
+      console.error(
+        `[query] 等待 stdin 超时（${timeoutMs / 1000}s 内未收到 ${kind}）。\n` +
+          `常见原因：非交互环境里既没传 --${kind} "<文本>" / --${kind} @<文件>，stdin 也没关闭。\n` +
+          `解决：用 --${kind} 显式传入，或确保管道写完后关闭 stdin。`
+      );
+      process.exit(1);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!content) {
+    console.error(`[query] stdin 中的 ${kind} 为空`);
+    process.exit(1);
+  }
+  return content;
+}
+
+// ---------------------------------------------------------------------------
+// Encode question via Python subprocess
+// ---------------------------------------------------------------------------
+
 function encodeQuestion(text, modelPath, pyPath) {
   const scriptPath = join(SCRIPTS_DIR, "pipeline", "embedding.py");
   const absModelPath = resolve(PROJECT_ROOT, modelPath);
@@ -178,17 +144,11 @@ function encodeQuestion(text, modelPath, pyPath) {
 
   let stdout;
   try {
-    const buffer = execFileSync(pyPath, [
-      scriptPath,
-      "encode",
-      text,
-      "--model-path",
-      absModelPath,
-    ], {
-      encoding: "utf-8",
-      shell: true,
-      timeout: 60000,
-    });
+    const buffer = execFileSync(
+      pyPath,
+      [scriptPath, "encode", text, "--model-path", absModelPath],
+      { encoding: "utf-8", shell: true, timeout: 60000 }
+    );
     stdout = buffer;
   } catch (err) {
     console.error("[query] Python encode failed:", err.message);
@@ -205,7 +165,7 @@ function encodeQuestion(text, modelPath, pyPath) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Vector index search
+// Vector index search
 // ---------------------------------------------------------------------------
 
 /**
@@ -214,7 +174,9 @@ function encodeQuestion(text, modelPath, pyPath) {
  */
 async function findVectorIndexName(session, label) {
   try {
-    const result = await session.run("SHOW VECTOR INDEXES YIELD name, labelsOrTypes");
+    const result = await session.run(
+      "SHOW VECTOR INDEXES YIELD name, labelsOrTypes"
+    );
     for (const record of result.records) {
       const labels = record.get("labelsOrTypes");
       if (labels && labels.includes(label)) {
@@ -227,15 +189,9 @@ async function findVectorIndexName(session, label) {
   return null;
 }
 
-/**
- * Search a vector index for the given label.
- * Returns array of { id, score, properties }.
- */
 async function searchVectorIndex(session, indexName, label, embedding, topK) {
   const escLabel = label.replace(/`/g, "``");
 
-  // db.index.vector.queryNodes takes index name as a string parameter,
-  // not a backtick-escaped identifier.
   const cypher = `
     CALL db.index.vector.queryNodes($indexName, $topK, $embedding)
     YIELD node, score
@@ -265,14 +221,9 @@ async function searchVectorIndex(session, indexName, label, embedding, topK) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Graph context expansion
+// Graph context expansion
 // ---------------------------------------------------------------------------
 
-/**
- * For a given node, expand graph context by following relationships.
- * Returns an object keyed by related entity label, each value is an
- * array of property objects.
- */
 async function fetchGraphContext(
   session,
   label,
@@ -283,7 +234,6 @@ async function fetchGraphContext(
   const context = {};
   const escLabel = label.replace(/`/g, "``");
 
-  // Find all relationships that involve this label
   const relevantRels = relationships.filter(
     (rel) => rel.from === label || rel.to === label
   );
@@ -295,19 +245,12 @@ async function fetchGraphContext(
     const escOther = otherLabel.replace(/`/g, "``");
     const escRelType = rel.type.replace(/`/g, "``");
 
-    // Determine direction and match field
     let cypher;
     if (isSource) {
-      // (this)-[r]->(other)  where this.match.source_field == other.match.target_field
       const srcField = rel.match.source_field;
-      const tgtField = rel.match.target_field;
       const escSrcField = srcField;
-      const escTgtField = tgtField;
 
-      // Handle self-referencing (e.g., 表-关联-表 via edge table)
       if (rel.from === rel.to && rel.via) {
-        // Self-referencing with via table: skip for context expansion
-        // (these use separate edge nodes, handled differently)
         continue;
       }
 
@@ -318,10 +261,7 @@ async function fetchGraphContext(
         LIMIT 20
       `;
     } else {
-      // (other)-[r]->(this)
-      const srcField = rel.match.source_field;
       const tgtField = rel.match.target_field;
-      const escSrcField = srcField;
       const escTgtField = tgtField;
 
       cypher = `
@@ -360,34 +300,26 @@ async function fetchGraphContext(
 }
 
 // ---------------------------------------------------------------------------
-// 5. Cypher query mode
+// Cypher query mode
 // ---------------------------------------------------------------------------
 
-/**
- * Run a raw Cypher query and return results as JSON.
- * Used for count, list, filter, graph traversal questions
- * that vector search can't handle.
- */
-async function runCypher(driver, database, cypher, params = {}) {
+async function runCypher(driver, database, cypher) {
   const session = driver.session({ database });
   try {
-    const result = await session.run(cypher, params);
+    const result = await session.run(cypher);
     const rows = result.records.map((record) => {
       const obj = {};
       for (const key of record.keys) {
         let val = record.get(key);
 
-        // Clean Neo4j integers to JS numbers
         if (neo4j.isInt(val)) {
           val = val.toNumber();
         }
 
-        // Clean node properties
         if (val && typeof val === "object" && val.properties) {
           val = cleanProperties(val.properties);
         }
 
-        // Clean list of nodes
         if (Array.isArray(val)) {
           val = val.map((v) => {
             if (neo4j.isInt(v)) return v.toNumber();
@@ -408,43 +340,48 @@ async function runCypher(driver, database, cypher, params = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. CLI argument parsing
+// Schema introspection (--schema): list entities + relationships
 // ---------------------------------------------------------------------------
 
-function parseArgs(argv) {
-  const args = argv.slice(2);
-  let question = null;
-  let topK = 5;
-  let targets = null;
-  let cypher = null;
-  let cypherParams = null;
+function buildSchema(gc) {
+  const entities = [];
+  for (const [label, cfg] of Object.entries(gc.entities || {})) {
+    entities.push({
+      label,
+      key_field: cfg.key_field,
+      table_id: cfg.table_id,
+      vector_index: cfg.vector_index !== false,
+    });
+  }
 
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--top-k" && args[i + 1]) {
-      topK = parseInt(args[++i], 10);
-    } else if (args[i] === "--targets" && args[i + 1]) {
-      targets = args[++i].split(",").map((t) => t.trim());
-    } else if (args[i] === "--cypher" && args[i + 1]) {
-      cypher = args[++i];
-    } else if (args[i] === "--params" && args[i + 1]) {
-      cypherParams = JSON.parse(args[++i]);
-    } else if (!args[i].startsWith("-")) {
-      question = args[i];
+  const relationships = (gc.relationships || []).map((rel) => {
+    const out = { type: rel.type, from: rel.from, to: rel.to };
+    if (rel.match) {
+      out.match = {
+        source_field: rel.match.source_field,
+        target_field: rel.match.target_field,
+      };
     }
-  }
+    if (rel.via) {
+      out.via = {
+        table_id: rel.via.table_id,
+        from_field: rel.via.from_field,
+        to_field: rel.via.to_field,
+        properties: rel.via.properties || [],
+      };
+    }
+    return out;
+  });
 
-  if (!question && !cypher) {
-    console.error("Usage:");
-    console.error("  node scripts/query.js \"用户问题\" [--top-k 5] [--targets 表,指标]");
-    console.error("  node scripts/query.js --cypher \"MATCH ... RETURN ...\" [--params '{}']");
-    process.exit(1);
-  }
-
-  return { question, topK, targets, cypher, cypherParams };
+  return {
+    embedding: gc.embedding || {},
+    entities,
+    relationships,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// 6. Clean properties helper
+// Clean properties helper
 // ---------------------------------------------------------------------------
 
 function cleanProperties(rawProps) {
@@ -458,23 +395,113 @@ function cleanProperties(rawProps) {
 }
 
 // ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+function parseArgs(argv) {
+  const args = argv.slice(2);
+  let question = null;
+  let cypher = null;
+  let topK = 5;
+  let targets = null;
+  let schema = false;
+  let hasQuestion = false;
+  let hasCypher = false;
+
+  // 读取 --question / --cypher 的值：
+  //   下一个 token 不存在 / 是另一个 flag（"-" 开头但不是单纯 "-"）→ stdin，不消费
+  //   单独的 "-" → 显式 stdin 标记，消费它
+  //   其它 → inline 值或 @file，消费它
+  const readTextValue = (i) => {
+    const next = args[i + 1];
+    if (next === undefined) return { value: "-", advance: 0 };
+    if (next === "-") return { value: "-", advance: 1 };
+    if (next.startsWith("-")) return { value: "-", advance: 0 };
+    return { value: next, advance: 1 };
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--schema") {
+      schema = true;
+    } else if (args[i] === "--top-k" && args[i + 1]) {
+      topK = parseInt(args[++i], 10);
+    } else if (args[i] === "--targets" && args[i + 1]) {
+      targets = args[++i].split(",").map((t) => t.trim());
+    } else if (args[i] === "--question") {
+      hasQuestion = true;
+      const v = readTextValue(i);
+      question = v.value;
+      i += v.advance;
+    } else if (args[i] === "--cypher") {
+      hasCypher = true;
+      const v = readTextValue(i);
+      cypher = v.value;
+      i += v.advance;
+    } else {
+      console.error(`[query] 未知参数: ${args[i]}`);
+      printUsage();
+      process.exit(1);
+    }
+  }
+
+  if (schema) return { schema: true };
+
+  if (!hasQuestion && !hasCypher) {
+    printUsage();
+    process.exit(1);
+  }
+  if (hasQuestion && hasCypher) {
+    console.error("[query] --question 与 --cypher 只能二选一");
+    process.exit(1);
+  }
+
+  return {
+    schema: false,
+    question: hasQuestion ? question : null,
+    cypher: hasCypher ? cypher : null,
+    topK,
+    targets,
+  };
+}
+
+function printUsage() {
+  console.error("Usage:");
+  console.error("  node scripts/query.js --schema");
+  console.error(
+    '  node scripts/query.js --question "<问题>" [--top-k 5] [--targets 表,指标]'
+  );
+  console.error('  node scripts/query.js --cypher "<CYPHER>"');
+  console.error("  # --question / --cypher 支持 inline / @file / -(stdin) 三态");
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const { question, topK, targets, cypher, cypherParams } = parseArgs(process.argv);
+  const parsed = parseArgs(process.argv);
 
-  // Load config
-  const env = loadEnv();
-  const config = parseGraphConfig(join(PROJECT_ROOT, "graph-config.yaml"));
+  const config = loadConfig();
+  const gc = config["graph-config"] || {};
+  const envCfg = config.env || {};
 
-  const neo4jUri = config.neo4j?.uri || "bolt://localhost:7687";
-  const neo4jDatabase = config.neo4j?.database || "neo4j";
-  const neo4jUser = env.NEO4J_USER || "neo4j";
-  const neo4jPassword = env.NEO4J_PASSWORD;
+  // --- Schema mode: print entities + relationships, no DB needed ---
+  if (parsed.schema) {
+    console.log(JSON.stringify(buildSchema(gc), null, 2));
+    return;
+  }
+
+  const { question, cypher, topK, targets } = parsed;
+
+  const neo4jUri = envCfg.NEO4J_URI || "bolt://localhost:7687";
+  const neo4jDatabase = envCfg.NEO4J_DATABASE || "neo4j";
+  const neo4jUser = envCfg.NEO4J_USER || "neo4j";
+  const neo4jPassword = envCfg.NEO4J_PASSWORD;
 
   if (!neo4jPassword) {
-    console.error("[query] NEO4J_PASSWORD not found in .env");
+    console.error(
+      "[query] NEO4J_PASSWORD 未在 config.json 的 env 块中找到"
+    );
     process.exit(1);
   }
 
@@ -485,20 +512,19 @@ async function main() {
 
   try {
     // --- Cypher mode ---
-    if (cypher) {
-      console.error(`[query] Cypher: ${cypher}`);
-      const rows = await runCypher(driver, neo4jDatabase, cypher, cypherParams || {});
-      console.log(JSON.stringify({ cypher, rows }, null, 2));
+    if (cypher !== null) {
+      const cypherText = await resolveText(cypher, "cypher");
+      console.error(`[query] Cypher: ${cypherText}`);
+      const rows = await runCypher(driver, neo4jDatabase, cypherText);
+      console.log(JSON.stringify({ cypher: cypherText, rows }, null, 2));
       return;
     }
 
-    // --- Vector search mode (default) ---
+    // --- Vector search mode ---
     const modelPath =
-      config.embedding?.model_path ||
-      "scripts/pipeline/models/bge-small-zh-v1.5";
+      modelDirFromConfig(gc) || "scripts/pipeline/models/bge-small-zh-v1.5";
 
-    // Determine which entities to search
-    const entities = config.entities || {};
+    const entities = gc.entities || {};
     const targetEntities = {};
     for (const [label, cfg] of Object.entries(entities)) {
       const hasVectorIndex = cfg.vector_index !== false;
@@ -507,7 +533,9 @@ async function main() {
       targetEntities[label] = cfg;
     }
 
-    console.error(`[query] Question: ${question}`);
+    const questionText = await resolveText(question, "question");
+
+    console.error(`[query] Question: ${questionText}`);
     console.error(`[query] Top-K: ${topK}`);
     console.error(
       `[query] Targets: ${targets ? targets.join(", ") : "all vector-indexed"}`
@@ -516,27 +544,21 @@ async function main() {
       `[query] Entities to search: ${Object.keys(targetEntities).join(", ")}`
     );
 
-    // Resolve Python interpreter path (via shared env.js)
-    const pyPath = pythonPath(env);
+    const pyPath = pythonPath(config);
 
-    // Step 1: Encode question
-    const embedding = encodeQuestion(question, modelPath, pyPath);
+    const embedding = encodeQuestion(questionText, modelPath, pyPath);
     console.error(`[query] Embedding dimensions: ${embedding.length}`);
 
-    // Step 2: Connect to Neo4j
     const allResults = [];
-
-    const relationships = Array.isArray(config.relationships)
-      ? config.relationships
+    const relationships = Array.isArray(gc.relationships)
+      ? gc.relationships
       : [];
 
-    // Step 3: Discover vector index names and search
     for (const [label, cfg] of Object.entries(targetEntities)) {
       const keyField = cfg.key_field;
 
       const session = driver.session({ database: neo4jDatabase });
       try {
-        // Discover the actual index name for this label
         const indexName = await findVectorIndexName(session, label);
         if (!indexName) {
           console.error(`[query] No vector index found for ${label}, skipping`);
@@ -559,7 +581,6 @@ async function main() {
           const cleanProps = cleanProperties(hit.properties);
           const keyFieldValue = cleanProps[keyField];
 
-          // Step 4: Expand graph context
           let graphContext = {};
           if (keyFieldValue && relationships.length > 0) {
             graphContext = await fetchGraphContext(
@@ -583,15 +604,9 @@ async function main() {
       }
     }
 
-    // Step 5: Sort by score descending
     allResults.sort((a, b) => b.score - a.score);
 
-    // Step 6: Output JSON
-    const output = {
-      question,
-      results: allResults,
-    };
-
+    const output = { question: questionText, results: allResults };
     console.log(JSON.stringify(output, null, 2));
   } finally {
     await driver.close();

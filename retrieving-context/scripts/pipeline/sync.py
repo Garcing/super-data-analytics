@@ -1,12 +1,16 @@
-"""sync.py — Main orchestrator for GraphRAG sync pipeline."""
+"""sync.py — Main orchestrator for GraphRAG sync pipeline.
+
+Config source: ~/.super-data-analytics/config.json (shared with querying-data).
+  - env block:           NEO4J_*, FEISHU_GRAPH_BITABLE_APP_TOKEN, PYTHON_PATH, ...
+  - graph-config block:  embedding / entities / relationships
+"""
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
-from pathlib import Path
 
-import yaml
 from neo4j import GraphDatabase
 
 from feishu_reader import fetch_table_fields, fetch_table_records
@@ -19,35 +23,40 @@ from embedding import (
 
 # scripts/pipeline/sync.py → project root is two levels up
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_CONFIG_PATH = os.path.expanduser(os.path.join("~", ".super-data-analytics", "config.json"))
+
+# Local model directory is conventional: scripts/pipeline/models/<model basename>
+# BAAI/bge-small-zh-v1.5 → bge-small-zh-v1.5
+_MODELS_DIR = os.path.join(_PROJECT_ROOT, "scripts", "pipeline", "models")
 
 
 def load_config(config_path=None):
     if config_path is None:
-        config_path = os.path.join(_PROJECT_ROOT, "graph-config.yaml")
+        config_path = _CONFIG_PATH
     with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return json.load(f)
 
 
-def load_env(env_path=None):
-    if env_path is None:
-        env_path = os.path.join(_PROJECT_ROOT, ".env")
-    if not os.path.exists(env_path):
-        return
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip())
+def load_env(cfg):
+    """Populate os.environ from config.json's env block (existing env wins)."""
+    for key, value in (cfg.get("env") or {}).items():
+        os.environ.setdefault(key, str(value))
 
 
-def fetch_all_feishu_data(cfg):
+def model_path_for(model_name):
+    """Conventional local path for an HF model id."""
+    basename = str(model_name).split("/")[-1]
+    return os.path.join(_MODELS_DIR, basename)
+
+
+def fetch_all_feishu_data(gc):
     """Fetch records for all entities and via tables."""
-    app_token = cfg["feishu"]["app_token"]
-    entities = cfg["entities"]
-    relationships = cfg["relationships"]
+    app_token = os.environ.get("FEISHU_GRAPH_BITABLE_APP_TOKEN")
+    if not app_token:
+        print("错误：config.json 的 env 块缺少 FEISHU_GRAPH_BITABLE_APP_TOKEN")
+        sys.exit(1)
+    entities = gc["entities"]
+    relationships = gc["relationships"]
     feishu_data = {}
 
     # Fetch entity records
@@ -96,16 +105,17 @@ def main():
     parser.add_argument("--download-model", action="store_true", help="Download embedding model")
     args = parser.parse_args()
 
-    load_env()
     cfg = load_config()
+    load_env(cfg)
+    gc = cfg["graph-config"]
 
-    # Resolve paths
-    project_dir = _PROJECT_ROOT
-    model_path = os.path.join(project_dir, cfg["embedding"]["model_path"])
-    dimensions = cfg["embedding"]["dimensions"]
+    # Resolve model path from embedding.model (conventional, no config field)
+    model_name = gc["embedding"]["model"]
+    model_path = model_path_for(model_name)
+    dimensions = gc["embedding"]["dimensions"]
 
     if args.download_model:
-        download_model(model_path, cfg["embedding"]["model"])
+        download_model(model_path, model_name)
         return
 
     # Check model exists for embed phase
@@ -117,7 +127,7 @@ def main():
     # Phase 1: Fetch
     if args.only in (None, "fetch", "graph"):
         print("\n=== Phase 1: 拉取飞书数据 ===")
-        feishu_data = fetch_all_feishu_data(cfg)
+        feishu_data = fetch_all_feishu_data(gc)
         print(f"  共拉取 {len(feishu_data)} 个数据集")
     else:
         feishu_data = {}
@@ -128,11 +138,14 @@ def main():
             print(f"  [{label}]: {len(records)} 条")
         return
 
-    # Connect to Neo4j
-    uri = cfg["neo4j"]["uri"]
-    database = cfg["neo4j"]["database"]
+    # Connect to Neo4j (credentials from config.json env block, loaded into os.environ)
+    uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+    database = os.environ.get("NEO4J_DATABASE", "neo4j")
     user = os.environ.get("NEO4J_USER", "neo4j")
     password = os.environ.get("NEO4J_PASSWORD", "")
+    if not password:
+        print("错误：config.json 的 env 块缺少 NEO4J_PASSWORD")
+        sys.exit(1)
     driver = GraphDatabase.driver(uri, auth=(user, password))
 
     try:
@@ -142,11 +155,11 @@ def main():
             if args.only is None:
                 clear_graph(driver)
             print("  创建节点...")
-            node_counts = build_nodes(driver, cfg["entities"], feishu_data)
+            node_counts = build_nodes(driver, gc["entities"], feishu_data)
             for label, count in node_counts.items():
                 print(f"    [{label}]: {count} 个节点")
             print("  创建关系...")
-            rel_counts = build_relationships(driver, cfg["relationships"], cfg["entities"], feishu_data)
+            rel_counts = build_relationships(driver, gc["relationships"], gc["entities"], feishu_data)
             for desc, count in rel_counts.items():
                 print(f"    {desc}: {count} 条")
 
@@ -154,14 +167,14 @@ def main():
         if args.only in (None, "embed"):
             print("\n=== Phase 3: 向量化 ===")
             print("  生成 search_text...")
-            st_counts = generate_search_text(driver, cfg["entities"])
+            st_counts = generate_search_text(driver, gc["entities"])
             for label, count in st_counts.items():
                 print(f"    [{label}]: {count} 条")
             print("  创建向量索引...")
-            indexes = create_vector_indexes(driver, cfg["entities"], dimensions)
+            indexes = create_vector_indexes(driver, gc["entities"], dimensions)
             print(f"  共 {len(indexes)} 个向量索引")
             print("  生成 embedding...")
-            emb_counts = embed_nodes(driver, cfg["entities"], model_path, dimensions, force=args.force_embed)
+            emb_counts = embed_nodes(driver, gc["entities"], model_path, dimensions, force=args.force_embed)
             for label, count in emb_counts.items():
                 print(f"    [{label}]: {count} 个")
 

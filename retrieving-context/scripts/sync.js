@@ -3,7 +3,7 @@
  * sync.js — Node.js wrapper around the Python sync pipeline.
  *
  * Resolves the correct Python interpreter (via shared env.js, which reads
- * PYTHON_PATH from .env), then spawns sync.py with all args passed through.
+ * PYTHON_PATH from config.json), then spawns sync.py with all args passed through.
  *
  * Usage:
  *   node scripts/sync.js                 # full sync (feishu → graph → embed)

@@ -34,7 +34,9 @@ _SKIP_PROPS = frozenset({
 })
 
 # scripts/pipeline/embedding.py → project root is two levels up
-_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "graph-config.yaml"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_CONFIG_PATH = Path.home() / ".super-data-analytics" / "config.json"
+_MODELS_DIR = _PROJECT_ROOT / "scripts" / "pipeline" / "models"
 
 
 # ---------------------------------------------------------------------------
@@ -52,14 +54,17 @@ def _should_vectorize(cfg: dict) -> bool:
 
 
 def _load_model_path_from_config() -> str | None:
-    """Read embedding.model_path from graph-config.yaml."""
-    import yaml
-
+    """Read embedding.model from config.json and derive the conventional
+    local model path (scripts/pipeline/models/<model basename>)."""
     if not _CONFIG_PATH.exists():
         return None
     with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    return config.get("embedding", {}).get("model_path")
+        config = json.load(f)
+    model = (config.get("graph-config") or {}).get("embedding", {}).get("model")
+    if not model:
+        return None
+    basename = str(model).split("/")[-1]
+    return str(_MODELS_DIR / basename)
 
 
 def _format_value(value) -> str:
@@ -83,7 +88,7 @@ def generate_search_text(driver, entities_config: dict) -> dict[str, int]:
 
     Args:
         driver: Neo4j driver instance.
-        entities_config: Entity definitions from graph-config.yaml.
+        entities_config: Entity definitions from config.json (graph-config.entities).
 
     Returns:
         dict mapping label -> count of nodes updated.
@@ -141,7 +146,7 @@ def create_vector_indexes(
 
     Args:
         driver: Neo4j driver instance.
-        entities_config: Entity definitions from graph-config.yaml.
+        entities_config: Entity definitions from config.json (graph-config.entities).
         dimensions: Vector embedding dimensions (default 512).
 
     Returns:
@@ -209,7 +214,7 @@ def embed_nodes(
 
     Args:
         driver: Neo4j driver instance.
-        entities_config: Entity definitions from graph-config.yaml.
+        entities_config: Entity definitions from config.json (graph-config.entities).
         model_path: Local path to the SentenceTransformer model.
         dimensions: Expected embedding dimensions.
         force: If True, re-embed even nodes that already have embeddings.
@@ -294,7 +299,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--model-path",
         default=None,
         help="Path to local SentenceTransformer model "
-             "(default: read from graph-config.yaml)",
+             "(default: derived from config.json embedding.model)",
     )
 
     return parser
@@ -311,13 +316,10 @@ def main() -> None:
             if model_path is None:
                 print(
                     "Error: --model-path not provided and cannot read "
-                    "from graph-config.yaml",
+                    "embedding.model from config.json",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            # Resolve relative to config file location
-            resolved = _CONFIG_PATH.parent / model_path
-            model_path = str(resolved)
 
         result = encode_texts(model_path, [args.text])
         print(json.dumps(result[0]))

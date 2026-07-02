@@ -82,7 +82,7 @@ def build_nodes(
 
     Args:
         driver: Neo4j driver instance.
-        entities_config: Entity definitions from graph-config.yaml.
+        entities_config: Entity definitions from config.json (graph-config.entities).
         feishu_data: Records keyed by label.
 
     Returns:
