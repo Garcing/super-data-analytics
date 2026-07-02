@@ -6,10 +6,16 @@ venv/
 # Environment
 .env
 
+# Workspace-local artifacts (results/scratch); shared config lives in ~/.super-data-analytics/
+.super-data-analytics/
+
 # Node
 node_modules/
 dist/
 .vercel/
+
+# Embedding model (92M,公开资源,首次同步时 `node sync.js --download-model` 自动从 HuggingFace 下载)
+retrieving-context/scripts/pipeline/models/
 
 # Output
 output/*.png
