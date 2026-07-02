@@ -5,7 +5,7 @@
 ## 命令
 
 ```bash
-python predicting_trends/scripts/forecast.py <input.json>
+python predicting-trends/scripts/forecast.py <input.json>
 ```
 
 命令会把 JSON 写到 stdout。`ok: true` 表示预测成功；`ok: false` 表示输入需要修正，或所选模型不适合当前数据。

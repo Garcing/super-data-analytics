@@ -22,7 +22,7 @@ node scripts/query.js <命令> --source <sql|powerbi> [参数]
 |---|---|
 | DAX / 语义模型 / 度量值 / Power BI / 看板 / 报表 / KPI 指标定义 | `--source powerbi` |
 | Hologres / 表 / SQL / 字段 / schema / 数仓分区 / OSS 外表 | `--source sql` |
-| 模糊（"查下 DAU"、"看看最近销量"），看不出走哪边 | 先问用户，或调 `retrieving-business-context` 拉业务上下文判定 |
+| 模糊（"查下 DAU"、"看看最近销量"），看不出走哪边 | 先问用户，或调 `retrieving-context` 拉业务上下文判定 |
 
 ## Step 2 读对应源的用法
 

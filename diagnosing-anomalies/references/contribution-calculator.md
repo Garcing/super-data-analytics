@@ -5,9 +5,9 @@
 ## 通用命令
 
 ```bash
-python diagnosing-anomaly/scripts/contribution.py add <input.json>
-python diagnosing-anomaly/scripts/contribution.py multiply <input.json>
-python diagnosing-anomaly/scripts/contribution.py ratio <input.json>
+python diagnosing-anomalies/scripts/contribution.py add <input.json>
+python diagnosing-anomalies/scripts/contribution.py multiply <input.json>
+python diagnosing-anomalies/scripts/contribution.py ratio <input.json>
 ```
 
 ## 输出字段

@@ -5,21 +5,18 @@
 ## 架构
 
 ```
-retrieving-business-context/     拉取业务上下文（飞书文档）
-aligning-requirements/           对齐需求口径
-querying-data/             统一数据查询（sql / powerbi，已实现）
-mining-business-insights/       挖掘业务洞察（骨架）
-diagnosing-anomaly/             指标异动归因方法论
-predicting_trends/              业务趋势预测和目标制定方法论
-evaluating-impact/              效果评估与实验检验方法论
-visualizing-data/                 生成确定性单图图表（Seaborn/Matplotlib，PNG/SVG）
-generating-insights-report/     生成洞察报告
-  scripts/html/                   HTML 报告（已实现，前端 + API + 发布）
+retrieving-context/              检索业务知识图谱（指标定义、数据资产、业务上下文）
+aligning-requirements/           对齐需求口径（入口路由）
+querying-data/                   统一数据查询（--source sql / powerbi，已实现）
+diagnosing-anomalies/            指标异动归因方法论
+predicting-trends/               业务趋势预测和目标制定方法论（name: predicting_trends）
+evaluating-impact/               效果评估与实验检验方法论
+visualizing-data/                生成确定性单图图表（Seaborn/Matplotlib，PNG/SVG）
+using-templates/                 报告模板生命周期管理（飞书个人文件夹，CLI）
+building-reports/                生成报告（按格式 html / image / streamlit / lark 路由）
+  scripts/html/                   HTML 报告（已实现，前端 + Blob + 发布）
   scripts/image/                  图片报告（apimart gpt-image-2，CLI + 编程式）
-  pdf/                            PDF 报告（骨架）
-  ppt/                            PPT 报告（骨架）
-dispatching-data-briefs/         分发数据简报（已实现）
-monitoring-metrics-alerts/       监控指标报警（骨架）
+  scripts/streamlit/              Streamlit 报告（本地预览 + Community Cloud 部署）
 ```
 
 ## 数据流
@@ -60,9 +57,9 @@ monitoring-metrics-alerts/       监控指标报警（骨架）
 
 以下 skill 不属于上述路径，但任何 skill 在执行中都可以随时调用：
 
-- `retrieving-business-context`：需要知道指标定义、表名、业务层级时
+- `retrieving-context`：需要知道指标定义、表名、业务层级时
 - `aligning-requirements`：执行中发现需求不明确时，可以中途补走对齐
-- `diagnosing-anomaly`：业务指标上涨、下跌、异常波动或告警后，需要严谨归因方法论时使用
+- `diagnosing-anomalies`：业务指标上涨、下跌、异常波动或告警后，需要严谨归因方法论时使用
 - `predicting_trends`：业务预测、趋势外推、目标制定、目标达成判断、资源预算预估等需要未来预测结果时使用
 - `evaluating-impact`：产品上线、运营活动、Push、发券、投放、A/B 实验、DID 试点等需要判断“动作是否有效、ROI 是否为正、是否可以全量/加码/停止”时使用。
 - `visualizing-data`：需要把结构化数据生成确定性单图 PNG/SVG 时使用；适合报告插图、文档图表、PPT/PDF 图表素材，尤其是数值必须准确时。
@@ -81,9 +78,9 @@ monitoring-metrics-alerts/       监控指标报警（骨架）
 
 ## Vercel 部署
 
-- 项目：`powerbi-analysis`，域名：`project-6hzz6.vercel.app`
+- 项目：`super-data-analytics`，域名：`www.super-data-analytics.online`
 - Blob Store：Public 访问模式
-- 重新部署：`cd generating-insights-report/scripts/html && rm -rf dist && vercel deploy --prod --force`
+- 重新部署：`cd building-reports/scripts/html && rm -rf dist && vercel deploy --prod --force --token $VERCEL_TOKEN`（token 来自 `~/.super-data-analytics/config.json`，无交互登录）
 - 必须先 `rm -rf dist` 清除构建缓存
 
 ## 前端技术栈
@@ -97,18 +94,12 @@ React 18 + Vite 6 + Tailwind CSS 3 + Recharts 2 + React Router 7
 ## 关键注意事项
 
 - **Vercel 构建缓存**：修改前端代码后必须 `rm -rf dist` 再部署
-- **API 路由**：`generating-insights-report/scripts/html/api/index.ts` 单文件，通过 URL 解析分发
 - **DAX 编写**：必须通过 `GetSemanticModelSchema` 确认字段名，参考 `querying-data/references/powerbi.md`
 - **@vercel/blob**：`put()` 必须指定 `access: 'public'`，读取用 `head()` + `fetch(url)`
-- **HTML 报告**：用 `scripts/html/report.js` 发布/列出/读取/删除报告（`publishReport` / `listReports` / `getReport` / `deleteReport` + 子命令 CLI）；接口与输入格式见 `generating-insights-report/references/report_to_html.md`
-- **图片报告**：用 `scripts/image/image.js` 生成图片（apimart gpt-image-2，异步提交→轮询→下载）；`node generating-insights-report/scripts/image/image.js "<提示词>" [--model|--size|--quality ...]`，`--dry-run` 零成本自检；接口与用法见 `generating-insights-report/references/report_to_image.md`
-- **Streamlit 报告**：用 `scripts/streamlit/`（本地预览 `streamlit run scripts/streamlit/app.py`，在 `generating-insights-report/` 下执行）；一份报告 = `scripts/streamlit/reports/*.py`，遵循 `references/report_to_streamlit.md`；线上 `https://super-data-analytics.streamlit.app/`，每份报告直达链接 = 线上地址/`<报告title>`；发布新报告 commit 后在 `generating-insights-report/` 下跑 `bash scripts/streamlit/deploy.sh`（subtree push 到 `Garcing/streamlit-reports`，Cloud 自动重新部署）
+- **HTML 报告**：用 `scripts/html/report.js` 发布/列出/读取/删除报告（`publishReport` / `listReports` / `getReport` / `deleteReport` + 子命令 CLI）；接口与输入格式见 `building-reports/references/report_to_html.md`
+- **图片报告**：用 `scripts/image/image.js` 生成图片（apimart gpt-image-2，异步提交→轮询→下载）；`node building-reports/scripts/image/image.js "<提示词>" [--model|--size|--quality ...]`，`--dry-run` 零成本自检；接口与用法见 `building-reports/references/report_to_image.md`
+- **Streamlit 报告**：用 `scripts/streamlit/`（本地预览 `streamlit run scripts/streamlit/app.py`，在 `building-reports/` 下执行）；一份报告 = `scripts/streamlit/reports/*.py`，遵循 `references/report_to_streamlit.md`；线上 `https://super-data-analytics.streamlit.app/`，每份报告直达链接 = 线上地址/`<报告title>`；发布新报告 commit 后在 `building-reports/` 下跑 `bash scripts/streamlit/deploy.sh`（subtree push 到 `Garcing/streamlit-reports`，Cloud 自动重新部署）
 
 ## 旧代码保留
 
-以下旧代码保留在原位置，待确认新框架稳定后清理：
-- `node_version/` — Node.js 旧位置（已迁移到 `querying-data/`）
-- `scripts/` — Python 脚本旧位置（已迁移到 `generating-insights-report/`）
-- `web-report/` — 前端旧位置（已迁移到 `generating-insights-report/scripts/html/`）
-- `references/` — DAX 文档旧位置（已迁移到 `querying-data/references/`）
-- `SKILL.md`（根目录）— 原 Python 版 skill 定义
+旧框架代码（`node_version/`、根 `scripts/`、`web-report/`、根 `references/`、根 `SKILL.md`）已在 1.0 重置时全部清理，当前目录树即最终结构。

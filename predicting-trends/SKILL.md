@@ -5,7 +5,7 @@ description: 业务预测和目标制定方法论。用于回答下月/下季度
 
 # 业务趋势预测
 
-本技能提供业务预测和目标制定的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取历史序列，调用 `visualizing-data` 生成预测图表，调用 `building-report` 承接报告交付。
+本技能提供业务预测和目标制定的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取历史序列，调用 `visualizing-data` 生成预测图表，调用 `building-reports` 承接报告交付。
 
 ## 核心原则
 
@@ -206,7 +206,7 @@ description: 业务预测和目标制定方法论。用于回答下月/下季度
 当已经拿到结构化历史序列时，可用本地脚本做确定性轻量预测：
 
 ```bash
-python predicting_trends/scripts/forecast.py <input.json>
+python predicting-trends/scripts/forecast.py <input.json>
 ```
 
 输入输出契约读取 `references/input-contract.md`。
@@ -232,4 +232,4 @@ python predicting_trends/scripts/forecast.py <input.json>
 - 需要 SQL 明细或聚合取数：调用 `querying-data --source sql`。
 - 发现近期异常、口径变化或结构断点：调用 `diagnosing-anomalies`。
 - 需要精确预测图表：调用 `visualizing-data`。
-- 需要沉淀成报告：调用 `building-report`。
+- 需要沉淀成报告：调用 `building-reports`。

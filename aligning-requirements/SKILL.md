@@ -36,13 +36,14 @@ metadata:
 | SKILL                             | 中文名称            | 简介                                                     |
 | --------------------------------- | ------------------- | -------------------------------------------------------- |
 | aligning-requirements（当前技能） | 对齐数据需求        | 入口技能，对齐用户数据需求，统一编排调度套件内其他SKILL  |
-| leveraging-report-templates       | 调用报告模板        | 调用沉淀的报告模板，数据播报/周期报告/复盘报告/专题分析  |
-| retrieving-business-context       | 检索业务上下文      | 调用graph-rag能力获取业务背景和数据资产上下文            |
+| using-templates       | 调用报告模板        | 调用沉淀的报告模板，数据播报/周期报告/复盘报告/专题分析  |
+| retrieving-context       | 检索业务上下文      | 调用graph-rag能力获取业务背景和数据资产上下文            |
 | querying-data                     | 查询数据（统一入口） | 统一数据查询（`--source sql` 连接数据库提交 SQL；`--source powerbi` 查询 PowerBI 语义模型） |
-| mining-business-insights          | 挖掘业务洞察        | 从数据分析方法库选择合适分析方法，挖掘业务洞察结论       |
-| diagnosing-anomaly                | 指标异动归因        | 指标上涨、下跌、异常波动或告警后的严谨归因方法论         |
+| diagnosing-anomalies                | 指标异动归因        | 指标上涨、下跌、异常波动或告警后的严谨归因方法论         |
 | predicting_trends                 | 业务趋势预测        | 指标预测、趋势外推、目标制定、达成判断和资源预算预估     |
-| generating-insights-report        | 生成洞察报告        | 汇总数据结果和分析结论，生成支持范围内格式的数据分析报告 |
+| evaluating-impact                 | 效果评估与实验检验  | A/B 实验、DID、ROI、是否全量/加码/停止的判断             |
+| visualizing-data                  | 数据可视化          | 从结构化数据生成确定性单图 PNG/SVG，数值必须准确时优先   |
+| building-reports        | 生成洞察报告        | 汇总数据结果和分析结论，生成支持范围内格式的数据分析报告 |
 
 ## 核心流程
 
@@ -52,20 +53,20 @@ metadata:
 
 当识别用户意图为以下情况，可以跳过此技能，直接调用相应技能来完成任务，**避免简单场景变重**
 
-- [ ] 用户只是想查询业务上下文，比如查询某个指标定义，查询有什么数据表（调用 `retrieving-business-context` ）
-- [ ] 用户对数据报告模板做增删改查的管理（调用 `leveraging-report-templates` )
+- [ ] 用户只是想查询业务上下文，比如查询某个指标定义，查询有什么数据表（调用 `retrieving-context` ）
+- [ ] 用户对数据报告模板做增删改查的管理（调用 `using-templates` )
 - [ ] 用户提供SQL代码/DAX语句，简单跑一下数据（调用 `querying-data --source sql` 或 `querying-data --source powerbi` )
-- [ ] 用户提供现成数据，在此基础上挖掘洞察/可视化（调用 `mining-business-insights` 或 `generating-insights-report` ）
-- [ ] 用户提供现成的数据分析结论，需要生成可视化报告（调用 `generating-insights-report` )
+- [ ] 用户提供现成数据，在此基础上挖掘洞察/可视化（按场景调用 `diagnosing-anomalies` / `predicting_trends` / `evaluating-impact`，或 `building-reports` ）
+- [ ] 用户提供现成的数据分析结论，需要生成可视化报告（调用 `building-reports` )
 - [ ] 用户明确调用 `super-data-analysis` 系列套件技能
 
 
 
 ### Phase1：对齐需求
 
-以用户提问内容为起点，调用 `retrieving-business-context` 获取更多上下文信息，填充以下需求模板
+以用户提问内容为起点，调用 `retrieving-context` 获取更多上下文信息，填充以下需求模板
 
-如用户提到数据播报/报告模板/分析框架，或特定报告模板名称，调用 `leveraging-report-templates` 匹配对应模板，并直接参考模板内容，跳到Phase2即可
+如用户提到数据播报/报告模板/分析框架，或特定报告模板名称，调用 `using-templates` 匹配对应模板，并直接参考模板内容，跳到Phase2即可
 
 ---
 
@@ -111,7 +112,7 @@ metadata:
 >
 > ②暂时没有指标支持这个数据需求，请联系数据分析同事补充
 
-通过调用  `retrieving-business-context` 完成以下指标卡片，目前尚未支持SQL取数，必须定位取数的PowerBI数据看板，并获得对应的语义模型ID
+通过调用  `retrieving-context` 完成以下指标卡片，目前尚未支持SQL取数，必须定位取数的PowerBI数据看板，并获得对应的语义模型ID
 
 | 指标名称 | 指标定义   | 数据看板名称 | 语义模型ID   |
 | -------- | ---------- | ------------ | ------------ |
@@ -124,7 +125,7 @@ metadata:
 
 > 是否必须：否，若未提供，时间范围酌情选择本月/近30天/近一周等；维度则非取数必要条件，直接返回指标结果
 
-通过调用  `retrieving-business-context` 完成数据维度+范围卡片，以下为示例
+通过调用  `retrieving-context` 完成数据维度+范围卡片，以下为示例
 
 | 维度名称 | 是否用作数据范围 | 数据范围说明 | 维度定义   |
 | -------- | ---------------- | ------------ | ---------- |
@@ -142,9 +143,9 @@ metadata:
 | 交付形式 | 补充说明                                                     |
 | -------- | ------------------------------------------------------------ |
 | 文本     | 直接返回文字结果，可以包含emoji, 表格或markdow格式           |
-| 图片     | 将分析结论通过图片形式呈现，调用 `generating-insights-report` 并声明图片 |
-| pdf      | 将分析结论以pdf文件形式程序，调用 `generating-insights-report` 并声明pdf |
-| web      | 将分析结论以pdf文件形式程序，调用 `generating-insights-report` 并声明web |
+| 图片     | 将分析结论通过图片形式呈现，调用 `building-reports` 并声明图片 |
+| pdf      | 将分析结论以pdf文件形式程序，调用 `building-reports` 并声明pdf |
+| web      | 将分析结论以pdf文件形式程序，调用 `building-reports` 并声明web |
 | 飞书文档 | 将分析结论呈现在飞书文档，调用 lark- 系列SKILL实现           |
 
 ---
@@ -159,10 +160,10 @@ metadata:
 
 ```text
 需求一：新注册引导流程用户次日留存下降分析
-querying-data --source powerbi 获取注册用户数、次日留存率、APP使用时长等指标，mining-business-insights 对比新版和旧版注册流程的留存率是否存在显著差异，generating-insights-report 生成可视化web报告
+querying-data --source powerbi 获取注册用户数、次日留存率、APP使用时长等指标，evaluating-impact 对比新版和旧版注册流程的留存率是否存在显著差异，building-reports 生成可视化web报告
 
 需求二：本月投诉率上升波动归因分析
-querying-data --source powerbi 获取订单数、订单投诉工单数等指标，diagnosing-anomaly 选择异动归因拆解方法，mining-business-insights 挖掘出上升最大贡献的投诉原因，generating-insights-report 生成可视化图片报告
+querying-data --source powerbi 获取订单数、订单投诉工单数等指标，diagnosing-anomalies 选择异动归因拆解方法，定位上升最大贡献的投诉原因，building-reports 生成可视化图片报告
 
 需求三：下个月收入目标制定
 querying-data --source powerbi 获取历史收入月度序列，predicting_trends 选择轻量预测方法并回测，输出保守/基准/挑战三档目标，visualizing-data 生成预测趋势图

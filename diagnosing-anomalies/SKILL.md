@@ -5,7 +5,7 @@ description: 指标异动归因方法论库。用于业务指标上涨、下跌�
 
 # 指标异动归因
 
-本技能提供异动归因的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取数据，调用 `visualizing-data` 生成精确图表，调用 `building-report` 承接报告交付。
+本技能提供异动归因的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取数据，调用 `visualizing-data` 生成精确图表，调用 `building-reports` 承接报告交付。
 
 ## 核心原则
 
@@ -110,14 +110,14 @@ description: 指标异动归因方法论库。用于业务指标上涨、下跌�
 - 需要 Power BI 语义模型取数：调用 `querying-data --source powerbi`。
 - 需要 SQL 明细或聚合取数：调用 `querying-data --source sql`。
 - 需要精确图表：调用 `visualizing-data`。
-- 需要沉淀成报告：调用 `building-report`。
+- 需要沉淀成报告：调用 `building-reports`。
 
 ## 内置脚本
 
 ```bash
-python diagnosing-anomaly/scripts/contribution.py add <input.json>
-python diagnosing-anomaly/scripts/contribution.py multiply <input.json>
-python diagnosing-anomaly/scripts/contribution.py ratio <input.json>
+python diagnosing-anomalies/scripts/contribution.py add <input.json>
+python diagnosing-anomalies/scripts/contribution.py multiply <input.json>
+python diagnosing-anomalies/scripts/contribution.py ratio <input.json>
 ```
 
 脚本只负责贡献度计算和加总校验。业务口径选择、维度选择、数据质量判断、因果验证仍由 agent 完成。

@@ -26,7 +26,7 @@ function loadEnv(dir) {
 }
 
 loadEnv(__dirname);   // scripts/.env
-loadEnv(parentDir);   // leveraging-report-templates/.env
+loadEnv(parentDir);   // using-templates/.env
 
 const CACHE_DIR = join(__dirname, 'cache');
 

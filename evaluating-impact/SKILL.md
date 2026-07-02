@@ -5,7 +5,7 @@ description: 效果评估与实验检验方法论。用于判断产品上线、�
 
 # 效果评估与实验检验
 
-本技能提供效果评估、实验检验和业务动作复盘的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取实验、活动、成本和指标数据，调用 `diagnosing-anomalies` 排查评估窗口内的异常干扰，调用 `predicting_trends` 判断效果是否可能延续，调用 `visualizing-data` 生成精确图表，调用 `building-report` 承接报告交付。
+本技能提供效果评估、实验检验和业务动作复盘的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取实验、活动、成本和指标数据，调用 `diagnosing-anomalies` 排查评估窗口内的异常干扰，调用 `predicting_trends` 判断效果是否可能延续，调用 `visualizing-data` 生成精确图表，调用 `building-reports` 承接报告交付。
 
 ## 核心原则
 
@@ -117,4 +117,4 @@ python evaluating-impact/scripts/impact.py <input.json>
 - 发现评估窗口内存在异常波动或数据质量问题：调用 `diagnosing-anomalies`。
 - 需要判断效果延续、目标影响或未来收益：调用 `predicting_trends`。
 - 需要精确图表：调用 `visualizing-data`。
-- 需要沉淀成报告：调用 `building-report`。
+- 需要沉淀成报告：调用 `building-reports`。
