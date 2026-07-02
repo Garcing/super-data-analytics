@@ -1,4 +1,0 @@
-interface:
-  display_name: "Visualizing Data"
-  short_description: "Generate deterministic PNG/SVG chart images from structured data."
-  default_prompt: "Create a chart image from structured data."
