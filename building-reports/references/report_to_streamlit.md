@@ -11,7 +11,7 @@ description: 把分析结论做成可分享的 Streamlit 交互式报告；框�
 
 - **静态（仓库，部署一次）**：`app.py` + `store.py` + `lib/` + `requirements.txt` —— 框架。
 - **动态（Vercel Blob，按报告推）**：每份报告 = 一个 `.py` 源码，经 `streamlit.js publish` 推到 Blob；`app.py` 运行时 `fetch + exec` 渲染。**加报告不动 git、不重新部署。**
-- 报告源码存 `streamlit-reports/<id>.py`，meta（title/icon/group/summary）随发布写进单文件索引 `streamlit-reports-index.json` 供线上 app 公开读。
+- 报告源码存 `streamlit-reports/<id>.py`，meta（title/summary/tags + 时间）随发布写进单文件索引 `streamlit-reports-index.json` 供线上 app 公开读。
 
 ## 何时用 Streamlit 报告
 
@@ -26,19 +26,20 @@ description: 把分析结论做成可分享的 Streamlit 交互式报告；框�
 ## CLI（从 `building-reports/` 目录运行）
 
 ```bash
-# 发布（meta 全由 flag 传；--source 三种来源，同 querying-data 的 --query）
+# 发布（--report 三种来源，同 querying-data 的 --query / html 的 --report）
 node scripts/streamlit/streamlit.js publish --id <id> \
-  [--title --icon --group --summary] \
-  [--source "<py>" | --source @<file> | --source -]
+  [--title --summary --tags] \
+  [--report "<py>" | --report @<file> | --report -]
 node scripts/streamlit/streamlit.js list                  # 列出全部报告
 node scripts/streamlit/streamlit.js get <id>               # 打印某份报告源码
 node scripts/streamlit/streamlit.js delete <id>            # 删除
 ```
 
-- meta flag 默认：`title=id`、`icon=📄`、`group=其他`、`summary=""`。
-- 同 id 重发即覆盖（不留痕，与 html 一致）。
+- meta flag（除时间外由 agent 填）：`--title`（默认 = id）、`--summary`（一句话）、`--tags "销售,区域,GMV"`（逗号分隔 → 数组）。时间（`created_at` / `updated_at`）由 CLI 自动写。
+- 已去掉 `--icon`、`--group`：导航按**首个 tag** 分组（无 tag 归"其他"），不再有侧栏 icon。
+- 同 id 重发即覆盖，但 `created_at` 保留首次值（稳定），`updated_at` 每次刷新（与 html 一致）。
 - `title` 同时是 **URL 路径**，直达链接 = `https://super-data-analytics.streamlit.app/<title>`（如 `…/区域销售分析`）。**避免 title 出现空格和斜杠**，且全库唯一。
-- 索引是单文件 `streamlit-reports-index.json`，CLI 用 **ifMatch 乐观锁 + 重试**写（读走 SDK `get()` 强一致，防并发/陈旧读丢失更新）。所有 blob 设 `cacheControlMaxAge=60`，新报告对线上 app 约 1 分钟可见。
+- 索引是单文件 `streamlit-reports-index.json`，条目 schema = `{ id, title, created_at, updated_at, summary, tags }`（与 html 共用）。CLI 用 **ifMatch 乐观锁 + 重试**写（head 强一致校验 + 公开读对比，防并发/陈旧读丢失更新）。所有 blob 设 `cacheControlMaxAge=60`，新报告对线上 app 约 1 分钟可见。
 
 > 凭证 `BLOB_READ_WRITE_TOKEN` 来自 `~/.super-data-analytics/config.json`；该 token = 整个 Blob store 的写权限，注意保管。线上 `app.py` 只读公开 URL，无需 token。
 
@@ -142,10 +143,10 @@ C.conclusion_block("结论句。", actions=["行动1","行动2"])
 3. 发布（在 `building-reports/` 目录下）：
    ```bash
    node scripts/streamlit/streamlit.js publish \
-     --id report-<主题> --title "<标题>" --icon 📊 --group <分组> --summary "<一句话>" \
-     --source @<工作区>/.super-data-analytics/scratch/report-<主题>.py
+     --id report-<主题> --title "<标题>" --tags "<标签1>,<标签2>" --summary "<一句话>" \
+     --report @<工作区>/.super-data-analytics/scratch/report-<主题>.py
    ```
-   立即生效（线上 app 读索引，约 30s 缓存刷新后出现），**无需 git、无需部署**。
+   立即生效（线上 app 读索引，约 1 分钟缓存刷新后出现），**无需 git、无需部署**。
 4. 把**直达链接**发给用户：`https://super-data-analytics.streamlit.app/<标题>`。
 
 ## 框架变更（改 app.py / lib / requirements，不常做）

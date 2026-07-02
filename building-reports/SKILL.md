@@ -28,15 +28,25 @@ metadata:
 - 脚本**不读 `.env`、不依赖环境变量导出**；配置缺失或字段不全时报错指引补全，由 agent 引导用户提供后写回 config.json 再重试。
 - 飞书的配置项见各自指引。
 
-### 三态输入（html 的 `--report`、streamlit 的 `--source`，同 querying-data 的 `--query`）
+### 三态输入（html / streamlit 的 `--report`，同 querying-data 的 `--query`）
 
-html `publish` 的报告 JSON、streamlit `publish` 的报告 `.py` 源码都支持三种来源：
+html `publish` 的报告 JSON、streamlit `publish` 的报告 `.py` 源码都支持 `--report` 三种来源：
 
-- `--report "<json>"` / `--source "<py>"` inline
-- `--report @<file>` / `--source @<file>` 文件
-- `--report -` / `--source -` 或不传 → stdin（管道）
+- `--report "<内容>"` inline
+- `--report @<file>` 文件
+- `--report -` 或不传 → stdin（管道）
 
 > Image 是提示词驱动，直接走 CLI 位置参数（`"<提示词>"`），无需三态输入。
+
+### 索引 schema（html / streamlit 共用）
+
+两边索引条目统一为 `{ id, title, created_at, updated_at, summary, tags }`：
+
+- **html**：meta 自然挂在报告 JSON 上（`meta.title` / `meta.generated_at` / `meta.tags` / `summary.overall`），`report.js` 自动提取组装索引，CLI 不传 meta flag。
+- **streamlit**：报告是 `.py` 源码没有结构化 meta，所以 `--title` / `--summary` / `--tags` 由 agent 经 flag 填；时间（`created_at` / `updated_at`）两边都由 CLI 自动写。
+- `created_at` 首次发布写入后重发保留原值（稳定）；`updated_at` 每次刷新。时间为 ISO 8601 UTC 带 `Z`。
+- `tags` 是字符串数组（如 `["销售","区域"]`），替代旧 `group`，作为可变长标签。streamlit 导航按首个 tag 分组。
+- **不存 stats**（结论数/高重要度数）——前端要这些指标时实时从报告 JSON 的 `conclusions` 派生，索引保持轻量。
 
 ### 工作区产物目录（约定，由 agent 构造路径）
 

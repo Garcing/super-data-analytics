@@ -83,7 +83,7 @@ export default function Dashboard() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <p className="font-mono text-xs text-text-muted">PowerBI Report</p>
             <p className="text-xs text-text-muted">
-              运行 <code className="font-mono px-1 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>powerbi-analysis</code> 创建新分析
+              运行 <code className="font-mono px-1 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>super-data-analytics</code> 创建新分析
             </p>
           </div>
         </div>

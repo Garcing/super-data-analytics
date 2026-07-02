@@ -13,13 +13,7 @@ function formatDate(dateStr) {
 export default function ReportCard({ report, index }) {
   if (!report) return null
 
-  const stats = report.stats || report.conclusions || []
-  const conclusionCount = Array.isArray(stats)
-    ? stats.length
-    : (stats.total_conclusions || stats.count || 0)
-  const highCount = Array.isArray(report.conclusions)
-    ? report.conclusions.filter(c => c.importance === 'high').length
-    : (report.high_importance_count || 0)
+  const tags = Array.isArray(report.tags) ? report.tags : []
 
   return (
     <Link
@@ -31,12 +25,9 @@ export default function ReportCard({ report, index }) {
         animationFillMode: 'both'
       }}
     >
-      {/* Date + stats badge */}
-      <div className="flex items-center justify-between" style={{ marginBottom: '12px' }}>
+      {/* Date */}
+      <div style={{ marginBottom: '12px' }}>
         <span className="caption">{formatDate(report.created_at)}</span>
-        <span className="badge-muted">
-          {conclusionCount} 项发现
-        </span>
       </div>
 
       {/* Title */}
@@ -49,26 +40,38 @@ export default function ReportCard({ report, index }) {
         {report.title || '未命名报告'}
       </h3>
 
-      {/* Summary preview */}
-      {report.summary_preview && (
+      {/* Summary */}
+      {report.summary && (
         <p
           className="body-base line-clamp-2"
           style={{ marginBottom: '16px', color: 'var(--text-tertiary)' }}
         >
-          {report.summary_preview}
+          {report.summary}
         </p>
       )}
 
-      {/* Footer */}
+      {/* Footer: tags + 查看 */}
       <div
-        className="flex items-center justify-between"
+        className="flex items-center justify-between gap-2"
         style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' }}
       >
-        {highCount > 0 && (
-          <span className="badge-importance-high">
-            {highCount} 项高重要度
-          </span>
-        )}
+        <div className="flex flex-wrap gap-1.5">
+          {tags.map((tag) => (
+            <span
+              key={tag}
+              className="font-mono"
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                backgroundColor: 'var(--bg-secondary)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
         <span className="text-sm font-medium ml-auto group-hover:text-accent-forest" style={{ color: 'var(--accent-forest)' }}>
           查看
           <svg

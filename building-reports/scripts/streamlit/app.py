@@ -4,6 +4,10 @@
 动态建页：每个 page 的 callable 在被访问时 fetch 对应 .py 源码并 exec 渲染。
 
 框架（本文件 + lib/ + store.py）部署一次；报告推到 Blob 即生效，无需重新部署。
+
+索引条目 schema（与 html 共用）：{ id, title, created_at, updated_at, summary, tags }
+- 导航按首个 tag 分组（无 tag 归 "其他"）
+- 不再有 icon / group
 """
 from __future__ import annotations
 
@@ -21,6 +25,14 @@ if str(_HERE) not in sys.path:
 
 st.set_page_config(page_title="数据分析报告", page_icon="📈", layout="wide")
 
+OTHER = "其他"
+
+
+def _entry_group(meta: dict) -> str:
+    """取首个 tag 作分组；无 tag 归 '其他'。"""
+    tags = meta.get("tags") or []
+    return tags[0] if isinstance(tags, list) and tags else OTHER
+
 
 def build_entries() -> list[tuple[dict, object]]:
     """读 Blob 索引，返回 [(meta, StreamlitPage), ...]。"""
@@ -33,7 +45,6 @@ def build_entries() -> list[tuple[dict, object]]:
         page = st.Page(
             make_runner(rid),
             title=title,
-            icon=meta.get("icon", "📄"),
             # url_path = 报告标题，使每份报告有固定直达链接 base/<标题>
             url_path=title,
         )
@@ -49,11 +60,11 @@ def main() -> None:
         st.info("暂无报告。用 `streamlit.js publish` 把报告 .py 推到 Blob 即可生效。")
         return
 
-    # 按 group 聚合，供导航与主页使用
-    groups = sorted({meta.get("group", "其他") for meta, _ in entries})
+    # 按首个 tag 聚合，供导航与主页使用
+    groups = sorted({_entry_group(meta) for meta, _ in entries})
     pages_by_group: dict[str, list] = {}
     for meta, page in entries:
-        pages_by_group.setdefault(meta.get("group", "其他"), []).append(page)
+        pages_by_group.setdefault(_entry_group(meta), []).append(page)
 
     def home() -> None:
         """主页：报告概览。"""
@@ -62,15 +73,16 @@ def main() -> None:
         for group in groups:
             st.subheader(group)
             for meta, page in entries:
-                if meta.get("group", "其他") != group:
+                if _entry_group(meta) != group:
                     continue
                 with st.container(border=True):
-                    icon_col, body_col = st.columns([1, 9])
-                    icon_col.markdown(f"## {meta.get('icon', '📄')}")
-                    body_col.markdown(f"**{meta['title']}**")
+                    st.markdown(f"**{meta['title']}**")
                     if meta.get("summary"):
-                        body_col.caption(meta["summary"])
-                    st.page_link(page, label="打开报告 →", icon="➡️")
+                        st.caption(meta["summary"])
+                    tags = meta.get("tags") or []
+                    if tags:
+                        st.caption(" · ".join(f"`{t}`" for t in tags))
+                    st.page_link(page, label="打开报告 →")
 
     home_page = st.Page(home, title="主页", icon="🏠", default=True)
     # "" 分组让主页排在最前、无分组标题

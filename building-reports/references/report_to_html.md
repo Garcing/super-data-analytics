@@ -33,13 +33,12 @@ node scripts/html/report.js delete <reportId>                  # 删除
 {
   "meta": {
     "title": "报告标题",                  // 必填
-    "generated_at": "2026-04-15T10:00:00Z", // ISO 8601，作为创建时间
-    "model": "语义模型名称"                // 可选，显示为数据来源徽标
+    "generated_at": "2026-04-15T10:00:00Z", // ISO 8601 UTC，作为 created_at（重发保留原值）
+    "model": "语义模型名称",               // 可选，显示为数据来源徽标
+    "tags": ["销售", "区域"]               // 可选，标签数组，写入索引供主页展示
   },
   "summary": {
-    "overall": "整体结论概述（2-3 句）",    // 截取前 100 字作为列表预览
-    "total_conclusions": 5,
-    "high_importance_count": 2,
+    "overall": "整体结论概述（2-3 句）",    // 写入索引 summary
     "kpis": [
       { "label": "指标名称", "value": "核心数值", "trend": "up|down|neutral", "trend_value": "趋势说明" }
     ]
@@ -57,6 +56,10 @@ node scripts/html/report.js delete <reportId>                  # 删除
   ]
 }
 ```
+
+> 报告 JSON 只需关心内容本身。索引条目由 `report.js` 从 JSON 提取组装，schema 为
+> `{ id, title, created_at, updated_at, summary, tags }`（与 streamlit 共用）。
+> 不再存 `total_conclusions` / `high_importance_count`——主页/详情页要"结论数"等指标时实时从 `conclusions` 派生。
 
 **chart_data 按 chart_type：**
 

@@ -6,13 +6,18 @@
  * 线上 app.py 直读 Blob 公开 URL 渲染——不走 serverless 函数，不碰 html 的 api。
  *
  * CLI（从 building-reports/ 目录运行）：
- *   node scripts/streamlit/streamlit.js publish --id <id> [--title --icon --group --summary] [--source "<py>"|@file|-]
+ *   node scripts/streamlit/streamlit.js publish --id <id> [--title --summary --tags] [--report "<py>"|@file|-]
  *   node scripts/streamlit/streamlit.js list
  *   node scripts/streamlit/streamlit.js get <id>
  *   node scripts/streamlit/streamlit.js delete <id>
  *
- * 凭证 BLOB_READ_WRITE_TOKEN 来自 ~/.super-data-analytics/config.json 的 env 块；
- * 脚本不读 .env。token = 整个 Blob store 的写权限，注意保管。
+ * 凭证 BLOB_READ_WRITE_TOKEN 来自 ~/.super-data-analytics/config.json 的 env 块；脚本不读 .env。
+ *
+ * 索引条目（与 html 共用 schema）：
+ *   { id, title, created_at, updated_at, summary, tags }
+ *   - meta（除时间外）由 flag 提供：--title / --summary / --tags（逗号分隔 → 数组）
+ *   - created_at 首次发布取 uploadedAt，重发保留原值；updated_at 每次刷新
+ *   - tags 替代旧 group，作为可变长标签列表
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,11 +62,13 @@ async function getSourceUrl(id) {
   return blob && blob.url ? blob.url : null
 }
 
+// 把 "--tags 销售,区域" 解析成 ["销售","区域"]。
+function parseTags(raw) {
+  if (!raw) return []
+  return raw.split(',').map((t) => t.trim()).filter(Boolean)
+}
+
 // ---------------------------- 索引（单文件 + 乐观锁；head 强一致 + 公开读对比校验） ----------------------------
-// head() — SDK 带 token，返回当前强 etag（强一致，不经 CDN）。
-// fetch(public_url) — 公开读，可能走 CDN 缓存（cacheControlMaxAge=60，最多 60s 陈旧）。
-// 读到内容后对比 fetch 响应的 etag 与 head 的强 etag：一致 → 内容就是当前版本，可用；
-// 不一致 → CDN 陈旧，退避重读直到一致（最多 12 次，覆盖 60s 刷新窗口）。
 async function readIndexWithEtag() {
   for (let i = 0; i < 12; i++) {
     const blob = await safeHead(INDEX_PATH)
@@ -79,7 +86,6 @@ async function readIndexWithEtag() {
       }
       return { data, etag: headEtag }
     }
-    // CDN 还没回源，退避等刷新
     if (i < 11) await sleep(1000 * (i + 1))
   }
   throw new Error('索引读取一直陈旧（CDN 缓存未刷新）。请稍后重试——新报告约 1 分钟可见。')
@@ -88,8 +94,12 @@ async function readIndexWithEtag() {
 function upsertEntry(index, entry) {
   const reports = Array.isArray(index.reports) ? [...index.reports] : []
   const i = reports.findIndex((r) => r.id === entry.id)
-  if (i >= 0) reports[i] = entry
-  else reports.unshift(entry)
+  if (i >= 0) {
+    // 重发保留 created_at（创建时间稳定），其余字段以本次为准
+    reports[i] = { ...entry, created_at: reports[i].created_at || entry.created_at }
+  } else {
+    reports.unshift(entry)
+  }
   return { reports }
 }
 
@@ -110,25 +120,27 @@ async function removeIndexEntry(id) {
 }
 
 // ---------------------------- 业务操作 ----------------------------
-async function publish({ id, title, icon, group, summary, options }) {
+async function publish({ id, title, summary, tags, options }) {
   if (!id) throw new Error('publish 需要 --id <reportId>')
   if (options.source === 'stdin' && process.stdin.isTTY) {
-    throw new Error('未提供 --source 且 stdin 是终端。请用 --source "<py>"、--source @<文件> 或管道传入')
+    throw new Error('未提供 --report 且 stdin 是终端。请用 --report "<py>"、--report @<文件> 或管道传入')
   }
   const source = await readContentSource(options, process.stdin, { label: '报告 .py 源码' })
 
   const blob = await putText(`streamlit-reports/${id}.py`, source)
-  const meta = {
+  // put() 不返回 uploadedAt，补一次 head() 拿时间戳
+  const info = await safeHead(`streamlit-reports/${id}.py`)
+  const uploadedAt = info?.uploadedAt || null
+  const entry = {
     id,
     title: title || id,
-    icon: icon || '📄',
-    group: group || '其他',
+    created_at: uploadedAt,
+    updated_at: uploadedAt,
     summary: summary || '',
-    // 不用 Date.now()（某些运行环境受限）；用 Blob 返回的 uploadedAt
-    updated_at: blob.uploadedAt || null,
+    tags,
   }
-  await writeIndexEntry(meta)
-  return { ...meta, url: blob.url }
+  await writeIndexEntry(entry)
+  return { ...entry, url: blob.url }
 }
 
 async function listReports() {
@@ -146,7 +158,7 @@ async function getReport(id) {
 async function deleteReport(id) {
   const srcUrl = await getSourceUrl(id)
   if (srcUrl) await del(srcUrl)
-  const next = await removeIndexEntry(id)
+  await removeIndexEntry(id)
   return { id, removed: true }
 }
 
@@ -161,30 +173,33 @@ const isMain = (() => {
 })()
 
 const USAGE = `用法（从 building-reports/ 目录运行）:
-  发布（--source 三种来源，同 querying-data 的 --query）:
-    node scripts/streamlit/streamlit.js publish --id <id> [--title --icon --group --summary] [--source "<py>"|@file|-]
-    node scripts/streamlit/streamlit.js publish --id <id> --source @<file>     # 文件（建议 <工作区>/.super-data-analytics/scratch/）
-    node scripts/streamlit/streamlit.js publish --id <id> --source -           # stdin（管道）
+  发布（--report 三种来源，同 querying-data 的 --query）:
+    node scripts/streamlit/streamlit.js publish --id <id> [--title --summary --tags] [--report "<py>"|@file|-]
+    node scripts/streamlit/streamlit.js publish --id <id> --report @<file>     # 文件（建议 <工作区>/.super-data-analytics/scratch/）
+    node scripts/streamlit/streamlit.js publish --id <id> --report -           # stdin（管道）
   其它:
     node scripts/streamlit/streamlit.js list                                   # 列出全部报告
     node scripts/streamlit/streamlit.js get <id>                               # 打印某份报告源码
     node scripts/streamlit/streamlit.js delete <id>                            # 删除
 
-meta 全部由 flag 提供（默认 title=id、icon=📄、group=其他、summary=""）；
-报告 .py 源码顶层 st.* 调用 + from lib import ...，不需要 META dict。`
+meta flag（除时间外由 agent 填）:
+  --title   报告标题（默认 = id；同时是 URL 路径，直达链接 = 线上/<title>，避免空格/斜杠，全库唯一）
+  --summary 一句话摘要
+  --tags    逗号分隔标签，如 --tags "销售,区域,GMV"
+时间（created_at/updated_at）由 CLI 自动写，不让 agent 填。
+报告 .py 顶层 st.* 调用 + from lib import ...，不需要 META dict。`
 
 function parsePublishArgs(args) {
-  const known = new Set(['--id', '--title', '--icon', '--group', '--summary', '--source'])
-  const out = { id: null, title: null, icon: null, group: null, summary: null, sourceRaw: null }
+  const known = new Set(['--id', '--title', '--summary', '--tags', '--report'])
+  const out = { id: null, title: null, summary: null, tagsRaw: null, reportRaw: null }
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     switch (a) {
       case '--id': out.id = readVal(args, ++i, '--id', known); break
       case '--title': out.title = readVal(args, ++i, '--title', known); break
-      case '--icon': out.icon = readVal(args, ++i, '--icon', known); break
-      case '--group': out.group = readVal(args, ++i, '--group', known); break
       case '--summary': out.summary = readVal(args, ++i, '--summary', known); break
-      case '--source': out.sourceRaw = readVal(args, ++i, '--source', known); break
+      case '--tags': out.tagsRaw = readVal(args, ++i, '--tags', known); break
+      case '--report': out.reportRaw = readVal(args, ++i, '--report', known); break
       default: throw new Error(`未知参数: ${a}`)
     }
   }
@@ -205,17 +220,23 @@ if (isMain) {
       case 'publish': {
         const a = parsePublishArgs(rest)
         if (!a.id) throw new Error(USAGE)
-        const options = parseInputFlag(a.sourceRaw)
-        const entry = await publish({ ...a, options })
+        const options = parseInputFlag(a.reportRaw)
+        const entry = await publish({
+          id: a.id,
+          title: a.title,
+          summary: a.summary,
+          tags: parseTags(a.tagsRaw),
+          options,
+        })
         console.log(entry.url)
-        console.error(`已发布: id=${entry.id} title=${entry.title} group=${entry.group}`)
+        console.error(`已发布: id=${entry.id} title=${entry.title} tags=[${entry.tags.join(',')}]`)
         break
       }
       case 'list': {
         const reports = await listReports()
         if (!reports.length) { console.log('(暂无报告)'); break }
-        console.log(['id', 'group', 'title'].join('\t'))
-        for (const r of reports) console.log([r.id, r.group || '', r.title || ''].join('\t'))
+        console.log(['id', 'updated_at', 'title'].join('\t'))
+        for (const r of reports) console.log([r.id, r.updated_at || r.created_at || '', r.title || ''].join('\t'))
         break
       }
       case 'get': {

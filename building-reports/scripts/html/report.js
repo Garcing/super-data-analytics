@@ -5,7 +5,7 @@
  * `html-reports/<id>.json`，并维护 `html-reports-index.json` 索引（ifMatch 乐观锁）。
  * 不走 serverless 函数；线上前端直读 Blob 公开 URL。与 streamlit.js 完全对称。
  *
- * CLI（从 building-reports/ 目录运行）：
+ * CLI（从 building-reports/ 目录）：
  *   node scripts/html/report.js publish --id <reportId> [--report "<json>" | --report @<file> | --report -]
  *   node scripts/html/report.js list
  *   node scripts/html/report.js get <reportId>
@@ -13,12 +13,20 @@
  *
  * 凭证 BLOB_READ_WRITE_TOKEN 来自 ~/.super-data-analytics/config.json 的 env 块；
  * VERCEL_REPORTS_URL 仅用于拼"可分享的前端链接"。脚本不读 .env。
+ *
+ * 索引条目（与 streamlit 共用 schema）：
+ *   { id, title, created_at, updated_at, summary, tags }
+ *   - created_at：首次发布时取 meta.generated_at || uploadedAt，之后重发保留原值（稳定）
+ *   - updated_at：每次发布刷新为 uploadedAt
+ *   - tags：来自报告 JSON 的 meta.tags（数组），没有则 []
+ *   - 不存 stats：主页/详情页要"结论数"等指标时实时从报告 JSON 的 conclusions 派生
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   loadConfig,
   setupProxy,
+  closeProxy,
   parseInputFlag,
   readContentSource,
   withOptimisticLock,
@@ -74,7 +82,7 @@ async function putJson(pathname, obj, { ifMatch } = {}) {
 // head() — SDK 带 token，返回当前强 etag（强一致，不经 CDN）。
 // fetch(public_url) — 公开读，可能走 CDN 缓存（cacheControlMaxAge=60，最多 60s 陈旧）。
 // 读到内容后对比 fetch 响应的 etag 与 head 的强 etag：一致 → 内容就是当前版本，可用；
-// 不一致 → CDN 陈旧，退避重读直到一致（最多 10 次，覆盖 60s 刷新窗口）。
+// 不一致 → CDN 陈旧，退避重读直到一致（最多 12 次，覆盖 60s 刷新窗口）。
 async function readIndexWithEtag() {
   for (let i = 0; i < 12; i++) {
     const blob = await safeHead(INDEX_PATH)
@@ -98,26 +106,27 @@ async function readIndexWithEtag() {
   throw new Error('索引读取一直陈旧（CDN 缓存未刷新）。请稍后重试——新报告约 1 分钟可见。')
 }
 
+// 从报告 JSON 提取索引条目（meta 自然挂在 JSON 上，CLI 不传 meta flag）。
 function buildIndexEntry(id, body, uploadedAt) {
-  const overall = body?.summary?.overall || ''
-  const summaryPreview = overall.slice(0, 100) + (overall.length > 100 ? '...' : '')
   return {
     id,
     title: body?.meta?.title || id,
     created_at: body?.meta?.generated_at || uploadedAt || null,
-    summary_preview: summaryPreview,
-    stats: {
-      total_conclusions: body?.summary?.total_conclusions || 0,
-      high_importance: body?.summary?.high_importance_count || 0,
-    },
+    updated_at: uploadedAt || null,
+    summary: body?.summary?.overall || '',
+    tags: Array.isArray(body?.meta?.tags) ? body.meta.tags : [],
   }
 }
 
+// upsert 时保留既有条目的 created_at（重发不重置创建时间）。
 function upsertEntry(index, entry) {
   const reports = Array.isArray(index.reports) ? [...index.reports] : []
   const i = reports.findIndex((r) => r.id === entry.id)
-  if (i >= 0) reports[i] = entry
-  else reports.unshift(entry)
+  if (i >= 0) {
+    reports[i] = { ...entry, created_at: reports[i].created_at || entry.created_at }
+  } else {
+    reports.unshift(entry)
+  }
   return { reports }
 }
 
@@ -144,8 +153,10 @@ async function publishReport(reportData, reportId) {
   }
   const { frontendUrl } = getConfig()
   const body = { ...reportData, id: reportId }
-  const blob = await putJson(`html-reports/${reportId}.json`, body)
-  await writeIndexEntry(buildIndexEntry(reportId, body, blob.uploadedAt))
+  await putJson(`html-reports/${reportId}.json`, body)
+  // put() 不返回 uploadedAt，补一次 head() 拿时间戳
+  const info = await safeHead(`html-reports/${reportId}.json`)
+  await writeIndexEntry(buildIndexEntry(reportId, body, info?.uploadedAt || null))
   return `${frontendUrl}/report/${reportId}`
 }
 
@@ -189,7 +200,10 @@ const USAGE = `用法（从 building-reports/ 目录运行）:
   其它:
     node scripts/html/report.js list                                          # 列出全部报告
     node scripts/html/report.js get <reportId>                                # 打印某份报告 JSON
-    node scripts/html/report.js delete <reportId>                             # 删除`
+    node scripts/html/report.js delete <reportId>                             # 删除
+
+报告 JSON 的 meta 块支持可选 tags（数组），会写入索引:
+  "meta": { "title": "...", "generated_at": "ISO8601", "model": "...", "tags": ["销售","区域"] }`
 
 function parsePublishArgs(args) {
   const known = new Set(['--id', '--report'])
@@ -237,9 +251,9 @@ if (isMain) {
       case 'list': {
         const reports = await listReports()
         if (!reports.length) { console.log('(暂无报告)'); break }
-        console.log(['id', 'created_at', 'title'].join('\t'))
+        console.log(['id', 'updated_at', 'title'].join('\t'))
         for (const r of reports) {
-          console.log([r.id, r.created_at || '', r.title || ''].join('\t'))
+          console.log([r.id, r.updated_at || r.created_at || '', r.title || ''].join('\t'))
         }
         break
       }
@@ -264,5 +278,6 @@ if (isMain) {
     console.error(cmd && !['publish', 'list', 'get', 'delete'].includes(cmd) ? USAGE : (err.message || String(err)))
     exitCode = 1
   }
+  if (proxyState.proxyConfigured) await closeProxy()
   process.exitCode = exitCode
 }
