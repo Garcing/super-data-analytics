@@ -17,6 +17,7 @@ building-reports/                生成报告（按格式 html / image / streaml
   scripts/html/                   HTML 报告（已实现，前端 + Blob + 发布）
   scripts/image/                  图片报告（apimart gpt-image-2，CLI + 编程式）
   scripts/streamlit/              Streamlit 报告（本地预览 + Community Cloud 部署）
+validating-analyses/             分析成品质检（横向）：交付前独立审查分析是否准确、有据、可分享
 ```
 
 ## 数据流
@@ -63,6 +64,7 @@ building-reports/                生成报告（按格式 html / image / streaml
 - `predicting_trends`：业务预测、趋势外推、目标制定、目标达成判断、资源预算预估等需要未来预测结果时使用
 - `evaluating-impact`：产品上线、运营活动、Push、发券、投放、A/B 实验、DID 试点等需要判断“动作是否有效、ROI 是否为正、是否可以全量/加码/停止”时使用。
 - `visualizing-data`：需要把结构化数据生成确定性单图 PNG/SVG 时使用；适合报告插图、文档图表、PPT/PDF 图表素材，尤其是数值必须准确时。
+- `validating-analyses`：分析或报告交付给决策方之前，需要独立复核其是否准确、有据、可分享（复算关键数字、查分析陷阱、图表诚实性、置信度评级）时使用。
 
 互联网数据分析三大能力：
 - `diagnosing-anomalies`：异动归因，回答“为什么变了”。

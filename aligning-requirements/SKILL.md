@@ -45,6 +45,7 @@ metadata:
 | `evaluating-impact` | 效果评估与实验检验方法论。产品上线、运营活动、Push、发券、投放、A/B 实验、DID 试点的有效性、ROI、是否全量/加码判断。 |
 | `visualizing-data` | 把结构化数据生成确定性单图 PNG/SVG，适合报告插图、文档图表、PPT/PDF 图表素材，数值必须准确时优先于 AI 生图。 |
 | `building-reports` | 将分析结果生成 HTML / Image / Streamlit / 飞书 等格式报告交付物（按格式路由）。 |
+| `validating-analyses` | 分析成品交付前的独立质检：复算关键数字、查分析陷阱、图表诚实性、给置信度评级（可发布 / 带说明发布 / 需修订）。 |
 | `lark-doc` / `lark-slides` 等飞书技能 | 当用户要求飞书文档、幻灯片等飞书交付时使用；通常由 `building-reports` 生成内容后再交给对应飞书技能落地。 |
 
 ## 总体运行原则
@@ -313,7 +314,7 @@ building-reports
 
 ## Phase 5：交付验收
 
-在结束前检查任务是否真正完成。
+在结束前检查任务是否真正完成。正式对外交付的高风险分析（汇报、复盘、对外分享、因果结论），交付前可调用 `validating-analyses` 做一次独立成品质检，重点抓口径漂移、计算不可复算、分析陷阱和图表误导，并拿到置信度评级。
 
 ### inline 验收
 

@@ -70,6 +70,7 @@ building-reports/                4 报告：按格式（html / image / streamlit
 | `retrieving-context` | 需要知道指标定义、表名、业务层级、看板位置时 |
 | `visualizing-data` | 需要把结构化数据画成数值必须准确的单图时 |
 | `aligning-requirements` | 执行中发现需求不明确，可中途补走对齐 |
+| `validating-analyses` | 分析/报告交付前，独立复核是否准确、有据、可分享 |
 
 ---
 
@@ -86,6 +87,7 @@ building-reports/                4 报告：按格式（html / image / streamlit
 | 分析 | `visualizing-data` | 确定性单图 PNG/SVG | `python visualizing-data/scripts/chart.py --data @spec.json --save out.png` |
 | 报告 | `using-templates` | 数据播报 / 周期 / 复盘报告模板生命周期（飞书个人文件夹） | `node using-templates/scripts/templates.js list\|read\|create\|update\|delete` |
 | 报告 | `building-reports` | 按格式路由生成报告（html / image / streamlit / lark） | 见下表 |
+| 横向 | `validating-analyses` | 分析成品质检：交付前独立复核口径/计算/陷阱/图表，给置信度评级 | 纯方法论，无脚本 |
 
 ### building-reports 各格式入口
 
