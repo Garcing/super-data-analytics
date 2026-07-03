@@ -1,15 +1,14 @@
 # visualizing-data 代码导览（开发参考）
 
-本文件给后续迭代这个子技能的 agent 使用，重点说明代码流转逻辑。用户侧使用方法看 [`../SKILL.md`](../SKILL.md)；输入格式看 [`input_contract.md`](input_contract.md)；视觉规范看 [`seaborn_templates.md`](seaborn_templates.md)。
+本文件给**迭代这个子技能的 agent**（改代码、加图表类型、调色板/主题）使用，重点说明代码流转逻辑与维护约定。用户侧"怎么画一张图"看 [`../SKILL.md`](../SKILL.md)——它是自洽的操作手册（选图、写 payload、跑 CLI、看输出），不需要先读本文件。
 
 ## 目录职责
 
 ```text
 visualizing-data/
-  SKILL.md                         技能触发与使用说明
+  SKILL.md                         用户侧操作手册（选图 + payload + CLI + 输出）
   references/
-    input_contract.md              输入 JSON 契约
-    seaborn_templates.md           视觉规范与扩展规范
+    developer-guide.md             本文件：代码架构 + 维护约定（给改代码的 agent）
   scripts/
     chart.py                       稳定 CLI 入口
     chart_renderer/
@@ -95,7 +94,7 @@ chart.py
 1. `SUPPORTED_TYPES`
 2. `required_roles`
 3. 数值角色映射
-4. `input_contract.md`
+4. `SKILL.md` 的 [type→encoding 映射表]、[常用配置项]（若有新 option）、[全类型 payload 示例]
 5. 至少一个 CLI 渲染测试
 
 ## 渲染分发与导出
@@ -122,20 +121,57 @@ RENDERER_MODULES = {
 
 `fonts.py` 处理中文友好：
 
-- 按候选顺序查找 CJK 字体。
-- 写入 `rcParams["font.sans-serif"]`。
-- 设置 `rcParams["axes.unicode_minus"] = False`。
+- 按候选顺序查找 CJK 字体：`Microsoft YaHei`、`SimHei`、`Noto Sans CJK SC`、`Source Han Sans SC`、`PingFang SC`、`WenQuanYi Micro Hei`、`Arial Unicode MS`。
+- 追加拉丁字体回退：`DejaVu Sans`、`Arial`、`sans-serif`。
+- 写入 `rcParams["font.sans-serif"]`，设 `font.family` 为 `sans-serif`。
+- 设置 `rcParams["axes.unicode_minus"] = False`，避免 CJK 字体栈下负号显示异常。
 - 没找到 CJK 字体时返回 warning，但仍继续生成图。
 
 `theme.py` 处理共享样式：
 
-- `PALETTE` 是全局色板。
+- `PALETTE` 是全局色板（见下表）。
 - `create_figure()` 用 `options.width`、`options.height` 和 `dpi` 算 figsize。
-- `add_header()` 写 figure 级标题和副标题。
+- `add_header()` 写 figure 级标题和副标题（不要混用 `ax.set_title(...)`）。
 - `prepare_axes()` 是多数 renderer 的入口。
 - `clean_axes()` 统一清理坐标轴样式。
 
 不要在 renderer 里重新设置全局字体；如果要改主题，优先改 `theme.py`。
+
+### 色板 Token
+
+交付图表用显式颜色，不依赖 Seaborn/Matplotlib 默认配色。颜色由 `theme.py` 的 `PALETTE` 自动应用，agent 写 payload 时**不传颜色**——所以色板是维护知识，不进 `SKILL.md`。
+
+基础色板：
+
+| Token | Hex | 适合用途 |
+|---|---|---|
+| `blue` | `#4C78A8` | 主柱、主线、总量 |
+| `orange` | `#F58518` | 次要对比或接近警示的标记 |
+| `green` | `#54A24B` | 正向增量 |
+| `purple` | `#B279A2` | 备用类别色 |
+| `red` | `#E45756` | 负向增量 |
+| `teal` | `#72B7B2` | 备用类别色 |
+| `pink` | `#FF9DA6` | 备用类别色 |
+| `brown` | `#9D755D` | 备用类别色 |
+
+共享中性色：
+
+| Token | Hex | 适合用途 |
+|---|---|---|
+| `ink` | `#1F2937` | 标题和主文本 |
+| `label` | `#374151` | 数值标签 |
+| `muted` | `#6B7280` | 副标题和辅助文本 |
+| `axis` | `#D8DEE9` | 坐标轴线 |
+| `grid` | `#E5E9F0` | 网格线 |
+| `zero` | `#9CA3AF` | 零线和连接线 |
+
+配色规则：
+
+- 简单柱/折线/面积/直方/散点/表格用一个主色。
+- 只有表达正负语义时才用绿色和红色。
+- 饼图、堆叠柱和类别图用短而明确的色板。
+- 标签会碰撞时，先在数据层合并小类目再渲染。
+- 不要在图表标记内部用渐变；热力图可用顺序 colormap。
 
 ## Renderer 约定
 
@@ -164,7 +200,7 @@ def render(spec: ChartSpec, dpi: int):
 3. 在 `render.py` 加 `RENDERER_MODULES` 映射。
 4. 新建 `renderers/<type>.py`。
 5. 复用 `prepare_axes()`、`clean_axes()`、`PALETTE`。
-6. 更新 `input_contract.md` 和 `seaborn_templates.md`。
+6. 在 `SKILL.md` 更新映射表 / 配置项 / payload 示例。
 7. 跑完整测试。
 
 推荐测试命令：
