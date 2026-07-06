@@ -1,10 +1,13 @@
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
 venv/
-
-# Environment
-.env
+.coverage
+htmlcov/
 
 # Workspace-local artifacts (results/scratch); shared config lives in ~/.super-data-analytics/
 .super-data-analytics/
@@ -17,19 +20,6 @@ dist/
 # Embedding model (92M,公开资源,首次同步时 `node sync.js --download-model` 自动从 HuggingFace 下载)
 retrieving-context/scripts/pipeline/models/
 
-# Output
-output/*.png
-output/*.py
-
-# Data briefs cache
-dispatching-data-briefs/cache/
-
-# Broken skill symlinks
-skills/
-
 # OS
 .DS_Store
 Thumbs.db
-
-# deploy 临时分支同名目录防误提交
-_streamlit_deploy/

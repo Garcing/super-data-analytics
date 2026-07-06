@@ -30,6 +30,7 @@ evaluating-impact/               3 分析：效果评估与实验检验方法论
 visualizing-data/                3 分析：确定性单图（Seaborn/Matplotlib，PNG/SVG）
 using-templates/                 4 报告：数据播报 / 周期报告 / 复盘报告模板管理（飞书个人文件夹）
 building-reports/                4 报告：按格式（html / image / streamlit / lark）路由生成报告
+validating-analyses/             横向质检：交付前复核口径、计算、陷阱、图表与结论置信度
 ```
 
 ### 数据流
@@ -106,13 +107,17 @@ building-reports/                4 报告：按格式（html / image / streamlit
 
 ### `~/.super-data-analytics/config.json` —— 唯一凭证真相来源
 
-所有 skill 不读 `.env`、不读散落的 yaml，凭证统一来自用户主目录下这一份 `config.json`。结构：
+所有可执行 skill 不读 `.env`、不读散落的 yaml，业务凭证统一来自用户主目录下这一份 `config.json`。结构：
 
-- **`env` 块**：`NEO4J_URI` / `NEO4J_DATABASE` / `NEO4J_USER` / `NEO4J_PASSWORD` / `FEISHU_GRAPH_BITABLE_APP_TOKEN` / `PYTHON_PATH`（GraphRAG 用）
-- **`env` 块（building-reports）**：`VERCEL_REPORTS_URL` / `APIMART_API_KEY` / `APIMART_BASE_URL` / `BLOB_READ_WRITE_TOKEN`
+- **取数**：`HOLOGRES_*`、`POWERBI_CLIENT_ID` / `POWERBI_CLIENT_SECRET` / `POWERBI_TENANT_ID`
+- **GraphRAG**：`NEO4J_*`、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`PYTHON_PATH`
+- **模板**：`FEISHU_TEMPLATE_FOLDER_TOKEN` / `FEISHU_TEMPLATE_DELETE_PASSWORD`
+- **报告**：`VERCEL_REPORTS_URL` / `APIMART_API_KEY` / `APIMART_BASE_URL` / `BLOB_READ_WRITE_TOKEN`
 - **`graph-config` 块**：embedding 模型、实体映射、关系匹配规则（仅 `retrieving-context` 用）
 
-`PYTHON_PATH` 解决 agent 自带 Python 缺少依赖的问题——所有 Python 调用都通过 Node.js 壳脚本中转，agent 只需执行 `node` 命令。
+`PYTHON_PATH` 只服务于 `retrieving-context` 的 Node → Python pipeline。归因、预测、效果评估、可视化和 Streamlit 都直接使用命令中的 Python 解释器及各自 `requirements.txt`。
+
+进程级代理/超时（如 `HTTPS_PROXY`、`SQL_QUERY_STDIN_TIMEOUT_MS`）不是业务凭证，可按需通过环境变量覆盖。完整安装位置、Node/Python 版本与依赖清单见 [DEPENDENCIES.MD](DEPENDENCIES.MD)。
 
 ### 运行时产物目录
 
@@ -143,7 +148,7 @@ skills 目录本身保持纯净，不放动态资源。
 | Neo4j | GraphRAG 业务知识图存储 | `config.json` 的 `env.NEO4J_*` |
 | 飞书多维表格 | GraphRAG 数据源（指标定义、表结构、业务层级） | `config.json` 的 `env.FEISHU_GRAPH_BITABLE_APP_TOKEN` + `lark-cli auth` |
 | Azure AD（Power BI） | Power BI 语义模型取数鉴权 | client_id `d44d3dbe-...`，Application 类型权限 + Admin Consent |
-| 数据库（PostgreSQL） | SQL 取数 | `querying-data` 内置驱动 |
+| Hologres（PostgreSQL 协议） | SQL 取数 | `config.json` 的 `env.HOLOGRES_*` |
 | Vercel + Blob Store | HTML 报告前端托管 + 报告 JSON 公网读写 | `config.json` 的 `env.BLOB_READ_WRITE_TOKEN` / `env.VERCEL_REPORTS_URL` |
 | Streamlit Community Cloud | Streamlit 报告线上托管 | `Garcing/streamlit-reports` 仓库，自动部署 |
 | apimart gpt-image-2 | 图片报告生成 | `config.json` 的 `env.APIMART_API_KEY` / `env.APIMART_BASE_URL` |
@@ -167,8 +172,14 @@ skills 目录本身保持纯净，不放动态资源。
 ## 八、测试
 
 ```bash
+# 异动贡献度脚本
+python -m pytest diagnosing-anomalies/tests/test_contribution.py -q
+
 # 预测脚本契约测试（含 CLI / 渲染 / 边界回归）
 python -m pytest predicting-trends/tests/test_forecast.py -q
+
+# 效果评估脚本
+python -m pytest evaluating-impact/tests/test_impact.py -q
 
 # 图表 CLI 合同 + 渲染 smoke + 边界回归
 python -m pytest visualizing-data/tests/test_chart_cli.py -q

@@ -20,6 +20,13 @@ building-reports/                生成报告（按格式 html / image / streaml
 validating-analyses/             分析成品质检（横向）：交付前独立审查分析是否准确、有据、可分享
 ```
 
+## 运行环境与依赖
+
+- Node.js `>=20.0.0`；有 lock 的目录统一用 `npm ci`：`querying-data/scripts/`、`retrieving-context/scripts/`、`building-reports/scripts/`、`building-reports/scripts/html/`。
+- Python `>=3.10`；依赖文件分别位于 `retrieving-context/scripts/pipeline/requirements.txt`、`visualizing-data/requirements.txt`、`building-reports/scripts/streamlit/requirements.txt`。归因/预测/效果评估为标准库实现，各自保留注释型空 `requirements.txt`。
+- `using-templates/scripts/package.json` 只声明 ESM/Node 版本，无第三方包和 lock；`building-reports/scripts/image/` 复用父级依赖，不单独维护 package/lock。
+- 业务凭证统一来自 `~/.super-data-analytics/config.json`；详细安装矩阵与全部配置项见 `DEPENDENCIES.MD`。
+
 ## 数据流
 
 板块 0（语料）← 所有板块可引用
@@ -75,14 +82,14 @@ validating-analyses/             分析成品质检（横向）：交付前独�
 
 - 应用：`client_id: d44d3dbe-2b19-4ed0-ad47-ccd50627e9a5`
 - 租户：`7d20639b-c6a8-4cdc-9cfe-6ea75b3af0c9`
-- Client secret 已生成并验证可用
+- 运行时从 `config.json` 的 `POWERBI_CLIENT_ID` / `POWERBI_CLIENT_SECRET` / `POWERBI_TENANT_ID` 读取，不在仓库保存 secret
 - 需要 Application 类型权限 + Admin Consent
 
 ## Vercel 部署
 
 - 项目：`super-data-analytics`，域名：`www.super-data-analytics.online`
 - Blob Store：Public 访问模式
-- 重新部署：`cd building-reports/scripts/html && rm -rf dist && vercel deploy --prod --force --token $VERCEL_TOKEN`（token 来自 `~/.super-data-analytics/config.json`，无交互登录）
+- 重新部署：`cd building-reports/scripts/html && rm -rf dist && vercel deploy --prod --force --token $VERCEL_TOKEN`（`VERCEL_TOKEN` 由调用者或 Vercel CLI 登录态提供；项目脚本不从 `config.json` 加载）
 - 必须先 `rm -rf dist` 清除构建缓存
 
 ## 前端技术栈

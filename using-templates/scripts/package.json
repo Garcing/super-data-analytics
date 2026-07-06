@@ -1,5 +1,8 @@
 {
   "name": "templates",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

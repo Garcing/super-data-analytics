@@ -27,6 +27,14 @@ node scripts/templates.js <命令> [参数]
 
 本 SKILL 依赖 lark-cli 操作飞书文档。如果 `node scripts/templates.js list` 报错 "lark-cli error"，请按 [`references/lark-cli-setup.md`](references/lark-cli-setup.md) 安装和配置 lark-cli。
 
+## 运行环境与依赖
+
+- Node.js `>=20.0.0`。`scripts/package.json` 仅用于声明 ESM 和 Node 版本，无第三方 npm 依赖，因此没有 `package-lock.json`，也无需执行 `npm install`。
+- 外部依赖：可执行的 `lark-cli`，且已完成 `lark-cli config init` 与 `lark-cli auth login`。
+- 凭证项见上节，均来自 `config.json`；不读取 `.env`。
+
+完整安装矩阵见仓库根目录 `DEPENDENCIES.MD`。
+
 ## 意图识别
 
 收到用户请求后，按以下规则判断意图，并执行 `核心流程` 步骤。

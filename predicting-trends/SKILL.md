@@ -7,6 +7,13 @@ description: 业务预测和目标制定方法论。用于回答下月/下季度
 
 本技能提供业务预测和目标制定的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取历史序列，调用 `visualizing-data` 生成预测图表，调用 `building-reports` 承接报告交付。
 
+## 运行环境与依赖
+
+- Python `>=3.10`；脚本和测试只使用标准库。
+- `requirements.txt` 以注释明确“无第三方依赖”，无需安装额外包。
+- 本技能不读取 `config.json` 或环境变量；历史数据凭证由 `querying-data` 管理。
+
+
 ## 核心原则
 
 - 先确认预测问题，再选择模型。

@@ -1,5 +1,5 @@
 """
-graph_builder.py — Read YAML config and Feishu data to MERGE nodes
+graph_builder.py — Read graph config and Feishu data to MERGE nodes
 and create relationships in Neo4j.
 
 Functions:
@@ -143,7 +143,7 @@ def build_relationships(
 
     Args:
         driver: Neo4j driver instance.
-        relationships_config: List of relationship definitions from YAML.
+        relationships_config: List of relationship definitions from config.json.
         entities_config: Entity definitions (needed for key_field lookups).
         feishu_data: Records keyed by label or ``via_{table_id}``.
 

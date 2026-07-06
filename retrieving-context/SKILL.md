@@ -26,6 +26,16 @@ metadata:
   - `env` 块：`NEO4J_URI` / `NEO4J_DATABASE` / `NEO4J_USER` / `NEO4J_PASSWORD` / `FEISHU_GRAPH_BITABLE_APP_TOKEN` / `PYTHON_PATH`
   - `graph-config` 块：`embedding`（model + dimensions）、`entities`、`relationships`
 
+## 运行环境与依赖
+
+- Node.js `>=20.0.0`；在 `retrieving-context/scripts/` 执行 `npm ci`（`neo4j-driver`）。
+- Python `>=3.10`；用 `env.PYTHON_PATH` 指向目标解释器，并对该解释器执行：`<PYTHON_PATH> -m pip install -r scripts/pipeline/requirements.txt`。Python 依赖为 `neo4j`、`sentence-transformers`。
+- 同步飞书数据还要求可执行的 `lark-cli` 及已完成授权。
+- 可选进程变量 `QUERY_STDIN_TIMEOUT_MS` 只调整查询 stdin 超时；embedding 模型由 `graph-config.embedding` 配置，首次使用会下载模型文件。
+
+完整安装矩阵见仓库根目录 `DEPENDENCIES.MD`。
+
+
 ## CLI 命令
 
 **先了解图结构**（写 Cypher 或选 targets 前先跑）：

@@ -14,6 +14,11 @@ metadata:
 
 执行中按需调用 `retrieving-context` 校验指标口径，调用 `querying-data --source sql` 或 `querying-data --source powerbi` 复算关键数字，调用 `visualizing-data` 重画图核对，调用 `building-reports` 落地修订后的报告。各分析域的内部检查不在这里复刻：异动归因查 `diagnosing-anomalies`，效果评估查 `evaluating-impact`，趋势预测查 `predicting_trends`。
 
+## 运行环境与依赖
+
+本技能是纯方法论质检，无脚本、无第三方 Node/Python 依赖，也不直接读取环境变量。复算、重画或重新发布时，使用对应技能的运行环境与凭证。
+
+
 ## 核心原则
 
 - 验证的是分析**实际做出的主张**，不是它看起来精不精致。

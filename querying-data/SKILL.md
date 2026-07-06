@@ -14,6 +14,18 @@ metadata:
 node scripts/query.js <命令> --source <sql|powerbi> [参数]
 ```
 
+## 运行环境与依赖
+
+- Node.js `>=20.0.0`。
+- 在 `querying-data/scripts/` 执行 `npm ci`；依赖以该目录的 `package.json` / `package-lock.json` 为准：`@azure/identity`、`pg`、`pg-protocol`、`xlsx`。
+- 凭证只写入 `~/.super-data-analytics/config.json` 的 `env`：
+  - SQL/Hologres：`HOLOGRES_HOST`、`HOLOGRES_PORT`、`HOLOGRES_DATABASE`、`HOLOGRES_USER`、`HOLOGRES_PASSWORD`。
+  - Power BI：`POWERBI_CLIENT_ID`、`POWERBI_CLIENT_SECRET`、`POWERBI_TENANT_ID`。
+- 可选进程变量 `SQL_QUERY_STDIN_TIMEOUT_MS` 只调整 stdin 超时，不属于凭证。
+
+完整安装矩阵见仓库根目录 `DEPENDENCIES.MD`。
+
+
 ## Step 1 识别数据源
 
 按用户请求里的信号词判定 `--source`：

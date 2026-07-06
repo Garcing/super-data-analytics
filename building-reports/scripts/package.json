@@ -2,7 +2,10 @@
   "name": "building-reports-scripts",
   "private": true,
   "type": "module",
-  "description": "共享依赖（lib/shared.js 的代理 undici）；html / image 各自子目录另有独立 node_modules",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "description": "报告 CLI 共享依赖：Blob 读写与代理支持；HTML 前端依赖单独安装",
   "dependencies": {
     "@vercel/blob": "^2.5.0",
     "undici": "^6.0.0"

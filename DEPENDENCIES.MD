@@ -1,115 +1,137 @@
 # Dependencies
 
-## 凭证与配置如何工作
+本文件是 1.0 项目的依赖、安装目录与运行配置总表。具体命令仍以各子 Skill 的 `SKILL.md` 为准；两者不一致时，应同步修正，不能让代码依赖隐式依靠父目录或全局环境。
 
-本框架**不读 `.env`、不读散落的 yaml**。所有运行时凭证统一来自用户主目录下的 `~/.super-data-analytics/config.json`，作为唯一真相来源，由各 skill 的 `scripts/` 读取。结构分两块：
+## 统一约定
 
-- **`env` 块**：数据库、Neo4j、飞书、Vercel Blob、apimart、`PYTHON_PATH` 等所有凭证
-- **`graph-config` 块**：仅 `retrieving-context` 用，定义 embedding 模型、飞书表 → Neo4j 标签映射、关系匹配规则
+- Node.js：`>=20.0.0`。有 `package-lock.json` 的目录使用 `npm ci`，不要用全局包代替项目直接依赖。
+- Python：`>=3.10`。始终使用目标解释器执行 `python -m pip install -r ...`；GraphRAG 的目标解释器由 `config.json` 的 `env.PYTHON_PATH` 指定。
+- 业务凭证：统一写入 `~/.super-data-analytics/config.json` 的 `env`，脚本不读 `.env`。
+- 图谱结构：仅 `retrieving-context` 使用 `config.json` 的 `graph-config`。
+- 动态产物：写到 `<工作区>/.super-data-analytics/{results,scratch,cache}/`，不写入 Skill 目录。
+- 进程级代理/超时不是业务凭证，可按需使用 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`、`SQL_QUERY_STDIN_TIMEOUT_MS`、`QUERY_STDIN_TIMEOUT_MS`、`SDA_STDIN_TIMEOUT_MS`。
 
-外部工具用各自配置：`lark-cli` 走 `lark-cli config init` + `lark-cli auth login`；Vercel CLI 用 `VERCEL_TOKEN` 环境变量（仅部署时需要）。
+外部工具使用自身配置：`lark-cli` 通过 `lark-cli config init` 与 `lark-cli auth login` 授权；Vercel CLI 使用自身登录状态或调用者提供的 `VERCEL_TOKEN`。项目运行脚本不会从 `config.json` 加载 `VERCEL_TOKEN`。
 
-skills 目录保持纯净——动态产物（生成的图片、报告留痕、临时 JSON）落到 `<工作区>/.super-data-analytics/`，已 gitignore。
+## 运行时与外部服务
 
-## 本项目依赖
+| 类别 | 版本 / 服务 | 用途 |
+| --- | --- | --- |
+| Node.js | 20+ | 查询、GraphRAG Node 壳、模板管理、报告 CLI、HTML 前端 |
+| Python | 3.10+ | GraphRAG pipeline、归因/预测/评估脚本、图表、Streamlit |
+| Neo4j | 5.x | 业务知识图谱与向量索引 |
+| Hologres | PostgreSQL 协议 | SQL 取数 |
+| Power BI / Fabric MCP | Azure AD Application 鉴权 | 语义模型 schema 与 DAX 查询 |
+| 飞书 | `lark-cli` | 多维表格数据源、模板、文档/幻灯片交付 |
+| Vercel + Blob | Public Blob Store | HTML/Streamlit 报告数据发布与前端托管 |
+| Streamlit Community Cloud | `Garcing/streamlit-reports` | Streamlit 多页报告托管 |
+| apimart gpt-image-2 | HTTP API | 图片报告生成 |
 
-| 类别 | 用途 | 具体依赖 | 凭证 / 配置 |
-| --- | --- | --- | --- |
-| 运行时（Node.js） | 取数、查询、报告发布、模板管理 | Node.js 18+（Vite 6 / `@vercel/blob` 2 / `neo4j-driver` 5 / `pg` 8 / `undici` 6+） | 各 `scripts/package.json` |
-| 运行时（Python） | GraphRAG 同步与向量化、预测 / 归因 / 效果评估脚本、图表渲染 | Python 3.10+ | `config.json` 的 `env.PYTHON_PATH` 指定解释器 |
-| 图数据库 | GraphRAG 业务知识存储（指标定义、表结构、业务层级） | Neo4j 5.x（本地实例，`bolt://localhost:7687`） | `config.json` 的 `env.NEO4J_*` |
-| Embedding 模型 | `retrieving-context` 中文语义检索向量化 | `BAAI/bge-small-zh-v1.5`（首次 `node sync.js --download-model` 下载到 `scripts/pipeline/models/`） | `config.json` 的 `graph-config.embedding` |
-| BI / 数据仓库 | 指标取数 | Power BI 语义模型（Azure AD 鉴权）+ PostgreSQL | Azure AD client_id / 数据库连接串 |
-| 飞书 | GraphRAG 数据源 + 报告模板存储 + 文档交付 | 飞书多维表格 + 飞书云文档 | `config.json` 的 `env.FEISHU_GRAPH_BITABLE_APP_TOKEN` + `lark-cli` 授权 |
-| 前端托管 | HTML 报告公网访问 | Vercel 项目 `super-data-analytics`（域名 `www.super-data-analytics.online`）+ Blob Store | `config.json` 的 `env.BLOB_READ_WRITE_TOKEN` / `env.VERCEL_REPORTS_URL` |
-| 报告托管（Streamlit） | Streamlit 报告线上多页 app | Streamlit Community Cloud（监听 `Garcing/streamlit-reports` 仓库） | `deploy.sh` subtree push |
-| AI 生图 | 图片报告 | apimart gpt-image-2（异步提交 → 轮询 → 下载） | `config.json` 的 `env.APIMART_API_KEY` / `env.APIMART_BASE_URL` |
+## 各 Skill 依赖
 
-## 各 skill 依赖明细
+### aligning-requirements
 
-### querying-data（取数）
+纯方法论，无脚本、无 Node/Python 第三方依赖、无环境变量。
 
-Node.js，`scripts/package.json`：
+### querying-data
 
-- `@azure/identity` ^4 —— Power BI 通过 Azure AD 取 token
-- `pg` ^8 —— PostgreSQL 驱动
-- `xlsx` ^0.18 —— 结果导出 Excel
+安装目录：`querying-data/scripts/`。
 
-### retrieving-context（业务知识图谱）
+- Node：`@azure/identity`、`pg`、`pg-protocol`、`xlsx`。
+- `pg-protocol` 是 `lib/sql.js` 的直接 import，用于 Hologres 空字段名兼容，必须作为直接依赖声明，不能只依赖 `pg` 的传递安装。
+- 清单：`package.json` + `package-lock.json`，两者根依赖已对齐。
+- 配置：
+  - Hologres：`HOLOGRES_HOST`、`HOLOGRES_PORT`、`HOLOGRES_DATABASE`、`HOLOGRES_USER`、`HOLOGRES_PASSWORD`。
+  - Power BI：`POWERBI_CLIENT_ID`、`POWERBI_CLIENT_SECRET`、`POWERBI_TENANT_ID`。
 
-Node.js + Python 双层。
+### retrieving-context
 
-Node 层（`scripts/package.json`）：
+Node 安装目录：`retrieving-context/scripts/`。
 
-- `neo4j-driver` ^5 —— 查询 CLI 连 Neo4j
+- Node：`neo4j-driver`；清单为 `package.json` + `package-lock.json`。
+- Python 安装文件：`retrieving-context/scripts/pipeline/requirements.txt`。
+- Python：`neo4j`、`sentence-transformers`。代码不 import PyYAML，已从 requirements 删除。
+- 模型：默认 `BAAI/bge-small-zh-v1.5`，首次 `node scripts/sync.js --download-model` 会下载到 `scripts/pipeline/models/`。
+- 外部：`lark-cli`。
+- 配置：`NEO4J_URI`、`NEO4J_DATABASE`、`NEO4J_USER`、`NEO4J_PASSWORD`、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`PYTHON_PATH`，以及 `graph-config.embedding/entities/relationships`。
 
-Python 层（`scripts/pipeline/requirements.txt`）：
+### diagnosing-anomalies
 
-- `neo4j` >=5.0
-- `sentence-transformers` >=2.0 —— 本地 bge 模型推理
-- `pyyaml` >=6.0
+Python 3.10+ 标准库实现。`diagnosing-anomalies/requirements.txt` 是注释型空依赖清单，用于明确运行时和测试均无第三方包；不读取配置或环境变量。
 
-外部 CLI：`lark-cli`（拉飞书多维表格字段与记录，参考 `using-templates/references/lark-cli-setup.md`）。
+### predicting-trends
 
-### using-templates（报告模板）
+Python 3.10+ 标准库实现。`predicting-trends/requirements.txt` 是注释型空依赖清单；不使用 NumPy 或 ML 框架，不读取配置或环境变量。
 
-Node.js，`scripts/package.json` 无第三方依赖（纯 ESM）。外部依赖 `lark-cli` 操作飞书个人文件夹中的模板。
+### evaluating-impact
 
-### diagnosing-anomalies / predicting_trends / evaluating-impact（分析方法论）
+Python 3.10+ 标准库实现。`evaluating-impact/requirements.txt` 是注释型空依赖清单；不读取配置或环境变量。
 
-Python 标准库 + 轻量计算（`numpy` 等数值计算），无重型 ML 框架。各自内置脚本：
+### visualizing-data
 
-- `diagnosing-anomalies/scripts/contribution.py` —— 加法 / 乘法 / 比率型贡献度
-- `predicting-trends/scripts/forecast.py` —— naive / 移动平均 / 指数平滑 / Holt 线性 / 趋势回归等
-- `evaluating-impact/scripts/impact.py` —— A/B 率值 / 均值、DID、ROI、样本量估算
+安装文件：`visualizing-data/requirements.txt`。
 
-### visualizing-data（确定性单图）
+- 运行：`matplotlib`、`pandas`、`pillow`、`seaborn`。
+- 测试：`pytest`。
+- 系统字体：中文标签需要任一可用 CJK 字体；字体不属于 pip 依赖，缺失时 CLI 会输出 warning。
+- 不读取 `config.json` 或环境变量。
 
-Python：`matplotlib` + `seaborn` + `pandas` + `pillow`（PNG 非空检查）。无 `requirements.txt`，按需安装：
+### using-templates
 
-```bash
-pip install matplotlib seaborn pandas pillow pytest
-```
+- `using-templates/scripts/package.json` 仅声明 ESM 与 Node 20+，代码只使用 Node 内置模块。
+- 无第三方 npm 依赖，因此不需要 `package-lock.json`，也无需在该目录执行 `npm install`。
+- 外部：`lark-cli`。
+- 配置：`FEISHU_TEMPLATE_FOLDER_TOKEN`、`FEISHU_TEMPLATE_DELETE_PASSWORD`。
 
-### building-reports（报告生成）
+### building-reports
 
-Node.js，多个子目录各有独立 `node_modules`：
+分为共享 Node CLI、HTML 前端和 Streamlit Python 三层：
 
-- `scripts/`（共享）：`@vercel/blob` ^2.5、`undici` ^6 —— Blob 读写 + 代理友好的 fetch
-- `scripts/html/`：`react` ^18、`react-dom` ^18、`react-router-dom` ^7、`recharts` ^2、`undici` ^8；devDeps `vite` ^6、`@vitejs/plugin-react` ^4、`tailwindcss` ^3、`postcss`、`autoprefixer`
-- `scripts/image/`：`undici` ^8 —— 调 apimart
-- `scripts/streamlit/`：Python，`requirements.txt` = `streamlit`>=1.36、`pandas`>=2.0、`plotly`>=5.20
+- `building-reports/scripts/`：`@vercel/blob`、`undici`，清单为 `package.json` + `package-lock.json`。HTML/Image/Streamlit 的 Node CLI 从此处解析共享依赖。
+- `building-reports/scripts/html/`：React 18、React DOM 18、React Router 7、Recharts 2；开发依赖为 Vite 6、React plugin、Tailwind CSS 3、PostCSS、Autoprefixer。清单为独立的 `package.json` + `package-lock.json`。
+- `building-reports/scripts/image/`：没有独立 package/lock；`image.js` 使用父级共享依赖，避免重复安装 `undici` 和不必要地把 Node 门槛抬到 22.19。
+- `building-reports/scripts/streamlit/requirements.txt`：`streamlit`、`pandas`、`plotly`。
+- 配置：`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`、`APIMART_BASE_URL`。
+- 外部：Vercel CLI（HTML 部署）；Git/Bash（Streamlit subtree 发布）；飞书格式由 `lark-doc` / `lark-slides` 负责。
 
-外部：Vercel CLI（部署 HTML，token 来自 `config.json`）。
+### validating-analyses
+
+纯方法论，无脚本、无 Node/Python 第三方依赖、无环境变量。需要复算、重画、重发时调用对应 Skill。
 
 ## 安装速查
 
-每个 skill 的 `scripts/` 子目录独立装依赖，互不污染：
+以下命令从仓库根目录执行：
 
 ```bash
-# Node 依赖（各目录单独装）
-cd querying-data/scripts && npm install
-cd retrieving-context/scripts && npm install
-cd using-templates/scripts && npm install
-cd building-reports/scripts && npm install
-cd building-reports/scripts/html && npm install
-cd building-reports/scripts/image && npm install
+# Node：仅四个有 lock 的目录
+cd querying-data/scripts && npm ci
+cd ../../retrieving-context/scripts && npm ci
+cd ../../building-reports/scripts && npm ci
+cd html && npm ci
 
-# Python 依赖
-cd retrieving-context/scripts/pipeline && pip install -r requirements.txt
-cd building-reports/scripts/streamlit && pip install -r requirements.txt
+# Python
+<PYTHON_PATH> -m pip install -r retrieving-context/scripts/pipeline/requirements.txt
+python -m pip install -r visualizing-data/requirements.txt
+python -m pip install -r building-reports/scripts/streamlit/requirements.txt
 
-# 可视化（无 requirements 文件）
-pip install matplotlib seaborn pandas pillow pytest
-
-# 外部 CLI
-npm install -g @anthropic-ai/lark-cli   # 飞书操作
-lark-cli config init && lark-cli auth login
+# 飞书 CLI
+npm install -g @anthropic-ai/lark-cli
+lark-cli config init
+lark-cli auth login
 ```
 
-## 测试
+三个分析脚本的 `requirements.txt` 没有第三方包，不需要执行安装；保留文件是为了明确依赖边界。
+
+## 测试与验证
 
 ```bash
+python -m pytest diagnosing-anomalies/tests/test_contribution.py -q
 python -m pytest predicting-trends/tests/test_forecast.py -q
+python -m pytest evaluating-impact/tests/test_impact.py -q
 python -m pytest visualizing-data/tests/test_chart_cli.py -q
+
+npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix querying-data/scripts
+npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix retrieving-context/scripts
+npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix building-reports/scripts
+npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix building-reports/scripts/html
 ```

@@ -20,6 +20,19 @@ metadata:
 | 飞书文档 | lark-doc 要求的格式 | 飞书文档 URL | 参考 SKILL `lark-doc` |
 | 飞书幻灯片 | lark-slides 要求的格式 | 飞书幻灯片 URL | 参考 SKILL `lark-slides` |
 
+## 运行环境与依赖
+
+- Node.js `>=20.0.0`。
+- 报告 CLI：在 `building-reports/scripts/` 执行 `npm ci`，安装共享的 `@vercel/blob` 与 `undici`。HTML/Image/Streamlit 的 Node CLI 都从这里解析共享依赖；`scripts/image/` 不再维护重复的 package/lock。
+- HTML 前端：另在 `building-reports/scripts/html/` 执行 `npm ci`，安装 React/Vite/Tailwind/Recharts 前端依赖。
+- Streamlit：Python `>=3.10`，执行 `python -m pip install -r scripts/streamlit/requirements.txt`。
+- 飞书文档/幻灯片由 `lark-doc` / `lark-slides` 技能及其依赖负责。
+- 代理可选读取 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`；`SDA_STDIN_TIMEOUT_MS` 只调整 stdin 超时。这些不是凭证。
+
+部署 HTML 另需 Vercel CLI；Streamlit 发布脚本另需 Git/Bash。完整安装矩阵见仓库根目录 `DEPENDENCIES.MD`。
+
+
+
 ## 核心约定（与 querying-data 对齐）
 
 ### 凭证：config.json 唯一来源

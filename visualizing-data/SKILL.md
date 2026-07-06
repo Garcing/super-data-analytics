@@ -16,6 +16,15 @@ python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <fil
 
 本文件是自洽的操作手册：选图、写 payload、跑 CLI、看输出，都在这里。**改代码/加图表类型/调色板** 的维护知识见 [`references/developer-guide.md`](references/developer-guide.md)。
 
+## 运行环境与依赖
+
+- Python `>=3.10`。
+- 在仓库根目录执行 `python -m pip install -r visualizing-data/requirements.txt`。
+- 运行依赖：`matplotlib`、`pandas`、`pillow`、`seaborn`；测试依赖：`pytest`。
+- 本技能不读取 `config.json` 或环境变量。中文渲染依赖系统中可用的 CJK 字体，缺失时 CLI 会返回 warning。
+
+完整安装矩阵见仓库根目录 `DEPENDENCIES.MD`。
+
 ## 什么时候用本技能
 
 需要**准确**图表素材时用：业务指标图、分析结果图、报告插图、幻灯片图表、可复现 PNG/SVG 导出，或任何必须与源数据一致的图表。
