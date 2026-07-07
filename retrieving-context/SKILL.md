@@ -21,15 +21,15 @@ metadata:
 ## 前置条件
 
 - Neo4j 本地运行（`bolt://localhost:7687`）
-- 数据已同步（运行过 `node scripts/sync.js`）
+- 数据已同步（运行过 `python scripts/pipeline/sync.py`）
 - 凭证/配置统一在 `~/.super-data-analytics/config.json`：
-  - `env` 块：`NEO4J_URI` / `NEO4J_DATABASE` / `NEO4J_USER` / `NEO4J_PASSWORD` / `FEISHU_GRAPH_BITABLE_APP_TOKEN` / `PYTHON_PATH`
+  - `env` 块：`NEO4J_URI` / `NEO4J_DATABASE` / `NEO4J_USER` / `NEO4J_PASSWORD` / `FEISHU_GRAPH_BITABLE_APP_TOKEN`
   - `graph-config` 块：`embedding`（model + dimensions）、`entities`、`relationships`
 
 ## 运行环境与依赖
 
 - Node.js `>=20.0.0`；在 `retrieving-context/scripts/` 执行 `npm ci`（`neo4j-driver`）。
-- Python `>=3.10`；用 `env.PYTHON_PATH` 指向目标解释器，并对该解释器执行：`<PYTHON_PATH> -m pip install -r scripts/pipeline/requirements.txt`。Python 依赖为 `neo4j`、`sentence-transformers`。
+- Python `>=3.10`；对 PATH 上的 `python` 执行 `python -m pip install -r scripts/pipeline/requirements.txt`（依赖：`neo4j`、`sentence-transformers`）。
 - 同步飞书数据还要求可执行的 `lark-cli` 及已完成授权。
 - 可选进程变量 `QUERY_STDIN_TIMEOUT_MS` 只调整查询 stdin 超时；embedding 模型由 `graph-config.embedding` 配置，首次使用会下载模型文件。
 
@@ -134,9 +134,9 @@ node scripts/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 数量"
 
 ## 数据同步（维护时使用）
 
-Python 解释器路径在 config.json 的 `env.PYTHON_PATH` 中配置，sync.js 自动读取，无需关心 Python 环境。配置（飞书 token / Neo4j 凭证 / 实体 / 关系）全部来自 config.json，不再读 `.env` 或 `graph-config.yaml`。
+直接用 Python CLI 运行 `scripts/pipeline/sync.py`。前提是 PATH 上的 `python` 已按上方"运行环境与依赖"装好 requirements.txt。配置（飞书 token / Neo4j 凭证 / 实体 / 关系）全部来自 config.json，sync.py 自己读取，不依赖任何 Node 包装。
 
-### `node scripts/sync.js`（无参数）— 全流程重建
+### `python scripts/pipeline/sync.py`（无参数）— 全流程重建
 
 从零重建整个图数据库，按顺序执行三个阶段：
 1. **拉飞书数据**：9 张表全拉下来
@@ -145,31 +145,31 @@ Python 解释器路径在 config.json 的 `env.PYTHON_PATH` 中配置，sync.js 
 
 **使用场景**：飞书表结构有变化（加了新字段、新表、新关系），或想彻底重建。
 
-### `node scripts/sync.js --only graph` — 只建图
+### `python scripts/pipeline/sync.py --only graph` — 只建图
 
 拉数据 + 建节点和关系，**不重建向量索引**。
 
 **使用场景**：飞书数据有增删改（比如新增了几个指标），但不需要重新生成 embedding。
 
-### `node scripts/sync.js --only embed` — 只重建向量
+### `python scripts/pipeline/sync.py --only embed` — 只重建向量
 
 跳过拉数据和建图，在现有图上重新生成 search_text 和 embedding。已有 embedding 的节点默认跳过。
 
 **使用场景**：图结构没变，只想重建向量（比如换了 embedding 模型、调整了 search_text 逻辑）。
 
-### `node scripts/sync.js --force-embed` — 强制重建所有 embedding
+### `python scripts/pipeline/sync.py --force-embed` — 强制重建所有 embedding
 
 全流程执行，且即使节点已有 embedding 也全部重新生成。
 
 **使用场景**：换了 embedding 模型，或需要全量重算。
 
-### `node scripts/sync.js --dry-run` — 预览模式
+### `python scripts/pipeline/sync.py --dry-run` — 预览模式
 
 只拉飞书数据并打印统计（每张表多少条记录、多少字段），**不写入 Neo4j**。
 
 **使用场景**：验证飞书数据是否正常，确认数据量。
 
-### `node scripts/sync.js --download-model` — 下载模型
+### `python scripts/pipeline/sync.py --download-model` — 下载模型
 
 把 embedding 模型下载到 `scripts/pipeline/models/` 本地目录，后续操作不联网。
 

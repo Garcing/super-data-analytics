@@ -20,10 +20,43 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import neo4j from "neo4j-driver";
 
-import { PROJECT_ROOT, SCRIPTS_DIR, loadConfig, pythonPath } from "./env.js";
+// ---------------------------------------------------------------------------
+// Paths & config (merged from the former env.js; only this CLI uses them)
+// ---------------------------------------------------------------------------
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(SCRIPTS_DIR, "..");
+const CONFIG_PATH = join(homedir(), ".super-data-analytics", "config.json");
+
+/**
+ * Load & parse the shared config.json. Throws a clear, agent-facing error
+ * when the file is missing or unreadable so the caller can guide the user
+ * to fill it in.
+ */
+function loadConfig(configPath = CONFIG_PATH) {
+  let raw;
+  try {
+    raw = readFileSync(configPath, "utf-8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      throw new Error(
+        `配置文件不存在: ${configPath}\n` +
+          `请把 Neo4j / 飞书 / Python 凭证写入 config.json 的 env 块，graph-config 块放实体与关系后重试。`
+      );
+    }
+    throw new Error(`读取配置失败 ${configPath}: ${err.message}`);
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`解析配置失败 ${configPath}: ${err.message}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Internal properties to exclude from output
@@ -144,10 +177,14 @@ function encodeQuestion(text, modelPath, pyPath) {
 
   let stdout;
   try {
+    // 注意：不要加 shell:true。args 以原生 argv 数组传递，text 作为单个 token
+    // 原样到达 Python（含空格/引号/特殊符号/换行都不被切词）。shell:true 会把
+    // 数组拼成字符串交 shell 重新切词，含空格的问题（如 "GMV 是什么"）会被拆成
+    // 多个 argv 导致 argparse 报 unrecognized arguments。
     const buffer = execFileSync(
       pyPath,
       [scriptPath, "encode", text, "--model-path", absModelPath],
-      { encoding: "utf-8", shell: true, timeout: 60000 }
+      { encoding: "utf-8", timeout: 60000 }
     );
     stdout = buffer;
   } catch (err) {
@@ -544,7 +581,8 @@ async function main() {
       `[query] Entities to search: ${Object.keys(targetEntities).join(", ")}`
     );
 
-    const pyPath = pythonPath(config);
+    // 直接用 PATH 上的 python；依赖见 scripts/pipeline/requirements.txt
+    const pyPath = "python";
 
     const embedding = encodeQuestion(questionText, modelPath, pyPath);
     console.error(`[query] Embedding dimensions: ${embedding.length}`);

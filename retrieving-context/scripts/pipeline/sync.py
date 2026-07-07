@@ -1,7 +1,7 @@
 """sync.py — Main orchestrator for GraphRAG sync pipeline.
 
 Config source: ~/.super-data-analytics/config.json (shared with querying-data).
-  - env block:           NEO4J_*, FEISHU_GRAPH_BITABLE_APP_TOKEN, PYTHON_PATH, ...
+  - env block:           NEO4J_*, FEISHU_GRAPH_BITABLE_APP_TOKEN, ...
   - graph-config block:  embedding / entities / relationships
 """
 from __future__ import annotations
