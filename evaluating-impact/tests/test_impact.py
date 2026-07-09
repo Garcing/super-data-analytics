@@ -1,4 +1,4 @@
-import json
+﻿import json
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +46,10 @@ def test_ab_rate_detects_significant_lift(tmp_path):
     assert body["significant"] is True
     assert body["confidence_interval"]["lower"] < body["absolute_lift"]
     assert body["confidence_interval"]["upper"] > body["absolute_lift"]
+    assert body["control_rate_ci"]["lower"] < body["control_rate"]
+    assert body["control_rate_ci"]["upper"] > body["control_rate"]
+    assert body["treatment_rate_ci"]["lower"] < body["treatment_rate"]
+    assert body["treatment_rate_ci"]["upper"] > body["treatment_rate"]
 
 
 def test_ab_rate_returns_non_significant_for_close_result(tmp_path):
@@ -97,6 +101,7 @@ def test_ab_mean_outputs_difference_and_interval(tmp_path):
     assert body["ok"] is True
     assert body["mean_difference"] == 0.8
     assert body["relative_difference"] == 0.08
+    assert body["cohens_d"] == 0.194971
     assert 0 <= body["p_value"] <= 1
     assert body["confidence_interval"]["lower"] < 0.8
     assert body["confidence_interval"]["upper"] > 0.8
@@ -189,3 +194,5 @@ def test_unknown_analysis_type_fails_clearly(tmp_path):
     assert result.returncode != 0
     assert body["ok"] is False
     assert "Unknown analysis_type" in body["error"]
+
+

@@ -261,74 +261,59 @@ async function searchVectorIndex(session, indexName, label, embedding, topK) {
 // Graph context expansion
 // ---------------------------------------------------------------------------
 
-async function fetchGraphContext(
-  session,
-  label,
-  keyField,
-  keyFieldValue,
-  relationships
-) {
+async function fetchGraphContext(session, label, nodeId, relationships) {
+  // 扩图阶段：边在 sync 阶段已按 match / via 配置建好写入库里，
+  // 这里只沿已有边走，用节点 elementId 定位起点，不再读 match / source_field。
+  // 这样 match 型（字段值匹配）和 via 型（中间表关联）的关系一视同仁，
+  // 建图怎么建的不用关心 —— 边在库里就能走。
   const context = {};
-  const escLabel = label.replace(/`/g, "``");
 
   const relevantRels = relationships.filter(
     (rel) => rel.from === label || rel.to === label
   );
 
   for (const rel of relevantRels) {
-    const isSource = rel.from === label;
-    const otherLabel = isSource ? rel.to : rel.from;
+    const isFrom = rel.from === label;
+    const isTo = rel.to === label;
+    const otherLabel = isFrom ? rel.to : rel.from;
 
     const escOther = otherLabel.replace(/`/g, "``");
     const escRelType = rel.type.replace(/`/g, "``");
 
-    let cypher;
-    if (isSource) {
-      const srcField = rel.match.source_field;
-      const escSrcField = srcField;
-
-      if (rel.from === rel.to && rel.via) {
-        continue;
-      }
-
-      cypher = `
-        MATCH (n:\`${escLabel}\`)-[:\`${escRelType}\`]->(other:\`${escOther}\`)
-        WHERE n.\`${escSrcField}\` = $keyValue
-        RETURN properties(other) AS props
-        LIMIT 20
-      `;
+    // 方向：自环（from===to，如 表-关联-表）走无向；否则按 from/to 判方向
+    let relPattern;
+    if (isFrom && isTo) {
+      relPattern = `-[:\`${escRelType}\`]-`;
+    } else if (isFrom) {
+      relPattern = `-[:\`${escRelType}\`]->`;
     } else {
-      const tgtField = rel.match.target_field;
-      const escTgtField = tgtField;
-
-      cypher = `
-        MATCH (other:\`${escOther}\`)-[:\`${escRelType}\`]->(n:\`${escLabel}\`)
-        WHERE n.\`${escTgtField}\` = $keyValue
-        RETURN properties(other) AS props
-        LIMIT 20
-      `;
+      relPattern = `<-[:\`${escRelType}\`]-`;
     }
 
+    // 自环时排除起点自身，避免把同一个节点当邻居返回
+    const selfExclude =
+      otherLabel === label ? ` AND elementId(other) <> $nodeId` : "";
+
+    const cypher = `
+      MATCH (n)${relPattern}(other:\`${escOther}\`)
+      WHERE elementId(n) = $nodeId${selfExclude}
+      RETURN properties(other) AS props
+      LIMIT 20
+    `;
+
     try {
-      const result = await session.run(cypher, { keyValue: keyFieldValue });
+      const result = await session.run(cypher, { nodeId });
 
       if (result.records.length > 0) {
         if (!context[otherLabel]) context[otherLabel] = [];
 
         for (const record of result.records) {
-          const rawProps = record.get("props");
-          const cleanProps = {};
-          for (const [k, v] of Object.entries(rawProps)) {
-            if (!INTERNAL_PROPS.has(k)) {
-              cleanProps[k] = v;
-            }
-          }
-          context[otherLabel].push(cleanProps);
+          context[otherLabel].push(cleanProperties(record.get("props")));
         }
       }
     } catch (err) {
       console.error(
-        `[query] Graph expansion failed for ${label}->${otherLabel}: ${err.message}`
+        `[query] Graph expansion failed for ${label}-${rel.type}-${otherLabel}: ${err.message}`
       );
     }
   }
@@ -592,9 +577,7 @@ async function main() {
       ? gc.relationships
       : [];
 
-    for (const [label, cfg] of Object.entries(targetEntities)) {
-      const keyField = cfg.key_field;
-
+    for (const label of Object.keys(targetEntities)) {
       const session = driver.session({ database: neo4jDatabase });
       try {
         const indexName = await findVectorIndexName(session, label);
@@ -617,15 +600,13 @@ async function main() {
 
         for (const hit of hits) {
           const cleanProps = cleanProperties(hit.properties);
-          const keyFieldValue = cleanProps[keyField];
 
           let graphContext = {};
-          if (keyFieldValue && relationships.length > 0) {
+          if (relationships.length > 0) {
             graphContext = await fetchGraphContext(
               session,
               label,
-              keyField,
-              keyFieldValue,
+              hit.id,
               relationships
             );
           }

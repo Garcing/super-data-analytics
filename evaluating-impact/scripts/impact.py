@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 import argparse
 import json
 import math
@@ -68,6 +68,21 @@ def normal_p_value(z):
     return 2 * (1 - statistics.NormalDist().cdf(abs(z)))
 
 
+def wilson_interval(success, n, alpha):
+    if n <= 0:
+        raise ValidationError("n must be positive")
+    p = success / n
+    z = z_for_alpha(alpha)
+    z2 = z**2
+    denominator = 1 + z2 / n
+    center = (p + z2 / (2 * n)) / denominator
+    half_width = z * math.sqrt((p * (1 - p) + z2 / (4 * n)) / n) / denominator
+    return {
+        "lower": rounded(max(0.0, center - half_width)),
+        "upper": rounded(min(1.0, center + half_width)),
+    }
+
+
 def validate_rate_group(name, group):
     n = group["n"]
     success = group["success"]
@@ -114,6 +129,8 @@ def analyze_ab_rate(payload):
             "lower": rounded(lift - margin),
             "upper": rounded(lift + margin),
         },
+        "control_rate_ci": wilson_interval(control["success"], control["n"], alpha),
+        "treatment_rate_ci": wilson_interval(treatment["success"], treatment["n"], alpha),
         "warnings": [],
     }
 
@@ -134,6 +151,12 @@ def analyze_ab_mean(payload):
 
     diff = treatment["mean"] - control["mean"]
     relative = diff / control["mean"] if control["mean"] else None
+    pooled_variance = (
+        (control["n"] - 1) * control["stddev"] ** 2
+        + (treatment["n"] - 1) * treatment["stddev"] ** 2
+    ) / (control["n"] + treatment["n"] - 2)
+    pooled_stddev = math.sqrt(pooled_variance)
+    cohens_d = diff / pooled_stddev if pooled_stddev else None
     se = math.sqrt((control["stddev"] ** 2) / control["n"] + (treatment["stddev"] ** 2) / treatment["n"])
     z = diff / se if se else 0.0
     p_value = normal_p_value(z)
@@ -146,6 +169,7 @@ def analyze_ab_mean(payload):
         "treatment_mean": rounded(treatment["mean"]),
         "mean_difference": rounded(diff),
         "relative_difference": rounded(relative),
+        "cohens_d": rounded(cohens_d),
         "p_value": rounded(p_value),
         "alpha": alpha,
         "significant": p_value < alpha,
@@ -283,3 +307,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+

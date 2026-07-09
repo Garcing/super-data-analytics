@@ -126,7 +126,32 @@ description: 业务预测和目标制定方法论。用于回答下月/下季度
 | 季节性主导且历史足够 | seasonal naive |
 | 不确定选哪种 | `auto_baseline` 回测选择 |
 
-详细模型选择读取 `references/model-selection.md`。
+模型使用要点：
+
+- `naive`：重复最新一期观测值。适合历史很短、波动很大或难以建模的序列，也是强基线。
+- `moving_average`：使用最近几期平均值。适合当前水平比久远历史更重要、且没有明显趋势的指标。
+- `weighted_moving_average`：越近的数据权重越高。适合指标水平缓慢漂移，但直接趋势外推过于激进的情况。
+- `exponential_smoothing`：围绕水平值平滑噪声。适合随机波动明显但整体水平相对稳定的指标。
+- `holt_linear`：同时建模水平和线性趋势。适合持续加法型上升或下降；结构断点后慎用。
+- `linear_trend`：拟合直线。解释简单，适合趋势外推；历史存在阶跃、弯曲增长或饱和时风险较高。
+- `log_linear_trend`：对数值拟合直线，代表乘法型增长。仅当所有值为正，且增长率比绝对增量更稳定时使用。
+- `seasonal_naive`：重复上一季节周期的同位置数值。适合季节性主导且至少有两个完整季节周期的情况。
+
+需要升级到更复杂方法的情况：
+
+- 预测结果影响很大，值得投入更高建模成本。
+- 存在多重季节性，例如周内周期和年末周期同时存在。
+- 已知未来驱动变量，例如计划投放、价格、库存、人力、流量。
+- 序列存在强自相关，且历史足够支持 ARIMA/SARIMA 这类方法。
+- 问题需要因果解释，而不仅是趋势外推。
+- 各业务分群差异很大，需要分层预测。
+
+业务护栏：
+
+- 信任模型前先回测。
+- 当误差差异很小时，优先选择稍微不那么准但更容易解释的方法。
+- 不要把短期活动带来的增长外推成长期趋势。
+- 当决策是分群决策时，不要把业务驱动完全不同的分群粗暴平均。
 
 如果没有任何方法适合，不要硬给点预测，改为场景预测或说明无法可靠预测。
 
@@ -216,8 +241,6 @@ description: 业务预测和目标制定方法论。用于回答下月/下季度
 python predicting-trends/scripts/forecast.py <input.json>
 ```
 
-输入输出契约读取 `references/input-contract.md`。
-
 支持模型：
 
 - `naive`
@@ -229,6 +252,56 @@ python predicting-trends/scripts/forecast.py <input.json>
 - `linear_trend`
 - `log_linear_trend`
 - `auto_baseline`
+
+输入 JSON 必填字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `metric` | string | 便于阅读的指标名称。 |
+| `grain` | string | `day`、`week`、`month` 或 `quarter`。 |
+| `horizon` | integer | 需要预测的未来周期数。 |
+| `model` | string | 支持的模型名称。 |
+| `series` | array | 每行包含 `date` 和数值型 `value`。 |
+
+输入示例：
+
+```json
+{
+  "metric": "Monthly revenue",
+  "grain": "month",
+  "horizon": 3,
+  "season_length": 12,
+  "model": "auto_baseline",
+  "target": 1200000,
+  "series": [
+    { "date": "2025-01-01", "value": 830000 },
+    { "date": "2025-02-01", "value": 860000 }
+  ],
+  "options": {
+    "holdout": 3,
+    "window": 3,
+    "alpha": 0.4,
+    "beta": 0.3,
+    "allow_log_trend": true
+  }
+}
+```
+
+输入规则：
+
+- 日期必须使用 `YYYY-MM-DD`。
+- 重复日期会被拒绝。
+- 输入行可以未排序，脚本会按日期排序后再预测。
+- `seasonal_naive` 需要传入 `season_length`，并且至少有两个完整季节周期。
+- `log_linear_trend` 要求所有值都大于 0。
+
+输出规则：
+
+- 成功时 stdout 返回 `ok: true`，包含 `forecast`、`summary`、`backtest`、`confidence`、`assumptions`、`warnings`。
+- 失败时 stdout 返回 `ok: false` 和 `error`，表示输入需要修正或所选模型不适合。
+- 将 `lower` 和 `upper` 理解为近似业务范围，不要当作严格统计置信区间。
+- 必须把 `warnings` 带入最终回答，不要隐藏。
+- 低置信度预测不要用过度精确的数字包装。
 
 脚本只负责轻量预测、回测和 JSON 输出。业务口径、异常解释、结构性变化判断、目标取舍仍由 agent 完成。
 

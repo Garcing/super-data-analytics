@@ -26,6 +26,8 @@ metadata:
   - `env` 块：`NEO4J_URI` / `NEO4J_DATABASE` / `NEO4J_USER` / `NEO4J_PASSWORD` / `FEISHU_GRAPH_BITABLE_APP_TOKEN`
   - `graph-config` 块：`embedding`（model + dimensions）、`entities`、`relationships`
 
+> **需要理解这套图配置的字段语义、或要维护（新增实体/关系、换 embedding 模型、排查边没建上）时**，读 [`references/neo4j-config.md`](references/neo4j-config.md)。那里讲清了 `entities`/`relationships`（含 `match` vs `via` 两种建边机制）、建图与扩图的职责分工、以及维护指南。
+
 ## 运行环境与依赖
 
 - Node.js `>=20.0.0`；在 `retrieving-context/scripts/` 执行 `npm ci`（`neo4j-driver`）。
@@ -135,6 +137,8 @@ node scripts/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 数量"
 ## 数据同步（维护时使用）
 
 直接用 Python CLI 运行 `scripts/pipeline/sync.py`。前提是 PATH 上的 `python` 已按上方"运行环境与依赖"装好 requirements.txt。配置（飞书 token / Neo4j 凭证 / 实体 / 关系）全部来自 config.json，sync.py 自己读取，不依赖任何 Node 包装。
+
+> 改动 `graph-config`（加实体/关系、换 embedding 模型）前，先读 [`references/neo4j-config.md`](references/neo4j-config.md) 的"维护指南"，确认字段语义和重建步骤。
 
 ### `python scripts/pipeline/sync.py`（无参数）— 全流程重建
 

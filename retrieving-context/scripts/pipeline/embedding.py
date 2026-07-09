@@ -20,7 +20,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from neo4j import GraphDatabase
 
 # ---------------------------------------------------------------------------
 # Internal property names to skip when generating search_text
