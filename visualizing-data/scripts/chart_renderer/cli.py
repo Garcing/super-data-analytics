@@ -93,7 +93,7 @@ def read_data_inline(raw: str) -> dict[str, Any]:
 
 
 def read_data_source(options: dict[str, Any]) -> dict[str, Any]:
-    """按三态路由读取图表 JSON，对齐 querying-data 的 --query 路由。"""
+    """按三态路由读取图表 JSON，对齐 querying-data 的 --sql / --payload 路由。"""
     source = options["data_source"]
     if source == "stdin":
         return read_data_from_stdin()
@@ -104,19 +104,19 @@ def read_data_source(options: dict[str, Any]) -> dict[str, Any]:
 
 # --- 输出路径 / 格式 ----------------------------------------------------------
 
-def format_from_save_path(save_path: Path) -> str:
-    """--save 的扩展名决定输出格式（删掉了 --format）。非法或缺扩展名直接报错。"""
-    ext = save_path.suffix.lower()
+def format_from_output_path(output_path: Path) -> str:
+    """--output 的扩展名决定输出格式（删掉了 --format）。非法或缺扩展名直接报错。"""
+    ext = output_path.suffix.lower()
     fmt = ext.lstrip(".")
     if fmt not in SUPPORTED_FORMATS:
         raise ChartInputError(
-            f"--save 扩展名必须是 .png 或 .svg（决定输出格式），收到: {ext or '(无扩展名)'}"
+            f"--output 扩展名必须是 .png 或 .svg（决定输出格式），收到: {ext or '(无扩展名)'}"
         )
     return fmt
 
 
-def ensure_save_parent(save_path: Path) -> None:
-    save_path.parent.mkdir(parents=True, exist_ok=True)
+def ensure_output_parent(output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 # --- 参数解析 ----------------------------------------------------------------
@@ -146,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--save",
+        "--output",
         help="输出文件路径（必填）；扩展名 .png / .svg 决定输出格式",
     )
     parser.add_argument("--dpi", default="144")
@@ -154,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_data_option(value: str | None) -> dict[str, Any]:
-    """把 --data 解析成内部 source（对外只剩一个 --data），对齐 querying-data 的 --query：
+    """把 --data 解析成内部 source（对外只剩一个 --data），对齐 querying-data 的 --sql / --payload：
     不传 或 -  → stdin（从管道读；- 是 Unix 惯用的"显式 stdin"）
     @<path>    → file
     其他       → inline（直接 JSON）
@@ -171,9 +171,9 @@ def resolve_data_option(value: str | None) -> dict[str, Any]:
 
 def parse_args(argv: list[str] | None = None):
     args = build_parser().parse_args(argv)
-    if not args.save:
+    if not args.output:
         raise CliArgumentError(
-            "--save 是必填项：输出文件路径，扩展名 .png 或 .svg 决定输出格式。"
+            "--output 是必填项：输出文件路径，扩展名 .png 或 .svg 决定输出格式。"
             "建议落到 <工作区>/.super-data-analytics/results/"
         )
     try:
@@ -183,9 +183,9 @@ def parse_args(argv: list[str] | None = None):
     if dpi <= 0:
         raise CliArgumentError("dpi 必须大于 0")
     data_option = resolve_data_option(args.data)
-    save_path = Path(args.save)
-    fmt = format_from_save_path(save_path)  # ChartInputError → exit 2
-    return data_option, save_path, fmt, dpi
+    output_path = Path(args.output)
+    fmt = format_from_output_path(output_path)  # ChartInputError → exit 2
+    return data_option, output_path, fmt, dpi
 
 
 # --- 主流程 ------------------------------------------------------------------
@@ -204,16 +204,16 @@ def _success_payload(spec: ChartSpec, output_path: Path, fmt: str, dpi: int, war
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        data_option, save_path, fmt, dpi = parse_args(argv)
+        data_option, output_path, fmt, dpi = parse_args(argv)
         raw = read_data_source(data_option)
         spec = validate(raw)
-        ensure_save_parent(save_path)
-        warnings = render_chart(spec, save_path, fmt, dpi)
-        ensure_output_exists(save_path)
-        ensure_png_nonblank(save_path)
-        sys.stderr.write(f"结果已保存到: {save_path.resolve()}\n")
+        ensure_output_parent(output_path)
+        warnings = render_chart(spec, output_path, fmt, dpi)
+        ensure_output_exists(output_path)
+        ensure_png_nonblank(output_path)
+        sys.stderr.write(f"结果已保存到: {output_path.resolve()}\n")
         sys.stderr.flush()
-        write_json(_success_payload(spec, save_path, fmt, dpi, warnings))
+        write_json(_success_payload(spec, output_path, fmt, dpi, warnings))
         return 0
     except (CliArgumentError, ChartInputError, ContractError) as exc:
         write_json({"ok": False, "error": str(exc)})

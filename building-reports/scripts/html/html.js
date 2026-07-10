@@ -1,15 +1,15 @@
 /**
- * HTML 报告客户端（report.js）
+ * HTML 报告客户端（html.js）
  * ============================================================================
  * 直连 Vercel Blob（@vercel/blob SDK）管理 HTML 报告：把报告 JSON 推到
  * `html-reports/<id>.json`，并维护 `html-reports-index.json` 索引（ifMatch 乐观锁）。
  * 不走 serverless 函数；线上前端直读 Blob 公开 URL。与 streamlit.js 完全对称。
  *
  * CLI（从 building-reports/ 目录）：
- *   node scripts/html/report.js publish --id <reportId> [--report "<json>" | --report @<file> | --report -]
- *   node scripts/html/report.js list
- *   node scripts/html/report.js get <reportId>
- *   node scripts/html/report.js delete <reportId>
+ *   node scripts/report.js html publish --id <reportId> [--report "<json>" | --report @<file> | --report -]
+ *   node scripts/report.js html list
+ *   node scripts/report.js html get <reportId>
+ *   node scripts/report.js html delete <reportId>
  *
  * 凭证 BLOB_READ_WRITE_TOKEN 来自 ~/.super-data-analytics/config.json 的 env 块；
  * VERCEL_REPORTS_URL 仅用于拼"可分享的前端链接"。脚本不读 .env。
@@ -192,15 +192,15 @@ const isMain = (() => {
 })()
 
 const USAGE = `用法（从 building-reports/ 目录运行）:
-  发布（--report 三种来源，同 querying-data 的 --query）:
-    node scripts/html/report.js publish --id <reportId> --report "<json>"     # inline
-    node scripts/html/report.js publish --id <reportId> --report @<file>      # 文件（建议放 <工作区>/.super-data-analytics/scratch/）
-    node scripts/html/report.js publish --id <reportId> --report -            # stdin（管道）
-    node scripts/html/report.js publish --id <reportId>                       # 不传 --report 等同 stdin
+  发布（--report 三种来源，同 querying-data 的 --sql / --payload）:
+    node scripts/report.js html publish --id <reportId> --report "<json>"     # inline
+    node scripts/report.js html publish --id <reportId> --report @<file>      # 文件（建议放 <工作区>/.super-data-analytics/scratch/）
+    node scripts/report.js html publish --id <reportId> --report -            # stdin（管道）
+    node scripts/report.js html publish --id <reportId>                       # 不传 --report 等同 stdin
   其它:
-    node scripts/html/report.js list                                          # 列出全部报告
-    node scripts/html/report.js get <reportId>                                # 打印某份报告 JSON
-    node scripts/html/report.js delete <reportId>                             # 删除
+    node scripts/report.js html list                                          # 列出全部报告
+    node scripts/report.js html get <reportId>                                # 打印某份报告 JSON
+    node scripts/report.js html delete <reportId>                             # 删除
 
 报告 JSON 的 meta 块支持可选 tags（数组），会写入索引:
   "meta": { "title": "...", "generated_at": "ISO8601", "model": "...", "tags": ["销售","区域"] }`
@@ -226,8 +226,8 @@ function parsePublishArgs(args) {
   return { id, report }
 }
 
-if (isMain) {
-  const [, , cmd, ...rest] = process.argv
+export async function runCli(argv = process.argv.slice(2)) {
+  const [cmd, ...rest] = argv
   let exitCode = 0
   try {
     switch (cmd) {
@@ -259,13 +259,13 @@ if (isMain) {
       }
       case 'get': {
         const [id] = rest
-        if (!id) throw new Error('用法: node scripts/html/report.js get <reportId>')
+        if (!id) throw new Error('用法: node scripts/report.js html get <reportId>')
         console.log(JSON.stringify(await getReport(id), null, 2))
         break
       }
       case 'delete': {
         const [id] = rest
-        if (!id) throw new Error('用法: node scripts/html/report.js delete <reportId>')
+        if (!id) throw new Error('用法: node scripts/report.js html delete <reportId>')
         await deleteReport(id)
         console.log(`已删除: ${id}`)
         break
@@ -279,5 +279,9 @@ if (isMain) {
     exitCode = 1
   }
   if (proxyState.proxyConfigured) await closeProxy()
-  process.exitCode = exitCode
+  if (exitCode !== 0) process.exitCode = exitCode
+}
+
+if (isMain) {
+  await runCli()
 }

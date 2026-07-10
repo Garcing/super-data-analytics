@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
- * query.js — Node.js vector search + graph expansion CLI for GraphRAG
+ * retrieve.js — Node.js vector search + graph expansion CLI for GraphRAG
  *
  * Usage:
- *   node scripts/query.js --schema
- *   node scripts/query.js --question "<问题>" [--top-k 5] [--targets 表,指标]
- *   node scripts/query.js --cypher "<CYPHER>"
+ *   node scripts/retrieve.js schema
+ *   node scripts/retrieve.js search --question "<问题>" [--top-k 5] [--targets 表,指标]
+ *   node scripts/retrieve.js cypher --statement "<CYPHER>"
  *
- * --question / --cypher 各支持三态输入：
- *   --question "<文本>"   inline
- *   --question @<file>    文件
- *   --question -          stdin（管道）
+ * --question / --statement 各支持三态输入：
+ *   --question "<文本>"    inline
+ *   --question @<file>     文件
+ *   --question -           stdin（管道）
+ *   --statement "<文本>"   inline
+ *   --statement @<file>    文件
+ *   --statement -          stdin（管道）
  *
  * Flow (vector mode):
  *   1. Encode question via Python embedding subprocess
@@ -86,7 +89,7 @@ function modelDirFromConfig(gc) {
 }
 
 // ---------------------------------------------------------------------------
-// Tri-state text source resolution (--question / --cypher)
+// Tri-state text source resolution (--question / --statement)
 // ---------------------------------------------------------------------------
 
 /**
@@ -94,7 +97,7 @@ function modelDirFromConfig(gc) {
  *   "@" + path  → read file
  *   "-" / null  → stdin (with a first-byte timeout so non-TTY callers
  *                 that forgot to close stdin don't hang forever)
- *   other       → inline string as-is
+ *   other       → inline string, trimmed and checked as non-empty
  */
 async function resolveText(value, kind) {
   if (value === null || value === "-") {
@@ -103,25 +106,36 @@ async function resolveText(value, kind) {
   if (value.startsWith("@")) {
     const filePath = value.slice(1);
     if (!filePath) {
-      console.error(`[query] ${kind} 值为 "@"，缺少文件路径`);
+      console.error(`[retrieve] ${kind} 值为 "@"，缺少文件路径`);
       process.exit(1);
     }
+    let content;
     try {
-      return readFileSync(filePath, "utf-8").trim();
+      content = readFileSync(filePath, "utf-8").trim();
     } catch (err) {
-      console.error(`[query] 无法读取 ${kind} 文件 ${filePath}: ${err.message}`);
+      console.error(`[retrieve] 无法读取 ${kind} 文件 ${filePath}: ${err.message}`);
       process.exit(1);
     }
+    if (!content) {
+      console.error(`[retrieve] ${kind} 文件为空: ${filePath}`);
+      process.exit(1);
+    }
+    return content;
   }
-  if (!value) {
-    console.error(`[query] ${kind} 内容为空`);
+  const content = value.trim();
+  if (!content) {
+    console.error(`[retrieve] ${kind} 内容为空`);
     process.exit(1);
   }
-  return value;
+  return content;
 }
 
 async function readFromStdin(kind) {
   const stream = process.stdin;
+  if (stream.isTTY) {
+    console.error(`[retrieve] 未提供 --${kind} 且 stdin 是终端。请用 --${kind} "<文本>"、--${kind} @<文件> 或管道传入`);
+    process.exit(1);
+  }
   if (typeof stream.setEncoding === "function") stream.setEncoding("utf8");
 
   const timeoutMs = Number(process.env.QUERY_STDIN_TIMEOUT_MS) || 15000;
@@ -144,7 +158,7 @@ async function readFromStdin(kind) {
     if (stream.destroy) stream.destroy();
     if (err && err.message === "STDIN_READ_TIMEOUT") {
       console.error(
-        `[query] 等待 stdin 超时（${timeoutMs / 1000}s 内未收到 ${kind}）。\n` +
+        `[retrieve] 等待 stdin 超时（${timeoutMs / 1000}s 内未收到 ${kind}）。\n` +
           `常见原因：非交互环境里既没传 --${kind} "<文本>" / --${kind} @<文件>，stdin 也没关闭。\n` +
           `解决：用 --${kind} 显式传入，或确保管道写完后关闭 stdin。`
       );
@@ -156,7 +170,7 @@ async function readFromStdin(kind) {
   }
 
   if (!content) {
-    console.error(`[query] stdin 中的 ${kind} 为空`);
+    console.error(`[retrieve] stdin 中的 ${kind} 为空`);
     process.exit(1);
   }
   return content;
@@ -170,10 +184,10 @@ function encodeQuestion(text, modelPath, pyPath) {
   const scriptPath = join(SCRIPTS_DIR, "pipeline", "embedding.py");
   const absModelPath = resolve(PROJECT_ROOT, modelPath);
 
-  console.error(`[query] Encoding question via Python...`);
-  console.error(`[query]   python: ${pyPath}`);
-  console.error(`[query]   script: ${scriptPath}`);
-  console.error(`[query]   model:  ${absModelPath}`);
+  console.error(`[retrieve] Encoding question via Python...`);
+  console.error(`[retrieve]   python: ${pyPath}`);
+  console.error(`[retrieve]   script: ${scriptPath}`);
+  console.error(`[retrieve]   model:  ${absModelPath}`);
 
   let stdout;
   try {
@@ -188,7 +202,7 @@ function encodeQuestion(text, modelPath, pyPath) {
     );
     stdout = buffer;
   } catch (err) {
-    console.error("[query] Python encode failed:", err.message);
+    console.error("[retrieve] Python encode failed:", err.message);
     if (err.stderr) console.error(err.stderr);
     process.exit(1);
   }
@@ -196,7 +210,7 @@ function encodeQuestion(text, modelPath, pyPath) {
   try {
     return JSON.parse(stdout.trim());
   } catch {
-    console.error("[query] Failed to parse Python output:", stdout);
+    console.error("[retrieve] Failed to parse Python output:", stdout);
     process.exit(1);
   }
 }
@@ -251,7 +265,7 @@ async function searchVectorIndex(session, indexName, label, embedding, topK) {
     }));
   } catch (err) {
     console.error(
-      `[query] Vector search failed for ${label} (${indexName}): ${err.message}`
+      `[retrieve] Vector search failed for ${label} (${indexName}): ${err.message}`
     );
     return [];
   }
@@ -313,7 +327,7 @@ async function fetchGraphContext(session, label, nodeId, relationships) {
       }
     } catch (err) {
       console.error(
-        `[query] Graph expansion failed for ${label}-${rel.type}-${otherLabel}: ${err.message}`
+        `[retrieve] Graph expansion failed for ${label}-${rel.type}-${otherLabel}: ${err.message}`
       );
     }
   }
@@ -362,7 +376,7 @@ async function runCypher(driver, database, cypher) {
 }
 
 // ---------------------------------------------------------------------------
-// Schema introspection (--schema): list entities + relationships
+// Schema introspection (schema): list entities + relationships
 // ---------------------------------------------------------------------------
 
 function buildSchema(gc) {
@@ -422,78 +436,106 @@ function cleanProperties(rawProps) {
 
 function parseArgs(argv) {
   const args = argv.slice(2);
+  const [command, ...rest] = args;
+
+  if (!command) {
+    printUsage();
+    process.exit(1);
+  }
+
+  if (command === "schema") {
+    if (rest.length > 0) {
+      console.error(`[retrieve] schema 不接受参数: ${rest.join(" ")}`);
+      process.exit(1);
+    }
+    return { command: "schema" };
+  }
+
+  if (command === "search") {
+    return parseSearchArgs(rest);
+  }
+
+  if (command === "cypher") {
+    return parseCypherArgs(rest);
+  }
+
+  console.error(`[retrieve] 未知命令: ${command}`);
+  printUsage();
+  process.exit(1);
+}
+
+function readTextFlagValue(args, i, flag) {
+  const next = args[i + 1];
+  if (next === undefined) return { value: "-", advance: 0 };
+  if (next === "-") return { value: "-", advance: 1 };
+  if (next.startsWith("-")) return { value: "-", advance: 0 };
+  return { value: next, advance: 1 };
+}
+
+function parseSearchArgs(args) {
   let question = null;
-  let cypher = null;
   let topK = 5;
   let targets = null;
-  let schema = false;
   let hasQuestion = false;
-  let hasCypher = false;
-
-  // 读取 --question / --cypher 的值：
-  //   下一个 token 不存在 / 是另一个 flag（"-" 开头但不是单纯 "-"）→ stdin，不消费
-  //   单独的 "-" → 显式 stdin 标记，消费它
-  //   其它 → inline 值或 @file，消费它
-  const readTextValue = (i) => {
-    const next = args[i + 1];
-    if (next === undefined) return { value: "-", advance: 0 };
-    if (next === "-") return { value: "-", advance: 1 };
-    if (next.startsWith("-")) return { value: "-", advance: 0 };
-    return { value: next, advance: 1 };
-  };
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--schema") {
-      schema = true;
-    } else if (args[i] === "--top-k" && args[i + 1]) {
-      topK = parseInt(args[++i], 10);
-    } else if (args[i] === "--targets" && args[i + 1]) {
-      targets = args[++i].split(",").map((t) => t.trim());
-    } else if (args[i] === "--question") {
+    const arg = args[i];
+    if (arg === "--question") {
+      if (hasQuestion) {
+        console.error("[retrieve] 重复参数: --question");
+        process.exit(1);
+      }
       hasQuestion = true;
-      const v = readTextValue(i);
+      const v = readTextFlagValue(args, i, "--question");
       question = v.value;
       i += v.advance;
-    } else if (args[i] === "--cypher") {
-      hasCypher = true;
-      const v = readTextValue(i);
-      cypher = v.value;
-      i += v.advance;
+    } else if (arg === "--top-k" && args[i + 1]) {
+      topK = parseInt(args[++i], 10);
+    } else if (arg === "--targets" && args[i + 1]) {
+      targets = args[++i].split(",").map((t) => t.trim()).filter(Boolean);
     } else {
-      console.error(`[query] 未知参数: ${args[i]}`);
+      console.error(`[retrieve] search 未知参数: ${arg}`);
       printUsage();
       process.exit(1);
     }
   }
 
-  if (schema) return { schema: true };
+  if (!hasQuestion) question = "-";
+  return { command: "search", question, topK, targets };
+}
 
-  if (!hasQuestion && !hasCypher) {
-    printUsage();
-    process.exit(1);
-  }
-  if (hasQuestion && hasCypher) {
-    console.error("[query] --question 与 --cypher 只能二选一");
-    process.exit(1);
+function parseCypherArgs(args) {
+  let statement = null;
+  let hasStatement = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--statement") {
+      if (hasStatement) {
+        console.error("[retrieve] 重复参数: --statement");
+        process.exit(1);
+      }
+      hasStatement = true;
+      const v = readTextFlagValue(args, i, "--statement");
+      statement = v.value;
+      i += v.advance;
+    } else {
+      console.error(`[retrieve] cypher 未知参数: ${arg}`);
+      printUsage();
+      process.exit(1);
+    }
   }
 
-  return {
-    schema: false,
-    question: hasQuestion ? question : null,
-    cypher: hasCypher ? cypher : null,
-    topK,
-    targets,
-  };
+  if (!hasStatement) statement = "-";
+  return { command: "cypher", statement };
 }
 
 function printUsage() {
   console.error("Usage:");
-  console.error("  node scripts/query.js --schema");
-  console.error(
-    '  node scripts/query.js --question "<问题>" [--top-k 5] [--targets 表,指标]'
-  );
-  console.error('  node scripts/query.js --cypher "<CYPHER>"');
-  console.error("  # --question / --cypher 支持 inline / @file / -(stdin) 三态");
+  console.error("  node scripts/retrieve.js schema");
+  console.error('  node scripts/retrieve.js search --question "<问题>" [--top-k 5] [--targets 表,指标]');
+  console.error('  node scripts/retrieve.js cypher --statement "<CYPHER>"');
+  console.error("  # --question / --statement 支持 inline / @file / -(stdin) 三态；不传正文 flag 时走 stdin");
 }
 
 // ---------------------------------------------------------------------------
@@ -508,12 +550,12 @@ async function main() {
   const envCfg = config.env || {};
 
   // --- Schema mode: print entities + relationships, no DB needed ---
-  if (parsed.schema) {
+  if (parsed.command === "schema") {
     console.log(JSON.stringify(buildSchema(gc), null, 2));
     return;
   }
 
-  const { question, cypher, topK, targets } = parsed;
+  const { question, statement, topK, targets } = parsed;
 
   const neo4jUri = envCfg.NEO4J_URI || "bolt://localhost:7687";
   const neo4jDatabase = envCfg.NEO4J_DATABASE || "neo4j";
@@ -522,7 +564,7 @@ async function main() {
 
   if (!neo4jPassword) {
     console.error(
-      "[query] NEO4J_PASSWORD 未在 config.json 的 env 块中找到"
+      "[retrieve] NEO4J_PASSWORD 未在 config.json 的 env 块中找到"
     );
     process.exit(1);
   }
@@ -534,9 +576,9 @@ async function main() {
 
   try {
     // --- Cypher mode ---
-    if (cypher !== null) {
-      const cypherText = await resolveText(cypher, "cypher");
-      console.error(`[query] Cypher: ${cypherText}`);
+    if (parsed.command === "cypher") {
+      const cypherText = await resolveText(statement, "statement");
+      console.error(`[retrieve] Cypher: ${cypherText}`);
       const rows = await runCypher(driver, neo4jDatabase, cypherText);
       console.log(JSON.stringify({ cypher: cypherText, rows }, null, 2));
       return;
@@ -557,20 +599,20 @@ async function main() {
 
     const questionText = await resolveText(question, "question");
 
-    console.error(`[query] Question: ${questionText}`);
-    console.error(`[query] Top-K: ${topK}`);
+    console.error(`[retrieve] Question: ${questionText}`);
+    console.error(`[retrieve] Top-K: ${topK}`);
     console.error(
-      `[query] Targets: ${targets ? targets.join(", ") : "all vector-indexed"}`
+      `[retrieve] Targets: ${targets ? targets.join(", ") : "all vector-indexed"}`
     );
     console.error(
-      `[query] Entities to search: ${Object.keys(targetEntities).join(", ")}`
+      `[retrieve] Entities to search: ${Object.keys(targetEntities).join(", ")}`
     );
 
     // 直接用 PATH 上的 python；依赖见 scripts/pipeline/requirements.txt
     const pyPath = "python";
 
     const embedding = encodeQuestion(questionText, modelPath, pyPath);
-    console.error(`[query] Embedding dimensions: ${embedding.length}`);
+    console.error(`[retrieve] Embedding dimensions: ${embedding.length}`);
 
     const allResults = [];
     const relationships = Array.isArray(gc.relationships)
@@ -582,11 +624,11 @@ async function main() {
       try {
         const indexName = await findVectorIndexName(session, label);
         if (!indexName) {
-          console.error(`[query] No vector index found for ${label}, skipping`);
+          console.error(`[retrieve] No vector index found for ${label}, skipping`);
           continue;
         }
 
-        console.error(`[query] Searching ${label} (index: ${indexName})...`);
+        console.error(`[retrieve] Searching ${label} (index: ${indexName})...`);
 
         const hits = await searchVectorIndex(
           session,
@@ -596,7 +638,7 @@ async function main() {
           topK
         );
 
-        console.error(`[query]   Found ${hits.length} hits`);
+        console.error(`[retrieve]   Found ${hits.length} hits`);
 
         for (const hit of hits) {
           const cleanProps = cleanProperties(hit.properties);
@@ -633,6 +675,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[query] Fatal error:", err);
+  console.error("[retrieve] Fatal error:", err);
   process.exit(1);
 });

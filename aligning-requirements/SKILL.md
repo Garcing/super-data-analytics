@@ -44,7 +44,7 @@ metadata:
 | `aligning-requirements` | 当前入口技能。用于意图识别、轻重分流、需求澄清、流程编排和最终验收。 |
 | `retrieving-context` | 查询指标定义、业务口径、数据资产、看板、语义模型、字段、维度、业务背景。 |
 | `using-templates` | 查询、匹配、复用、维护数据播报、周期报告、复盘报告、专题分析报告模板（CLI：`scripts/templates.js`，子命令 `list/read/create/update/delete`）。 |
-| `querying-data` | 统一数据查询入口，按 `--source sql\|powerbi` 路由。适合已有语义模型 ID 或可写 SQL 的指标取数。 |
+| `querying-data` | 统一数据查询入口，按 `sql` / `powerbi` 数据源子命令路由。适合已有语义模型 ID 或可写 SQL 的指标取数。 |
 | `diagnosing-anomalies` | 异动归因方法论。指标上涨、下跌、异常波动、口径差异、同比环比变化、监控告警后的原因诊断与贡献度拆解。 |
 | `predicting_trends` | 趋势预测和目标制定方法论。下月/下季度预测、目标设定、趋势外推、达成判断、资源预算预估。 |
 | `evaluating-impact` | 效果评估与实验检验方法论。产品上线、运营活动、Push、发券、投放、A/B 实验、DID 试点的有效性、ROI、是否全量/加码判断。 |
@@ -83,8 +83,8 @@ metadata:
 
 - 指标/表/业务上下文问题：调用 `retrieving-context`。
 - 模板问题：调用 `using-templates`。
-- SQL 取数：调用 `querying-data --source sql`。
-- PowerBI/DAX 取数：调用 `querying-data --source powerbi`。
+- SQL 取数：调用 `querying-data sql`。
+- PowerBI/DAX 取数：调用 `querying-data powerbi`。
 - 现成数据做异动归因/预测/效果评估：按场景调用 `diagnosing-anomalies` / `predicting_trends` / `evaluating-impact`。
 - 现成数据画确定性单图：调用 `visualizing-data`。
 - 现成结论需要生成报告：调用 `building-reports`。
@@ -248,8 +248,8 @@ metadata:
 
 - 只问指标定义、看板、字段、表：`retrieving-context`
 - 查询或维护报告模板：`using-templates`
-- 用户提供 SQL：`querying-data --source sql`
-- 用户提供 DAX 或明确 PowerBI 语义模型：`querying-data --source powerbi`
+- 用户提供 SQL：`querying-data sql`
+- 用户提供 DAX 或明确 PowerBI 语义模型：`querying-data powerbi`
 - 已有数据，需要异动归因 / 趋势预测 / 效果评估：按场景选 `diagnosing-anomalies` / `predicting_trends` / `evaluating-impact`
 - 需要把结构化数据画成确定性单图：`visualizing-data`
 - 已有结论或数据，需要正式报告：`building-reports`
@@ -260,7 +260,7 @@ metadata:
 #### 简单查数
 
 ```text
-retrieving-context -> querying-data --source powerbi -> 返回结果
+retrieving-context -> querying-data powerbi -> 返回结果
 ```
 
 适合：本月流水、某团队业绩、某指标当前值。
@@ -276,7 +276,7 @@ retrieving-context -> 返回定义/来源/维度/注意事项
 #### 异动归因
 
 ```text
-retrieving-context -> querying-data（--source powerbi 或 sql）-> diagnosing-anomalies -> building-reports
+retrieving-context -> querying-data（powerbi 或 sql）-> diagnosing-anomalies -> building-reports
 ```
 
 适合：业绩下滑、投诉率上升、留存下降、转化波动。
@@ -284,7 +284,7 @@ retrieving-context -> querying-data（--source powerbi 或 sql）-> diagnosing-a
 #### 周期报告或数据播报
 
 ```text
-using-templates -> retrieving-context -> querying-data（--source powerbi 或 sql）-> 按场景选 diagnosing-anomalies / predicting_trends / evaluating-impact -> building-reports
+using-templates -> retrieving-context -> querying-data（powerbi 或 sql）-> 按场景选 diagnosing-anomalies / predicting_trends / evaluating-impact -> building-reports
 ```
 
 适合：日报、周报、月报、经营分析、复盘报告。
@@ -384,7 +384,7 @@ building-reports
 
 ```text
 retrieving-context 确认“流水”指标定义和 PowerBI 语义模型
-querying-data --source powerbi 查询华东团队本月流水
+querying-data powerbi 查询华东团队本月流水
 inline 返回数值、时间范围、口径
 ```
 
@@ -408,7 +408,7 @@ inline 返回定义和来源
 ```text
 对齐时间范围、指标口径、分析对象和交付形式
 retrieving-context 确认业绩指标和相关维度
-querying-data（--source powerbi 或 sql）取数
+querying-data（powerbi 或 sql）取数
 diagnosing-anomalies 做贡献拆解和归因
 building-reports 生成报告
 ```

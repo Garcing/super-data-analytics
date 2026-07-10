@@ -70,7 +70,7 @@ export async function closeProxy() {
   } catch { /* ignore */ }
 }
 
-// ---------- 通用三态输入（inline / @file / stdin），与 querying-data 的 --query 同构 ----------
+// ---------- 通用三态输入（inline / @file / stdin），与 querying-data 的 --sql / --payload 同构 ----------
 // 把单个 flag 的值解析成内部 source：
 //   不传 / null / '-' → stdin（管道；- 是 Unix 惯用的"显式 stdin"）
 //   '@<path>'         → file
@@ -179,4 +179,3 @@ export async function withOptimisticLock({ read, modify, write, attempts = 5, ba
   }
   throw lastErr;
 }
-

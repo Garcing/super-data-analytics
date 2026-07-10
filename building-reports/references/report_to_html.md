@@ -12,16 +12,16 @@ description: 把分析结果发布为可分享的 HTML 报告（Vercel + Blob）
 ## CLI（从 building-reports/ 目录）
 
 ```bash
-# 发布（--report 三种来源，同 querying-data 的 --query；id 由 --id 传入）
-node scripts/html/report.js publish --id <reportId> --report "<json>"   # inline
-node scripts/html/report.js publish --id <reportId> --report @<file>    # 文件（建议 <工作区>/.super-data-analytics/scratch/）
-node scripts/html/report.js publish --id <reportId> --report -          # stdin（管道）
-node scripts/html/report.js publish --id <reportId>                     # 不传 --report 等同 stdin
+# 发布（--report 三种来源，同 querying-data 的 --sql / --payload；id 由 --id 传入）
+node scripts/report.js html publish --id <reportId> --report "<json>"   # inline
+node scripts/report.js html publish --id <reportId> --report @<file>    # 文件（建议 <工作区>/.super-data-analytics/scratch/）
+node scripts/report.js html publish --id <reportId> --report -          # stdin（管道）
+node scripts/report.js html publish --id <reportId>                     # 不传 --report 等同 stdin
 
 # 其它
-node scripts/html/report.js list                              # 列出全部报告
-node scripts/html/report.js get <reportId>                     # 打印某份报告 JSON
-node scripts/html/report.js delete <reportId>                  # 删除
+node scripts/report.js html list                              # 列出全部报告
+node scripts/report.js html get <reportId>                     # 打印某份报告 JSON
+node scripts/report.js html delete <reportId>                  # 删除
 ```
 
 - 报告 id 单独由 `--id` 传入（发布时注入请求体）。

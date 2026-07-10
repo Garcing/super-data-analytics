@@ -36,17 +36,17 @@ def load_fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def run_spec(spec: dict, tmp_path: Path, *, save_name: str = "out.png", stdin: str | None = None,
+def run_spec(spec: dict, tmp_path: Path, *, output_name: str = "out.png", stdin: str | None = None,
              extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
     if stdin is not None:
-        return run_cli("--data", "-", "--save", str(tmp_path / save_name), *extra, stdin=stdin)
+        return run_cli("--data", "-", "--output", str(tmp_path / output_name), *extra, stdin=stdin)
     return run_cli("--data", json.dumps(spec, ensure_ascii=False),
-                   "--save", str(tmp_path / save_name), *extra)
+                   "--output", str(tmp_path / output_name), *extra)
 
 
-def run_fixture(name: str, tmp_path: Path, *, save_name: str = "out.png",
+def run_fixture(name: str, tmp_path: Path, *, output_name: str = "out.png",
                 extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-    return run_cli("--data", f"@{FIXTURES / name}", "--save", str(tmp_path / save_name), *extra)
+    return run_cli("--data", f"@{FIXTURES / name}", "--output", str(tmp_path / output_name), *extra)
 
 
 def assert_output_under_directory(output: Path, directory: Path) -> None:
@@ -97,7 +97,7 @@ def test_data_inline_renders_png(tmp_path: Path) -> None:
 
 def test_data_stdin_renders_svg(tmp_path: Path) -> None:
     spec = load_fixture("line.json")
-    result = run_spec(spec, tmp_path, save_name="out.svg", stdin=json.dumps(spec, ensure_ascii=False))
+    result = run_spec(spec, tmp_path, output_name="out.svg", stdin=json.dumps(spec, ensure_ascii=False))
     payload = parse_stdout(result)
     assert result.returncode == 0, result.stderr
     output = Path(payload["path"])
@@ -110,7 +110,7 @@ def test_data_stdin_renders_svg(tmp_path: Path) -> None:
 
 def test_data_stdin_empty_returns_json_error(tmp_path: Path) -> None:
     # 不传 --data 且 stdin 关闭为空 → 报错（模拟非交互下 stdin 没数据）
-    result = run_cli("--save", str(tmp_path / "out.png"), stdin="")
+    result = run_cli("--output", str(tmp_path / "out.png"), stdin="")
     payload = parse_stdout(result)
     assert result.returncode == 2
     assert payload["ok"] is False
@@ -119,24 +119,24 @@ def test_data_stdin_empty_returns_json_error(tmp_path: Path) -> None:
 
 # --- 格式推断 -----------------------------------------------------------------
 
-def test_save_suffix_png_yields_png(tmp_path: Path) -> None:
-    result = run_fixture("bar_cn.json", tmp_path, save_name="chart.png")
+def test_output_suffix_png_yields_png(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, output_name="chart.png")
     payload = parse_stdout(result)
     assert result.returncode == 0
     assert payload["format"] == "png"
     assert Path(payload["path"]).suffix == ".png"
 
 
-def test_save_suffix_svg_yields_svg(tmp_path: Path) -> None:
-    result = run_fixture("bar_cn.json", tmp_path, save_name="chart.svg")
+def test_output_suffix_svg_yields_svg(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, output_name="chart.svg")
     payload = parse_stdout(result)
     assert result.returncode == 0
     assert payload["format"] == "svg"
     assert Path(payload["path"]).suffix == ".svg"
 
 
-def test_save_unknown_suffix_returns_json_error(tmp_path: Path) -> None:
-    result = run_fixture("bar_cn.json", tmp_path, save_name="chart.pdf")
+def test_output_unknown_suffix_returns_json_error(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, output_name="chart.pdf")
     payload = parse_stdout(result)
     assert result.returncode == 2
     assert result.stderr == ""
@@ -144,29 +144,29 @@ def test_save_unknown_suffix_returns_json_error(tmp_path: Path) -> None:
     assert "png" in payload["error"] and "svg" in payload["error"]
 
 
-def test_save_missing_suffix_returns_json_error(tmp_path: Path) -> None:
-    result = run_fixture("bar_cn.json", tmp_path, save_name="chart")
+def test_output_missing_suffix_returns_json_error(tmp_path: Path) -> None:
+    result = run_fixture("bar_cn.json", tmp_path, output_name="chart")
     payload = parse_stdout(result)
     assert result.returncode == 2
     assert payload["ok"] is False
     assert "png" in payload["error"] and "svg" in payload["error"]
 
 
-# --save 必填 ------------------------------------------------------------------
+# --output 必填 ------------------------------------------------------------------
 
-def test_missing_save_returns_json_error() -> None:
+def test_missing_output_returns_json_error() -> None:
     result = run_cli("--data", f"@{FIXTURES / 'bar_cn.json'}")
     payload = parse_stdout(result)
     assert result.returncode == 2
     assert result.stderr == ""
     assert payload["ok"] is False
-    assert "--save" in payload["error"]
+    assert "--output" in payload["error"]
 
 
 # --data 必填（与 stdin 二选一）------------------------------------------------
 
 def test_missing_data_with_closed_stdin_returns_json_error(tmp_path: Path) -> None:
-    result = run_cli("--save", str(tmp_path / "out.png"), stdin="")
+    result = run_cli("--output", str(tmp_path / "out.png"), stdin="")
     payload = parse_stdout(result)
     assert result.returncode == 2
     assert payload["ok"] is False
@@ -682,7 +682,7 @@ def test_cli_threads_dpi_and_fmt_into_render_chart(monkeypatch, tmp_path: Path) 
             captured["dpi"] = dpi
             captured["fmt"] = fmt
             captured["path"] = output_path
-            # 触发 ensure_save_parent 已建好目录，render_chart 跳过真实渲染
+            # 触发 ensure_output_parent 已建好目录，render_chart 跳过真实渲染
             output_path.write_bytes(b"")
             return []
 
@@ -692,13 +692,13 @@ def test_cli_threads_dpi_and_fmt_into_render_chart(monkeypatch, tmp_path: Path) 
         monkeypatch.setattr(cli_module, "ensure_output_exists", lambda path: None)
         monkeypatch.setattr(cli_module, "ensure_png_nonblank", lambda path: None)
 
-        save_path = tmp_path / "deep" / "out.svg"
+        output_path = tmp_path / "deep" / "out.svg"
         result = cli_module.main(
-            ["--data", f"@{FIXTURES / 'bar_cn.json'}", "--save", str(save_path), "--dpi", "288"]
+            ["--data", f"@{FIXTURES / 'bar_cn.json'}", "--output", str(output_path), "--dpi", "288"]
         )
         assert result == 0
         assert captured["dpi"] == 288
         assert captured["fmt"] == "svg"
-        assert captured["path"] == save_path
+        assert captured["path"] == output_path
     finally:
         sys.path.remove(str(SCRIPTS_DIR))

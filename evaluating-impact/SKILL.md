@@ -5,7 +5,7 @@ description: 效果评估与实验检验方法论。用于判断产品上线、�
 
 # 效果评估与实验检验
 
-本技能提供效果评估、实验检验和业务动作复盘的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data --source powerbi` 或 `querying-data --source sql` 获取实验、活动、成本和指标数据，调用 `diagnosing-anomalies` 排查评估窗口内的异常干扰，调用 `predicting_trends` 判断效果是否可能延续，调用 `visualizing-data` 生成精确图表，调用 `building-reports` 承接报告交付。
+本技能提供效果评估、实验检验和业务动作复盘的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data powerbi` 或 `querying-data sql` 获取实验、活动、成本和指标数据，调用 `diagnosing-anomalies` 排查评估窗口内的异常干扰，调用 `predicting_trends` 判断效果是否可能延续，调用 `visualizing-data` 生成精确图表，调用 `building-reports` 承接报告交付。
 
 ## 运行环境与依赖
 
@@ -129,8 +129,8 @@ python evaluating-impact/scripts/impact.py <input.json>
 ## 与其他技能协作
 
 - 需要指标定义、业务层级、表名、实验命名：调用 `retrieving-context`。
-- 需要 Power BI 语义模型取数：调用 `querying-data --source powerbi`。
-- 需要 SQL 明细或聚合取数：调用 `querying-data --source sql`。
+- 需要 Power BI 语义模型取数：调用 `querying-data powerbi`。
+- 需要 SQL 明细或聚合取数：调用 `querying-data sql`。
 - 发现评估窗口内存在异常波动或数据质量问题：调用 `diagnosing-anomalies`。
 - 需要判断效果延续、目标影响或未来收益：调用 `predicting_trends`。
 - 需要精确图表：调用 `visualizing-data`。

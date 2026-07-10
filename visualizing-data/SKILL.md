@@ -11,7 +11,7 @@ metadata:
 使用本地 Seaborn/Matplotlib 渲染器，从结构化 JSON 生成可复现的图表图片。所有命令在仓库根目录执行，前缀 `python visualizing-data/scripts/chart.py`。
 
 ```bash
-python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <file-path> [--dpi N]
+python visualizing-data/scripts/chart.py --data <inline | @file | -> --output <file-path> [--dpi N]
 ```
 
 本文件是自洽的操作手册：选图、写 payload、跑 CLI、看输出，都在这里。**改代码/加图表类型/调色板** 的维护知识见 [`references/developer-guide.md`](references/developer-guide.md)。
@@ -36,14 +36,14 @@ python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <fil
 skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）：
 
 - 临时输入 JSON（需要审阅/复跑/留痕时）写到 `<工作区>/.super-data-analytics/scratch/`，再经 `--data @` 传入。
-- 生成的图表一律由 `--save` 指定路径落到 `<工作区>/.super-data-analytics/results/`。
+- 生成的图表一律由 `--output` 指定路径落到 `<工作区>/.super-data-analytics/results/`。
 - `<工作区>/.super-data-analytics/` 已在仓库根 `.gitignore`，不会被提交。
 
 ## 核心流程
 
 1. **选图表类型** —— 按[图表选型](#图表选型)的决策逻辑定 `type`。
 2. **构造 payload JSON** —— 按[顶层字段](#顶层字段)和[全类型 payload 示例](#全类型-payload-示例)写 `type` / `title` / `subtitle` / `data` / `encoding` + 可选 `options`。
-3. **运行 CLI** —— 用 `--data` 传 payload、`--save` 传输出路径（扩展名决定格式）。写法见 [CLI 详解](#cli-详解)。
+3. **运行 CLI** —— 用 `--data` 传 payload、`--output` 传输出路径（扩展名决定格式）。写法见 [CLI 详解](#cli-详解)。
 4. **检查输出** —— 看 stdout JSON：`ok: true` 才算成功，再核对 `path` / `format` / `warnings`，并确认文件确实存在。详见[输出与错误](#输出与错误)。
 
 ---
@@ -391,12 +391,12 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
 ## CLI 详解
 
 ```bash
-python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <file-path> [--dpi N]
+python visualizing-data/scripts/chart.py --data <inline | @file | -> --output <file-path> [--dpi N]
 ```
 
 ### `--data` 三态输入
 
-按值的形式自动判定来源（对齐 querying-data 的 `--query`）：
+按值的形式自动判定来源（对齐 querying-data 的 `--sql` / `--payload`）：
 
 | 取值 | 来源 | 说明 |
 |---|---|---|
@@ -404,9 +404,9 @@ python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <fil
 | `@<path>` | file | 从文件读取 JSON |
 | 其他 | inline | 直接 JSON 字符串 |
 
-### `--save`（必填，扩展名决定格式）
+### `--output`（必填，扩展名决定格式）
 
-`--save` 是**必填**项，没有默认输出目录。输出格式由路径扩展名决定：`.png` 出 PNG，`.svg` 出 SVG，其他扩展名或缺扩展名直接报错。建议落到 `<工作区>/.super-data-analytics/results/`。`--dpi` 可选，默认 `144`，必须正整数。
+`--output` 是**必填**项，没有默认输出目录。输出格式由路径扩展名决定：`.png` 出 PNG，`.svg` 出 SVG，其他扩展名或缺扩展名直接报错。建议落到 `<工作区>/.super-data-analytics/results/`。`--dpi` 可选，默认 `144`，必须正整数。
 
 ### 按环境选 `--data` 写法
 
@@ -423,7 +423,7 @@ python visualizing-data/scripts/chart.py --data <inline | @file | -> --save <fil
 ```bash
 python visualizing-data/scripts/chart.py \
   --data '{"type":"bar","title":"区域销售额","subtitle":"2026年6月","data":[{"区域":"华东","销售额":120}],"encoding":{"x":"区域","y":"销售额"}}' \
-  --save .super-data-analytics/results/bar-20260702-1030-area.png
+  --output .super-data-analytics/results/bar-20260702-1030-area.png
 ```
 
 **@文件：**
@@ -431,14 +431,14 @@ python visualizing-data/scripts/chart.py \
 ```bash
 python visualizing-data/scripts/chart.py \
   --data @.super-data-analytics/scratch/bar-20260702-1030-area.json \
-  --save .super-data-analytics/results/bar-20260702-1030-area.svg
+  --output .super-data-analytics/results/bar-20260702-1030-area.svg
 ```
 
 **bash quoted heredoc（stdin，不落盘、不展开）：**
 
 ```bash
 python visualizing-data/scripts/chart.py --data - \
-  --save .super-data-analytics/results/bar-20260702-1030-area.png <<'EOF'
+  --output .super-data-analytics/results/bar-20260702-1030-area.png <<'EOF'
 {"type":"bar","title":"区域销售额","subtitle":"2026年6月","data":[{"区域":"华东","销售额":120}],"encoding":{"x":"区域","y":"销售额"}}
 EOF
 ```
@@ -454,7 +454,7 @@ $json = @'
 {"type":"bar","title":"区域销售额","subtitle":"2026年6月","data":[{"区域":"华东","销售额":120}],"encoding":{"x":"区域","y":"销售额"}}
 '@
 
-$json | python visualizing-data\scripts\chart.py --data - --save .super-data-analytics\results\bar-20260702-1030-area.png
+$json | python visualizing-data\scripts\chart.py --data - --output .super-data-analytics\results\bar-20260702-1030-area.png
 ```
 
 ---
@@ -493,8 +493,8 @@ CLI 成功和失败都向 stdout 写 JSON；落盘成功时额外在 stderr 打 
 
 常见验证错误：
 
-- `--save 是必填项`：必须传 `--save <file-path>`，没有默认输出目录。
-- `--save 扩展名必须是 .png 或 .svg`：格式由扩展名决定，把路径改成 `.png` 或 `.svg`。
+- `--output 是必填项`：必须传 `--output <file-path>`，没有默认输出目录。
+- `--output 扩展名必须是 .png 或 .svg`：格式由扩展名决定，把路径改成 `.png` 或 `.svg`。
 - `未提供 --data 且 stdin 是终端` / `等待 stdin 超时`：用 `--data '<JSON>'` 或 `--data @<文件>` 显式传入，或确保管道写完后关闭 stdin。
 - `data is required and must be a non-empty list of objects`：至少一行数据。
 - `title` / `subtitle` `is required and must be a non-empty string`：提供可见标题与口径说明。

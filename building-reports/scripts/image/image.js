@@ -5,14 +5,14 @@
  * 异步流程拆成三步，任意一步可断点续跑：
  *   submit   提交任务 → 拿 task_id
  *   status   按 task_id 轮询到终态 → 打印状态 + 图片 URL
- *   download 按 task_id 下载图片到 --save 路径
- * 也可一键到底（默认子命令）：提交 → 轮询 → 下载。
+ *   download 按 task_id 下载图片到 --output 路径
+ *   generate 一键到底：提交 → 轮询 → 下载。
  *
  * CLI（从 building-reports/ 目录运行）：
- *   node scripts/image/image.js "<提示词>" [选项] --save <路径>          # 一键（默认）
- *   node scripts/image/image.js submit "<提示词>" [选项] [--dry-run]     # 只提交
+ *   node scripts/image/image.js generate [--prompt "<提示词>"|@file|-] [选项] --output <路径> # 一键
+ *   node scripts/image/image.js submit [--prompt "<提示词>"|@file|-] [选项] [--dry-run] # 只提交
  *   node scripts/image/image.js status <task_id>                        # 只轮询
- *   node scripts/image/image.js download <task_id> --save <路径>         # 只下载
+ *   node scripts/image/image.js download <task_id> --output <路径>       # 只下载
  *
  * 凭证统一来自 ~/.super-data-analytics/config.json 的 env 块（APIMART_API_KEY /
  * APIMART_BASE_URL）；脚本不读 .env、不依赖环境变量导出。
@@ -21,7 +21,7 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname, join, resolve, extname } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { loadConfig, setupProxy, closeProxy } from '../lib/shared.js'
+import { loadConfig, setupProxy, closeProxy, parseInputFlag, readContentSource } from '../lib/shared.js'
 
 const CREDENTIAL_KEYS = ['APIMART_API_KEY', 'APIMART_BASE_URL']
 
@@ -108,17 +108,16 @@ function buildRequestBody(prompt, opts = {}) {
 /**
  * 解析 CLI 参数（含子命令识别）。
  * @param {string[]} argv — process.argv.slice(2)
- * @returns {{ sub: string|null, prompt: string|null, taskId: string|null, opts: object, dryRun: boolean, save: {provided: boolean, path: string|null} }}
+ * @returns {{ sub: string, promptOptions: object|null, taskId: string|null, opts: object, dryRun: boolean, output: {provided: boolean, path: string|null} }}
  */
-const SUBCOMMANDS = new Set(['submit', 'status', 'download'])
+const SUBCOMMANDS = new Set(['generate', 'submit', 'status', 'download'])
 
 function parseArgs(argv) {
-  let sub = null
-  let rest = argv
-  if (argv.length > 0 && SUBCOMMANDS.has(argv[0])) {
-    sub = argv[0]
-    rest = argv.slice(1)
+  if (argv.length === 0 || !SUBCOMMANDS.has(argv[0])) {
+    throw new Error(USAGE)
   }
+  const sub = argv[0]
+  const rest = argv.slice(1)
 
   const opts = {
     model: MODEL_DEFAULT,
@@ -129,18 +128,19 @@ function parseArgs(argv) {
     n: 1,
   }
   const positional = []
+  let promptRaw = null
   let dryRun = false
-  // --save 值可选：裸 --save → path=null（兜底 ~/Downloads）；--save <p> → path=p。
-  const save = { provided: false, path: null }
+  // --output 值可选：裸 --output → path=null（兜底 ~/Downloads）；--output <p> → path=p。
+  const output = { provided: false, path: null }
 
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
     if (a === '--dry-run') { dryRun = true; continue }
-    if (a === '--save') {
-      save.provided = true
+    if (a === '--output') {
+      output.provided = true
       const next = rest[i + 1]
-      if (next !== undefined && !next.startsWith('--')) { save.path = next; i++ }
-      else { save.path = null }
+      if (next !== undefined && !next.startsWith('--')) { output.path = next; i++ }
+      else { output.path = null }
       continue
     }
     if (a.startsWith('--')) {
@@ -149,6 +149,10 @@ function parseArgs(argv) {
       if (eq > -1) { key = a.slice(2, eq); val = a.slice(eq + 1) }
       else { key = a.slice(2); val = rest[++i] }
       switch (key) {
+        case 'prompt':
+          if (val === undefined || val.startsWith('--')) throw new Error('--prompt 需要指定值（inline 内容 / @文件 / -）')
+          promptRaw = val
+          break
         case 'model': opts.model = val; break
         case 'size': opts.size = val; break
         case 'resolution': opts.resolution = val; break
@@ -168,8 +172,23 @@ function parseArgs(argv) {
   }
 
   const taskId = (sub === 'status' || sub === 'download') ? (positional[0] || null) : null
-  const prompt = (sub === null || sub === 'submit') ? (positional.join(' ').trim() || null) : null
-  return { sub, prompt, taskId, opts, dryRun, save }
+  let promptOptions = null
+  if (sub === 'generate' || sub === 'submit') {
+    if (positional.length > 0) {
+      throw new Error(`${sub} 不接受位置参数提示词，请使用 --prompt "<提示词>"、--prompt @<文件>、--prompt - 或 stdin`)
+    }
+    promptOptions = parseInputFlag(promptRaw)
+  } else if (positional.length > 1) {
+    throw new Error(`${sub} 只接受一个 task_id 位置参数`)
+  }
+  return { sub, promptOptions, taskId, opts, dryRun, output }
+}
+
+async function readPrompt(promptOptions) {
+  if (promptOptions.source === 'stdin' && process.stdin.isTTY) {
+    throw new Error('未提供提示词且 stdin 是终端。请用 --prompt "<提示词>"、--prompt @<文件>、--prompt - 或管道传入')
+  }
+  return readContentSource(promptOptions, process.stdin, { label: '提示词' })
 }
 
 // ---------------------------- API client ----------------------------
@@ -224,13 +243,13 @@ function formatTimestamp(d) {
 
 /**
  * 计算本地输出路径。
- * - --save <path>：用之（多张追加 -<index>）
- * - 裸 --save：兜底 ~/Downloads/<ts>-<index>.<ext>
- * 落盘根目录由 agent 经 --save 决定；脚本不假设默认工作区目录。
+ * - --output <path>：用之（多张追加 -<index>）
+ * - 裸 --output：兜底 ~/Downloads/<ts>-<index>.<ext>
+ * 落盘根目录由 agent 经 --output 决定；脚本不假设默认工作区目录。
  */
-function resolveOutPath(save, index, ext, total) {
-  if (save.path) {
-    const abs = resolve(save.path)
+function resolveOutPath(output, index, ext, total) {
+  if (output.path) {
+    const abs = resolve(output.path)
     if (total > 1) {
       const e = extname(abs)
       return e ? `${abs.slice(0, -e.length)}-${index}${e}` : `${abs}-${index}.${ext}`
@@ -240,11 +259,11 @@ function resolveOutPath(save, index, ext, total) {
   return join(homedir(), 'Downloads', `${formatTimestamp(new Date())}-${index}.${ext}`)
 }
 
-/** 下载类命令必须显式 --save（裸 --save 兜底 ~/Downloads）；不传则报错。 */
-function requireSave(save) {
-  if (!save.provided) {
+/** 下载类命令必须显式 --output（裸 --output 兜底 ~/Downloads）；不传则报错。 */
+function requireOutput(output) {
+  if (!output.provided) {
     throw new Error(
-      '需要 --save <路径>（或裸 --save 兜底 ~/Downloads）。' +
+      '需要 --output <路径>（或裸 --output 兜底 ~/Downloads）。' +
       '建议 agent 落到 <工作区>/.super-data-analytics/results/<名字>.<ext>',
     )
   }
@@ -275,7 +294,7 @@ async function pollUntilTerminal(taskId) {
 }
 
 /** 从已完成的 taskData 里下载全部图片。返回 [{ url, localPath, downloadError? }]。 */
-async function downloadImagesFromTask(taskData, outputFormat, save) {
+async function downloadImagesFromTask(taskData, outputFormat, output) {
   const images = taskData?.result?.images || []
   if (!images.length) throw new Error(`任务完成但无图片: ${JSON.stringify(taskData).slice(0, 300)}`)
   const results = []
@@ -286,7 +305,7 @@ async function downloadImagesFromTask(taskData, outputFormat, save) {
     const ext = extFromUrl(url, outputFormat)
     const entry = { url }
     try {
-      entry.localPath = await downloadImage(url, resolveOutPath(save, i, ext, images.length))
+      entry.localPath = await downloadImage(url, resolveOutPath(output, i, ext, images.length))
     } catch (e) {
       // 下载失败仍保留 URL，CLI 层会打印并 exit 1
       entry.localPath = null
@@ -307,13 +326,19 @@ const isMain = (() => {
 
 const USAGE = `用法（从 building-reports/ 目录运行）:
   一键（提交 → 轮询 → 下载）:
-    node scripts/image/image.js "<提示词>" --save <路径> [选项]
+    node scripts/image/image.js generate [--prompt "<提示词>"|@file|-] --output <路径> [选项]
   断点续跑（三步任选）:
-    node scripts/image/image.js submit   "<提示词>" [选项] [--dry-run]   # 只提交，打印 task_id
+    node scripts/image/image.js submit   [--prompt "<提示词>"|@file|-] [选项] [--dry-run] # 只提交，打印 task_id
     node scripts/image/image.js status   <task_id>                        # 轮询到终态，打印状态 + 图片 URL
-    node scripts/image/image.js download <task_id> --save <路径>           # 下载图片
+    node scripts/image/image.js download <task_id> --output <路径>         # 下载图片
 
---save <路径>   下载落盘路径（下载类命令必填）；裸 --save 兜底 ~/Downloads。
+提示词输入（三态，同 querying-data 的 --sql / --payload）:
+  --prompt "<文本>"  inline
+  --prompt @<file>   文件
+  --prompt -         stdin（管道）
+  不传 --prompt 时走 stdin。
+
+--output <路径> 下载落盘路径（下载类命令必填）；裸 --output 兜底 ~/Downloads。
                 agent 建议落 <工作区>/.super-data-analytics/results/<名字>.<ext>
 
 选项（生成参数，均有默认值）:
@@ -326,11 +351,12 @@ const USAGE = `用法（从 building-reports/ 目录运行）:
   --dry-run          只打印请求体，不调用 API（仅 submit / 一键）
 
 示例:
-  node scripts/image/image.js "海报" --save ./.super-data-analytics/results/poster.png --size 16:9
+  node scripts/image/image.js generate --prompt "海报" --output ./.super-data-analytics/results/poster.png --size 16:9
+  node scripts/image/image.js generate --prompt @./.super-data-analytics/scratch/poster-prompt.txt --output ./.super-data-analytics/results/poster.png --size 16:9
   # 断点续跑：
-  node scripts/image/image.js submit "海报" --size 16:9      # → 拿到 task_id
+  node scripts/image/image.js submit --prompt "海报" --size 16:9      # → 拿到 task_id
   node scripts/image/image.js status  <task_id>              # → 等到 completed
-  node scripts/image/image.js download <task_id> --save ./.super-data-analytics/results/poster.png`
+  node scripts/image/image.js download <task_id> --output ./.super-data-analytics/results/poster.png`
 
 function printResults(results, taskId, cost) {
   for (const r of results) {
@@ -342,14 +368,30 @@ function printResults(results, taskId, cost) {
   if (cost != null) console.log(`cost=${cost}`)
 }
 
-if (isMain) {
+export async function runCli(argv = process.argv.slice(2)) {
   let exitCode = 0
   try {
-    const { sub, prompt, taskId, opts, dryRun, save } = parseArgs(process.argv.slice(2))
+    const { sub, promptOptions, taskId, opts, dryRun, output } = parseArgs(argv)
 
     switch (sub) {
+      case 'generate': {
+        const prompt = await readPrompt(promptOptions)
+        if (dryRun) { console.log(JSON.stringify(buildRequestBody(prompt, opts), null, 2)); break }
+        requireOutput(output)
+        const body = buildRequestBody(prompt, opts)
+        const { taskId: tid } = await submitImageTask(body)
+        const { status, taskData } = await pollUntilTerminal(tid)
+        if (status !== 'completed') {
+          const errMsg = taskData?.error?.message || `任务状态 ${status}`
+          throw new Error(`图片生成失败: ${errMsg} (task_id=${tid})，可续跑: image.js status ${tid}`)
+        }
+        const results = await downloadImagesFromTask(taskData, body.output_format, output)
+        printResults(results, tid, taskData?.cost)
+        if (results.some((r) => !r.localPath)) exitCode = 1
+        break
+      }
       case 'submit': {
-        if (!prompt) throw new Error(USAGE)
+        const prompt = await readPrompt(promptOptions)
         const body = buildRequestBody(prompt, opts)
         if (dryRun) { console.log(JSON.stringify(body, null, 2)); break }
         const { taskId: tid, raw } = await submitImageTask(body)
@@ -376,31 +418,16 @@ if (isMain) {
         break
       }
       case 'download': {
-        if (!taskId) throw new Error('用法: image.js download <task_id> --save <路径>')
-        requireSave(save)
+        if (!taskId) throw new Error('用法: image.js download <task_id> --output <路径>')
+        requireOutput(output)
         const { status, taskData } = await pollUntilTerminal(taskId)
         if (status !== 'completed') {
           throw new Error(`任务未完成 (${status})，无法下载。先用 status 确认: image.js status ${taskId}`)
         }
-        const results = await downloadImagesFromTask(taskData, opts.output_format, save)
+        const results = await downloadImagesFromTask(taskData, opts.output_format, output)
         printResults(results, taskId, taskData?.cost)
         if (results.some((r) => !r.localPath)) exitCode = 1
         break
-      }
-      default: { // 一键：提交 → 轮询 → 下载
-        if (!prompt) throw new Error(USAGE)
-        if (dryRun) { console.log(JSON.stringify(buildRequestBody(prompt, opts), null, 2)); break }
-        requireSave(save)
-        const body = buildRequestBody(prompt, opts)
-        const { taskId: tid } = await submitImageTask(body)
-        const { status, taskData } = await pollUntilTerminal(tid)
-        if (status !== 'completed') {
-          const errMsg = taskData?.error?.message || `任务状态 ${status}`
-          throw new Error(`图片生成失败: ${errMsg} (task_id=${tid})，可续跑: image.js status ${tid}`)
-        }
-        const results = await downloadImagesFromTask(taskData, body.output_format, save)
-        printResults(results, tid, taskData?.cost)
-        if (results.some((r) => !r.localPath)) exitCode = 1
       }
     }
   } catch (err) {
@@ -411,5 +438,9 @@ if (isMain) {
   if (proxyState.proxyConfigured) {
     await closeProxy()
   }
-  process.exitCode = exitCode
+  if (exitCode !== 0) process.exitCode = exitCode
+}
+
+if (isMain) {
+  await runCli()
 }

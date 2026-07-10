@@ -1,34 +1,20 @@
-import { loadConfig, HologresClient, parseQueryArgs, resolveQueryOptions, readSqlSource, createResultEnvelope, saveResult } from './lib/sql.js';
+import { loadConfig, HologresClient, parseTextInputArgs, resolveQueryOptions, readTextSource, createResultEnvelope, saveResult } from './lib/sql.js';
 import { PowerBIClient, parseDaxPayload, savePowerBiResult } from './lib/powerbi.js';
 
 const SOURCES = new Set(['sql', 'powerbi']);
 
 function parseArgv(argv) {
-  // 位置无关：--source 可在命令前或后，避免 "命令槽里出现 --source" 时误报"缺少 --source"。
-  // command = 第一个未被 --source 消费为值的 token；其余（除 --source 及其值）入 rest。
   const tokens = argv.slice(2);
-  let source = null;
-  let command = null;
-  const rest = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t === '--source') {
-      source = tokens[++i];
-      if (!source) throw new Error('--source 需要指定值：sql | powerbi');
-      continue;
-    }
-    if (command === null) {
-      command = t;
-    } else {
-      rest.push(t);
-    }
+  const [source, command, ...rest] = tokens;
+  if (!source || !command) {
+    throw new Error(
+      '用法: node scripts/query.js <sql|powerbi> <命令> [参数]\n' +
+      'SQL 命令: test-connection / schema / query\n' +
+      'PowerBI 命令: list-tools / list-semantic-models / test-connection / schema / query'
+    );
   }
-  if (!command) {
-    throw new Error('用法: node query.js <命令> --source <sql|powerbi> [参数]\n命令: test-connection / schema / query [/ powerbi 专属 list-tools]');
-  }
-  if (!source) throw new Error('缺少 --source（sql | powerbi）');
-  if (!SOURCES.has(source)) throw new Error(`不支持的 --source: ${source}（当前支持：${[...SOURCES].join(', ')}）`);
-  return { command, source, rest };
+  if (!SOURCES.has(source)) throw new Error(`不支持的数据源: ${source}（当前支持：${[...SOURCES].join(', ')}）`);
+  return { source, command, rest };
 }
 
 async function runSql(command, cliArgs) {
@@ -41,7 +27,7 @@ async function runSql(command, cliArgs) {
         break;
       }
       case 'schema': {
-        if (cliArgs.length === 0) throw new Error('用法: query.js schema --source sql <schema.table> [schema.table ...]');
+        if (cliArgs.length === 0) throw new Error('用法: node scripts/query.js sql schema <schema.table> [schema.table ...]');
         client = new HologresClient();
         const allRows = [];
         for (const arg of cliArgs) {
@@ -56,11 +42,11 @@ async function runSql(command, cliArgs) {
         break;
       }
       case 'query': {
-        const options = resolveQueryOptions(parseQueryArgs(cliArgs));
+        const options = resolveQueryOptions(parseTextInputArgs(cliArgs, { inputFlag: '--sql', inputLabel: 'SQL' }));
         if (options.source === 'stdin' && process.stdin.isTTY) {
-          throw new Error('未提供 --query 且 stdin 是终端。请用 --query "<SQL>"、--query @<文件> 或管道传入');
+          throw new Error('未提供 --sql 且 stdin 是终端。请用 --sql "<SQL>"、--sql @<文件> 或管道传入');
         }
-        const sql = await readSqlSource(options);
+        const sql = await readTextSource(options, process.stdin, { label: 'SQL', inputFlag: '--sql' });
         client = new HologresClient();
         const result = await client.query(sql);
         const envelope = createResultEnvelope({ source: 'sql', resultPath: options.savePath, result });
@@ -79,30 +65,37 @@ async function runSql(command, cliArgs) {
   }
 }
 
-async function runPowerBi(command, cliArgs) {
-  const client = new PowerBIClient();
+async function runPowerBi(command, cliArgs, config) {
   switch (command) {
+    case 'list-semantic-models': {
+      console.log(JSON.stringify({ 'powerbi-semantic-models': config['powerbi-semantic-models'] || [] }, null, 2));
+      break;
+    }
     case 'list-tools': {
+      const client = new PowerBIClient();
       console.log(JSON.stringify(await client.listTools(), null, 2));
       break;
     }
     case 'test-connection': {
+      const client = new PowerBIClient();
       const tools = await client.listTools();
       console.log(JSON.stringify({ ok: true, message: 'PowerBI MCP 连接成功', tool_count: tools.length }, null, 2));
       break;
     }
     case 'schema': {
+      const client = new PowerBIClient();
       const [artifactId] = cliArgs;
-      if (!artifactId) throw new Error('用法: query.js schema --source powerbi <artifactId>');
+      if (!artifactId) throw new Error('用法: node scripts/query.js powerbi schema <artifactId>');
       console.log(JSON.stringify(await client.getSchema(artifactId), null, 2));
       break;
     }
     case 'query': {
-      const options = resolveQueryOptions(parseQueryArgs(cliArgs));
+      const client = new PowerBIClient();
+      const options = resolveQueryOptions(parseTextInputArgs(cliArgs, { inputFlag: '--payload', inputLabel: 'PowerBI payload' }));
       if (options.source === 'stdin' && process.stdin.isTTY) {
-        throw new Error('未提供 --query 且 stdin 是终端。请用 --query <JSON>、--query @<文件> 或管道传入');
+        throw new Error('未提供 --payload 且 stdin 是终端。请用 --payload <JSON>、--payload @<文件> 或管道传入');
       }
-      const text = await readSqlSource(options);
+      const text = await readTextSource(options, process.stdin, { label: 'PowerBI payload', inputFlag: '--payload' });
       const payload = parseDaxPayload(text);
       const result = await client.query(payload.artifactId, payload.daxQueries, payload.maxRows);
       const output = JSON.stringify(result, null, 2);
@@ -114,19 +107,18 @@ async function runPowerBi(command, cliArgs) {
       break;
     }
     default:
-      throw new Error(`powerbi 未知命令: ${command}（支持：list-tools / test-connection / schema / query）`);
+      throw new Error(`powerbi 未知命令: ${command}（支持：list-tools / list-semantic-models / test-connection / schema / query）`);
   }
 }
-
 (async () => {
   try {
     const { command, source, rest } = parseArgv(process.argv);
     // 凭证统一在 dispatcher 主入口加载，sql / powerbi 共用
-    loadConfig();
+    const config = loadConfig();
     if (source === 'sql') {
       await runSql(command, rest);
     } else if (source === 'powerbi') {
-      await runPowerBi(command, rest);
+      await runPowerBi(command, rest, config);
     } else {
       throw new Error(`source "${source}" 尚未接入`);
     }

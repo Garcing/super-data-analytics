@@ -6,10 +6,10 @@
  * 线上 app.py 直读 Blob 公开 URL 渲染——不走 serverless 函数，不碰 html 的 api。
  *
  * CLI（从 building-reports/ 目录运行）：
- *   node scripts/streamlit/streamlit.js publish --id <id> [--title --summary --tags] [--report "<py>"|@file|-]
- *   node scripts/streamlit/streamlit.js list
- *   node scripts/streamlit/streamlit.js get <id>
- *   node scripts/streamlit/streamlit.js delete <id>
+ *   node scripts/report.js streamlit publish --id <id> [--title --summary --tags] [--report "<py>"|@file|-]
+ *   node scripts/report.js streamlit list
+ *   node scripts/report.js streamlit get <id>
+ *   node scripts/report.js streamlit delete <id>
  *
  * 凭证 BLOB_READ_WRITE_TOKEN 来自 ~/.super-data-analytics/config.json 的 env 块；脚本不读 .env。
  *
@@ -173,14 +173,14 @@ const isMain = (() => {
 })()
 
 const USAGE = `用法（从 building-reports/ 目录运行）:
-  发布（--report 三种来源，同 querying-data 的 --query）:
-    node scripts/streamlit/streamlit.js publish --id <id> [--title --summary --tags] [--report "<py>"|@file|-]
-    node scripts/streamlit/streamlit.js publish --id <id> --report @<file>     # 文件（建议 <工作区>/.super-data-analytics/scratch/）
-    node scripts/streamlit/streamlit.js publish --id <id> --report -           # stdin（管道）
+  发布（--report 三种来源，同 querying-data 的 --sql / --payload）:
+    node scripts/report.js streamlit publish --id <id> [--title --summary --tags] [--report "<py>"|@file|-]
+    node scripts/report.js streamlit publish --id <id> --report @<file>     # 文件（建议 <工作区>/.super-data-analytics/scratch/）
+    node scripts/report.js streamlit publish --id <id> --report -           # stdin（管道）
   其它:
-    node scripts/streamlit/streamlit.js list                                   # 列出全部报告
-    node scripts/streamlit/streamlit.js get <id>                               # 打印某份报告源码
-    node scripts/streamlit/streamlit.js delete <id>                            # 删除
+    node scripts/report.js streamlit list                                   # 列出全部报告
+    node scripts/report.js streamlit get <id>                               # 打印某份报告源码
+    node scripts/report.js streamlit delete <id>                            # 删除
 
 meta flag（除时间外由 agent 填）:
   --title   报告标题（默认 = id；同时是 URL 路径，直达链接 = 线上/<title>，避免空格/斜杠，全库唯一）
@@ -212,8 +212,8 @@ function readVal(args, i, name, known) {
   return v
 }
 
-if (isMain) {
-  const [, , cmd, ...rest] = process.argv
+export async function runCli(argv = process.argv.slice(2)) {
+  const [cmd, ...rest] = argv
   let exitCode = 0
   try {
     switch (cmd) {
@@ -261,5 +261,9 @@ if (isMain) {
     exitCode = 1
   }
   if (proxyState.proxyConfigured) await closeProxy()
-  process.exitCode = exitCode
+  if (exitCode !== 0) process.exitCode = exitCode
+}
+
+if (isMain) {
+  await runCli()
 }

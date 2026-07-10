@@ -42,41 +42,42 @@ metadata:
 
 **先了解图结构**（写 Cypher 或选 targets 前先跑）：
 ```bash
-node scripts/query.js --schema
+node scripts/retrieve.js schema
 ```
 打印所有实体（label / key_field / vector_index）和关系（type / from→to / match 字段），不连库。
 
 **语义检索模式**（问"是什么"、"去哪找"）：
 ```bash
-node scripts/query.js --question "用户问题" [--top-k 5] [--targets 表,指标]
+node scripts/retrieve.js search --question "用户问题" [--top-k 5] [--targets 表,指标]
 ```
 
 **Cypher 查询模式**（问"有几个"、"有哪些"、"属于XX的"）：
 ```bash
-node scripts/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 数量"
+node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) AS 数量"
 ```
 
-`--question` / `--cypher` 都支持三态输入：
-- `--cypher "<CYPHER>"` inline
-- `--cypher @<file>` 从文件读（避免中文反引号标签的 shell 转义地狱）
-- `--cypher -` 或不传值 → stdin（管道）
+`--question` / `--statement` 都支持三态输入：
+- `--statement "<CYPHER>"` inline
+- `--statement @<file>` 从文件读（避免中文反引号标签的 shell 转义地狱）
+- `--statement -` 或不传值 → stdin（管道）
 
 参数：
-- `--question` / `--cypher`：二选一。各支持 inline / `@file` / stdin 三态
+- `search --question`：语义检索正文，支持 inline / `@file` / stdin 三态；不传 `--question` 时走 stdin
+- `cypher --statement`：Cypher 查询正文，支持 inline / `@file` / stdin 三态；不传 `--statement` 时走 stdin
 - `--top-k N`：每个向量索引返回的最大结果数，默认 5（仅语义检索）
 - `--targets 逗号分隔的实体名`：限制搜索范围。可用值：业务线,业务板块,业务小点,指标,维度,表（仅语义检索）
-- `--schema`：打印实体 + 关系后退出，不连库
+- `schema`：打印实体 + 关系后退出，不连库
 
 ## 核心流程
 
 ### 第一步：选择查询模式
 
-- **语义检索**（"X是什么意思"、"去哪找X"）→ `node scripts/query.js --question "问题"`
-- **结构化查询**（"有几个X"、"X下面有哪些Y"、"列出所有X"）→ `node scripts/query.js --cypher "MATCH ..."`
+- **语义检索**（"X是什么意思"、"去哪找X"）→ `node scripts/retrieve.js search --question "问题"`
+- **结构化查询**（"有几个X"、"X下面有哪些Y"、"列出所有X"）→ `node scripts/retrieve.js cypher --statement "MATCH ..."`
 
 ### 第二步：语义检索模式 — 智能路由 targets
 
-执行语义检索前，先跑 `node scripts/query.js --schema` 了解有哪些实体，判断问题可能涉及哪些，用 `--targets` 缩小范围。
+执行语义检索前，先跑 `node scripts/retrieve.js schema` 了解有哪些实体，判断问题可能涉及哪些，用 `--targets` 缩小范围。
 
 **8 个可检索实体**：业务线、业务板块、业务小点、指标、维度、数据看板、数据域、表
 
@@ -99,7 +100,7 @@ node scripts/query.js --cypher "MATCH (n:\`表\`) RETURN count(n) AS 数量"
 
 ### 第三步：Cypher 模式
 
-根据 `--schema` 输出（即 config.json 的 `graph-config` 块）中的实体和关系构造 Cypher：
+根据 `schema` 输出（即 config.json 的 `graph-config` 块）中的实体和关系构造 Cypher：
 - 实体标签：业务线、业务板块、业务小点、指标、维度、数据看板、数据域、表
 - 关系类型：包含、涉及、展示、筛选、关联
 - 节点属性参考 graph-config.yaml 中每个实体的 key_field

@@ -10,7 +10,7 @@ description: 把分析结论做成可分享的 Streamlit 交互式报告；框�
 ## 动静分离（与 html/image 一致）
 
 - **静态（仓库，部署一次）**：`app.py` + `store.py` + `lib/` + `requirements.txt` —— 框架。
-- **动态（Vercel Blob，按报告推）**：每份报告 = 一个 `.py` 源码，经 `streamlit.js publish` 推到 Blob；`app.py` 运行时 `fetch + exec` 渲染。**加报告不动 git、不重新部署。**
+- **动态（Vercel Blob，按报告推）**：每份报告 = 一个 `.py` 源码，经 `node scripts/report.js streamlit publish` 推到 Blob；`app.py` 运行时 `fetch + exec` 渲染。**加报告不动 git、不重新部署。**
 - 报告源码存 `streamlit-reports/<id>.py`，meta（title/summary/tags + 时间）随发布写进单文件索引 `streamlit-reports-index.json` 供线上 app 公开读。
 
 ## 何时用 Streamlit 报告
@@ -26,17 +26,17 @@ description: 把分析结论做成可分享的 Streamlit 交互式报告；框�
 ## CLI（从 `building-reports/` 目录运行）
 
 ```bash
-# 发布（--report 三种来源，同 querying-data 的 --query / html 的 --report）
-node scripts/streamlit/streamlit.js publish --id <id> \
+# 发布（--report 三种来源，同 querying-data 的 --sql / --payload / html 的 --report）
+node scripts/report.js streamlit publish --id <id> \
   [--title --summary --tags] \
   [--report "<py>" | --report @<file> | --report -]
-node scripts/streamlit/streamlit.js list                  # 列出全部报告
-node scripts/streamlit/streamlit.js get <id>               # 打印某份报告源码
-node scripts/streamlit/streamlit.js delete <id>            # 删除
+node scripts/report.js streamlit list                  # 列出全部报告
+node scripts/report.js streamlit get <id>               # 打印某份报告源码
+node scripts/report.js streamlit delete <id>            # 删除
 ```
 
 - meta flag（除时间外由 agent 填）：`--title`（默认 = id）、`--summary`（一句话）、`--tags "销售,区域,GMV"`（逗号分隔 → 数组）。时间（`created_at` / `updated_at`）由 CLI 自动写。
-- 已去掉 `--icon`、`--group`：导航按**首个 tag** 分组（无 tag 归"其他"），不再有侧栏 icon。
+- 导航按**首个 tag** 分组；无 tag 时归"其他"。
 - 同 id 重发即覆盖，但 `created_at` 保留首次值（稳定），`updated_at` 每次刷新（与 html 一致）。
 - `title` 同时是 **URL 路径**，直达链接 = `https://super-data-analytics.streamlit.app/<title>`（如 `…/区域销售分析`）。**避免 title 出现空格和斜杠**，且全库唯一。
 - 索引是单文件 `streamlit-reports-index.json`，条目 schema = `{ id, title, created_at, updated_at, summary, tags }`（与 html 共用）。CLI 用 **ifMatch 乐观锁 + 重试**写（head 强一致校验 + 公开读对比，防并发/陈旧读丢失更新）。所有 blob 设 `cacheControlMaxAge=60`，新报告对线上 app 约 1 分钟可见。
@@ -126,7 +126,7 @@ C.conclusion_block("结论句。", actions=["行动1","行动2"])
 
 ## 写报告的要点
 
-**数据从哪来**：内联 `pd.DataFrame({...})`（小数据集，零依赖）/ 绝对路径 CSV 用 `load_df` / 跨板块调 `querying-data --source sql` 或 `querying-data --source powerbi`。取数逻辑包进 `@cached` 函数。
+**数据从哪来**：内联 `pd.DataFrame({...})`（小数据集，零依赖）/ 绝对路径 CSV 用 `load_df` / 跨板块调 `querying-data/scripts/query.js sql ...` 或 `querying-data/scripts/query.js powerbi ...`。取数逻辑包进 `@cached` 函数。
 
 **交互**：页内筛选器 `st.multiselect / selectbox / date_input / toggle`（放图表上方）；Plotly 原生 hover/缩放/图例切换默认就有；分段 `st.tabs`；折叠 `st.expander`。
 
@@ -142,7 +142,7 @@ C.conclusion_block("结论句。", actions=["行动1","行动2"])
    逐项确认——标题 + 至少一张 Plotly 图（hover 可用）+ KPI 条 + 表格渲染、筛选/rerun 不抛异常。**不要止步于「能启动」**，必须确认图真的画出来。
 3. 发布（在 `building-reports/` 目录下）：
    ```bash
-   node scripts/streamlit/streamlit.js publish \
+   node scripts/report.js streamlit publish \
      --id report-<主题> --title "<标题>" --tags "<标签1>,<标签2>" --summary "<一句话>" \
      --report @<工作区>/.super-data-analytics/scratch/report-<主题>.py
    ```

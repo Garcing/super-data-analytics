@@ -1,35 +1,38 @@
 # PowerBI 源用法（Power BI 语义模型）
 
-通过 `node scripts/query.js ... --source powerbi` 直连 Microsoft Fabric MCP HTTP 端点（`https://api.fabric.microsoft.com/v1/mcp/powerbi`），使用 Azure AD Client Credentials 零交互认证。凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`POWERBI_CLIENT_ID` / `POWERBI_CLIENT_SECRET` / `POWERBI_TENANT_ID`），不读 `.env`、不依赖环境变量导出。
+通过 `node scripts/query.js powerbi ...` 直连 Microsoft Fabric MCP HTTP 端点（`https://api.fabric.microsoft.com/v1/mcp/powerbi`），使用 Azure AD Client Credentials 零交互认证。凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`POWERBI_CLIENT_ID` / `POWERBI_CLIENT_SECRET` / `POWERBI_TENANT_ID`），不读 `.env`、不依赖环境变量导出。
 
 所有命令在 `querying-data/` 目录下执行，前缀为 `node scripts/query.js`。
 
 ## CLI 命令
 
 ```bash
-# 1) 列出 MCP 端点可用工具（探测连通性也用它）
-node scripts/query.js list-tools --source powerbi
+# 1) 列出本地配置的 Power BI 语义模型候选（返回 config.json 的 powerbi-semantic-models 块）
+node scripts/query.js powerbi list-semantic-models
 
-# 2) 测试连接（内部走 listTools，返回 ok + tool_count）
-node scripts/query.js test-connection --source powerbi
+# 2) 列出 MCP 端点可用工具（探测连通性也用它）
+node scripts/query.js powerbi list-tools
 
-# 3) 获取语义模型 schema（artifactId 是 GUID）
-node scripts/query.js schema --source powerbi <artifactId>
+# 3) 测试连接（内部走 listTools，返回 ok + tool_count）
+node scripts/query.js powerbi test-connection
 
-# 4) 执行 DAX 查询：--query 三种来源，载荷为 JSON（不是单条 DAX 字符串）
-node scripts/query.js query --source powerbi --query '<JSON>'         # inline
-node scripts/query.js query --source powerbi --query @<file-path>     # 文件
-node scripts/query.js query --source powerbi --query -                # stdin（管道）
+# 4) 获取语义模型 schema（artifactId 是 GUID）
+node scripts/query.js powerbi schema <artifactId>
 
-# 追加 --save <file-path> 可落盘结果；PowerBI 仅支持 .json（原始 MCP 结果）
-node scripts/query.js query --source powerbi --query @./payload.json --save ./.super-data-analytics/results/pbi-result-20260626-103000-dau.json
+# 5) 执行 DAX 查询：--payload 三种来源，载荷为 JSON（不是单条 DAX 字符串）
+node scripts/query.js powerbi query --payload '<JSON>'         # inline
+node scripts/query.js powerbi query --payload @<file-path>     # 文件
+node scripts/query.js powerbi query --payload -                # stdin（管道）
+
+# 追加 --output <file-path> 可落盘结果；PowerBI 仅支持 .json（原始 MCP 结果）
+node scripts/query.js powerbi query --payload @./payload.json --output ./.super-data-analytics/results/pbi-result-20260626-103000-dau.json
 ```
 
-> 子命令清单：`list-tools` / `test-connection` / `schema <artifactId>` / `query`。PowerBI 源的 `schema` 接收的是 **artifactId**，不是 schema.table。
+> 子命令清单：`list-semantic-models` / `list-tools` / `test-connection` / `schema <artifactId>` / `query`。PowerBI 源的 `schema` 接收的是 **artifactId**，不是 schema.table。
 
-## `--query` 载荷
+## `--payload` 载荷
 
-**关键差异**：SQL 源的 `--query` 收 SQL 字符串，PowerBI 源的 `--query` 收 **JSON 对象**（不是单条 DAX 字符串）。三种输入模式（inline / `@file` / stdin）的形态与 SQL 源一致，只是文本是 JSON。
+**关键差异**：SQL 源的 `--sql` 收 SQL 字符串，PowerBI 源的 `--payload` 收 **JSON 对象**（不是单条 DAX 字符串）。三种输入模式（inline / `@file` / stdin）的形态与 SQL 源一致，只是文本是 JSON。
 
 **Shell 友好性提示**：inline JSON 在 shell 里很难写好——引号、换行、嵌套都容易踩坑。优先用 `@file` 或 stdin/heredoc；只有极小的载荷（一两条短 DAX、字段不多）才考虑 inline。
 
@@ -57,7 +60,7 @@ node scripts/query.js query --source powerbi --query @./payload.json --save ./.s
 **bash quoted heredoc（推荐，引号抑制 `$` 展开）：**
 
 ```bash
-node scripts/query.js query --source powerbi --query - <<'EOF'
+node scripts/query.js powerbi query --payload - <<'EOF'
 {
   "artifactId": "11111111-2222-3333-4444-555555555555",
   "maxRows": 100,
@@ -69,7 +72,7 @@ EOF
 **@file（payload.json）：**
 
 ```bash
-node scripts/query.js query --source powerbi --query @./payload.json
+node scripts/query.js powerbi query --payload @./payload.json
 ```
 
 ## artifactId 怎么拿
@@ -79,9 +82,9 @@ node scripts/query.js query --source powerbi --query @./payload.json
 获取顺序：
 
 1. **上游上下文已给**（业务方明确指定了看板/模型） → 直接用。
-2. **上游上下文没有** → agent 自己读 `~/.super-data-analytics/config.json` 的 `powerbi-semantic-models` 表，看有哪些可用模型，结合请求意图选对那条，再把它的 `id` 填进 payload。
+2. **上游上下文没有** → 先运行 `node scripts/query.js powerbi list-semantic-models`，查看本地配置的 `powerbi-semantic-models` 候选，结合请求意图选对那条，再把它的 `id` 填进 payload。
 
-`config.json` 中 `powerbi-semantic-models` 的形态（agent 查阅用，脚本本身不读它）：
+`list-semantic-models` 返回的 `powerbi-semantic-models` 形态：
 
 ```json
 {
@@ -96,9 +99,9 @@ node scripts/query.js query --source powerbi --query @./payload.json
 
 `query` 子命令向 stdout 输出 **MCP 端点的原始 JSON**（不归一化）。Preview API，结构可能随微软更新变化，agent 解析时按实际字段取，不要硬编码路径。
 
-## `--save`（可选落盘）
+## `--output`（可选落盘）
 
-- 默认不保存；仅当用户明确要求时才传 `--save <file-path>`。
+- 默认不保存；仅当用户明确要求时才传 `--output <file-path>`。
 - **仅支持 `.json`**（原样写 MCP 结果）；`.csv` / `.xlsx` 直接报错。
 - 落盘目录由 agent 决定，建议 `<工作区>/.super-data-analytics/results/`。
 - 命名建议：`pbi-result-YYYYMMDD-HHMMSS-<主题>.json`（agent 按需命名，不是硬规则）。

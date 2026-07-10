@@ -62,16 +62,18 @@ function loadConfig() {
   for (const key of CREDENTIAL_KEYS) {
     if (env[key] !== undefined) process.env[key] = String(env[key]);
   }
+
+  return cfg;
 }
 
 // scripts/lib/ → querying-data/（多了一层 lib，向上两级）
 const SCHEMA_SQL_PATH = join(__dirname, 'get_table_schema.sql');
 
-function parseQueryArgs(args) {
-  let query = null;
+function parseTextInputArgs(args, { inputFlag = '--sql', inputLabel = '查询' } = {}) {
+  let input = null;
   let savePath = null;
   const seen = new Set();
-  const knownFlags = new Set(['--query', '--save']);
+  const knownFlags = new Set([inputFlag, '--output']);
 
   const markSeen = (arg) => {
     if (seen.has(arg)) throw new Error(`重复参数: ${arg}`);
@@ -86,60 +88,60 @@ function parseQueryArgs(args) {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--query') {
+    if (arg === inputFlag) {
       markSeen(arg);
-      query = readValue(arg, i++);
-    } else if (arg === '--save') {
+      input = readValue(arg, i++);
+    } else if (arg === '--output') {
       markSeen(arg);
       savePath = readValue(arg, i++);
     } else {
-      throw new Error(`未知 query 参数: ${arg}`);
+      throw new Error(`未知输入参数: ${arg}`);
     }
   }
 
-  // 把 --query 解析成内部 source（对外只剩一个 --query）：
+  // 把正文输入 flag 解析成内部 source：
   //   不传 或 -    → stdin（从管道读；- 是 Unix 惯用的"显式 stdin"）
   //   @<path>      → file
-  //   其他         → inline（直接 SQL）
+  //   其他         → inline（直接内容）
   let source;
-  let sql = null;
-  let sqlPath = null;
-  if (query === null || query === '-') {
+  let content = null;
+  let inputPath = null;
+  if (input === null || input === '-') {
     source = 'stdin';
-  } else if (query.startsWith('@')) {
+  } else if (input.startsWith('@')) {
     source = 'file';
-    sqlPath = query.slice(1);
-    if (!sqlPath) throw new Error('--query @ 后需提供文件路径');
+    inputPath = input.slice(1);
+    if (!inputPath) throw new Error(`${inputFlag} @ 后需提供文件路径`);
   } else {
     source = 'inline';
-    sql = query;
-    if (!sql) throw new Error('--query 不能为空');
+    content = input;
+    if (!content) throw new Error(`${inputFlag} 不能为空`);
   }
 
-  return { source, sql, sqlPath, savePath };
+  return { source, content, inputPath, savePath };
 }
 
-function readSqlFile(filePath) {
+function readTextFile(filePath, label = '查询') {
   let content;
   try {
     content = readFileSync(filePath, 'utf-8').trim();
   } catch (e) {
-    throw new Error(`无法读取查询文件 ${filePath}: ${e.message}`);
+    throw new Error(`无法读取${label}文件 ${filePath}: ${e.message}`);
   }
 
   if (!content) {
-    throw new Error(`查询文件为空: ${filePath}`);
+    throw new Error(`${label}文件为空: ${filePath}`);
   }
 
   return content;
 }
 
-async function readSqlFromStdin(stream = process.stdin) {
+async function readTextFromStdin(stream = process.stdin, { label = 'SQL', inputFlag = '--sql' } = {}) {
   if (typeof stream.setEncoding === 'function') {
     stream.setEncoding('utf8');
   }
 
-  // 非 TTY（脚本/管道/agent 子进程）里，若调用方忘了带 --query 且 stdin 没关闭，
+  // 非 TTY（脚本/管道/agent 子进程）里，若调用方忘了带正文 flag 且 stdin 没关闭，
   // for-await 会永久挂起。加一个首字节超时：到点没收完就主动报错退出，不再卡死。
   const timeoutMs = Number(process.env.SQL_QUERY_STDIN_TIMEOUT_MS) || 15_000;
 
@@ -164,9 +166,9 @@ async function readSqlFromStdin(stream = process.stdin) {
     if (stream.destroy) stream.destroy();
     if (err && err.message === 'STDIN_READ_TIMEOUT') {
       throw new Error(
-        `等待 stdin 超时（${timeoutMs / 1000}s 内未收到 SQL）。\n` +
-        '常见原因：在非交互环境（脚本/管道/agent）里既没传 --query "<SQL>" / --query @<文件>，stdin 也没关闭。\n' +
-        '解决：用 --query 显式传入，或确保管道写完后关闭 stdin。'
+        `等待 stdin 超时（${timeoutMs / 1000}s 内未收到${label}）。\n` +
+        `常见原因：在非交互环境（脚本/管道/agent）里既没传 ${inputFlag} "<内容>" / ${inputFlag} @<文件>，stdin 也没关闭。\n` +
+        `解决：用 ${inputFlag} 显式传入，或确保管道写完后关闭 stdin。`
       );
     }
     throw err;
@@ -175,27 +177,28 @@ async function readSqlFromStdin(stream = process.stdin) {
   }
 
   if (!content) {
-    throw new Error('stdin 中的 SQL 为空');
+    throw new Error(`stdin 中的${label}为空`);
   }
 
   return content;
 }
 
-async function readSqlSource(options, stream = process.stdin) {
-  if (options.source === 'stdin') return readSqlFromStdin(stream);
-  if (options.source === 'file') return readSqlFile(options.sqlPath);
+async function readTextSource(options, stream = process.stdin, opts = {}) {
+  const label = opts.label || 'SQL';
+  if (options.source === 'stdin') return readTextFromStdin(stream, opts);
+  if (options.source === 'file') return readTextFile(options.inputPath, label);
 
-  const sql = options.sql.trim();
-  if (!sql) throw new Error('inline SQL 为空');
-  return sql;
+  const content = options.content.trim();
+  if (!content) throw new Error(`inline ${label} 为空`);
+  return content;
 }
 
 function resolveQueryOptions(options, cwd = process.cwd()) {
-  // JS 不决定产物去向：不传 --save 则不落盘（只输出到 stdout）；传 --save 才写到 agent 指定路径。
+  // JS 不决定产物去向：不传 --output 则不落盘（只输出到 stdout）；传 --output 才写到 agent 指定路径。
   // .super-data-analytics/{results,scratch} 的布局与命名约定见 SKILL.md，由 agent 构造路径。
   const savePath = options.savePath ? resolve(cwd, options.savePath) : null;
-  const sqlPath = options.sqlPath ? resolve(cwd, options.sqlPath) : null;
-  return { ...options, savePath, sqlPath };
+  const inputPath = options.inputPath ? resolve(cwd, options.inputPath) : null;
+  return { ...options, savePath, inputPath };
 }
 
 function createResultEnvelope({ source, resultPath, result }) {
@@ -329,9 +332,9 @@ async function saveResult(envelope, savePath) {
 export {
   loadConfig,
   HologresClient,
-  parseQueryArgs,
+  parseTextInputArgs,
   resolveQueryOptions,
-  readSqlSource,
+  readTextSource,
   createResultEnvelope,
   saveResult,
 };

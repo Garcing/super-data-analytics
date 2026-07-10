@@ -119,7 +119,7 @@ description: 把分析结论直接渲染成图片形式的数据分析报告（�
 把上面的内容拼成一个 prompt，用 CLI 生成：
 
 ```bash
-node scripts/image/image.js "生成一张数据分析报告信息图。
+node scripts/report.js image generate --prompt "生成一张数据分析报告信息图。
 【主题】给运营周会看的 GMV 周环比异动简报，受众是业务负责人，10 秒内要能定位问题。
 【数据】GMV 本周 1280 万、上周 1150 万、周环比 +11.3%；分渠道：渠道A 520万(+18%)、渠道B 430万(+5%)、渠道C 330万(+12%)；近8周GMV：820,910,980,1020,1100,1080,1150,1280。
 【图表】顶部标题区+3个KPI卡(GMV/周环比/拉动渠道)；中部柱状图各渠道GMV占比；中下折线图近8周趋势并高亮本周；底部2条结论卡。
@@ -127,7 +127,7 @@ node scripts/image/image.js "生成一张数据分析报告信息图。
 【风格】商务扁平，主色蓝#2563EB+中性灰，大量留白，中文，数字粗体。
 【强制规则】所有图表必须带数据标签(每个柱/点/扇区旁标具体数值)；数值须与提供数据完全一致不得编造；不画未指定的图。" \
   --size 3:4 --resolution 2k \
-  --save ./.super-data-analytics/results/gmv-weekly-20260630.png
+  --output ./.super-data-analytics/results/gmv-weekly-20260630.png
 ```
 
 > 选 `3:4` / `9:16` 适合竖版信息图；`16:9` 适合汇报封面。报告类建议 `--resolution 2k` 保证文字清晰。
@@ -142,20 +142,31 @@ node scripts/image/image.js "生成一张数据分析报告信息图。
 
 ```bash
 # 一键到底（提交 → 轮询 → 下载），适合不会中断的场景
-node scripts/image/image.js "<提示词>" --save <路径> [选项]
+node scripts/report.js image generate [--prompt "<提示词>"|@file|-] --output <路径> [选项]
 
 # 三步拆开（agent 中途断开后，从任一步接着跑）
-node scripts/image/image.js submit   "<提示词>" [选项] [--dry-run]     # 只提交，打印 task_id
-node scripts/image/image.js status   <task_id>                        # 轮询到终态，打印状态 + 图片 URL
-node scripts/image/image.js download <task_id> --save <路径>           # 下载图片
+node scripts/report.js image submit   [--prompt "<提示词>"|@file|-] [选项] [--dry-run] # 只提交，打印 task_id
+node scripts/report.js image status   <task_id>                        # 轮询到终态，打印状态 + 图片 URL
+node scripts/report.js image download <task_id> --output <路径>           # 下载图片
 ```
 
 | 子命令 | 输入 | 输出（stdout） | 计费 |
 |--------|------|------|------|
-| 默认 | 提示词 + `--save` | `URL:` / `本地:` / `task_id` / `cost` | 是 |
-| `submit` | 提示词 + 生成选项 | `{ task_id, cost? }` JSON | 是（`--dry-run` 时不计费） |
+| `generate` | 提示词（`--prompt` 三态）+ `--output` + 生成选项 | `URL:` / `本地:` / `task_id` / `cost` | 是（`--dry-run` 时不计费） |
+| `submit` | 提示词（`--prompt` 三态）+ 生成选项 | `{ task_id, cost? }` JSON | 是（`--dry-run` 时不计费） |
 | `status` | `task_id` | `{ task_id, status, cost?, images?:[{url}], error? }` JSON | 否（只查询） |
-| `download` | `task_id` + `--save` | `URL:` / `本地:` / `task_id` / `cost` | 否（只下载，图已生成） |
+| `download` | `task_id` + `--output` | `URL:` / `本地:` / `task_id` / `cost` | 否（只下载，图已生成） |
+
+**提示词输入（三态，同 querying-data 的 `--sql` / `--payload`）**：
+
+| 写法 | 含义 |
+|------|------|
+| `--prompt "<文本>"` | inline 提示词 |
+| `--prompt @<file>` | 从文件读取提示词 |
+| `--prompt -` | 从 stdin 读取提示词 |
+| 不传 `--prompt` | 从 stdin 读取提示词 |
+
+> 多行、含引号或含特殊符号的提示词建议写文件后用 `--prompt @<file>`。
 
 **生成选项**（`submit` / 一键用，均有默认值）：
 
@@ -169,10 +180,10 @@ node scripts/image/image.js download <task_id> --save <路径>           # 下�
 | `--n` | `1` | 张数，official 允许 1–4，generation 仅 1 |
 | `--dry-run` | — | 只打印请求体，不调用 API、不计费（仅 `submit` / 一键） |
 
-**`--save <路径>`**（`download` / 一键必填）：
-- `--save <路径>` → 落到指定路径（多张自动追加 `-<index>`）。
-- 裸 `--save`（不跟值）→ 兜底 `~/Downloads/<时间戳>-<index>.<ext>`。
-- 完全不传 → 报错（下载类命令必须显式 `--save`）。
+**`--output <路径>`**（`download` / 一键必填）：
+- `--output <路径>` → 落到指定路径（多张自动追加 `-<index>`）。
+- 裸 `--output`（不跟值）→ 兜底 `~/Downloads/<时间戳>-<index>.<ext>`。
+- 完全不传 → 报错（下载类命令必须显式 `--output`）。
 - **agent 建议：**落在 `<工作区>/.super-data-analytics/results/<名字>.<ext>`，落盘根目录由 agent 决定
 
 **两个模型的字段差异（关键）**

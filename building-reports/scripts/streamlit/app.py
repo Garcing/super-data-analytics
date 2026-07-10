@@ -57,7 +57,7 @@ def main() -> None:
 
     if not entries:
         st.title("📈 数据分析报告")
-        st.info("暂无报告。用 `streamlit.js publish` 把报告 .py 推到 Blob 即可生效。")
+        st.info("暂无报告。用 `node scripts/report.js streamlit publish` 把报告 .py 推到 Blob 即可生效。")
         return
 
     # 按首个 tag 聚合，供导航与主页使用

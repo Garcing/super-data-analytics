@@ -12,7 +12,7 @@ visualizing-data/
   scripts/
     chart.py                       稳定 CLI 入口
     chart_renderer/
-      cli.py                       编排层：参数解析、三态 --data 读取、--save 格式推断、主流程
+      cli.py                       编排层：参数解析、三态 --data 读取、--output 格式推断、主流程
       contract.py                  输入契约校验，生成 ChartSpec
       fonts.py                     中文字体 fallback 和负号配置
       theme.py                     Seaborn/Matplotlib 共享主题与画布
@@ -32,10 +32,10 @@ skills 文件夹**不放动态资源**：临时输入 JSON 写到 `<工作区>/.
 ```text
 chart.py
   -> chart_renderer.cli.main()
-    -> parse_args()                解析 --data / --save / --dpi；--save 扩展名决定格式
+    -> parse_args()                解析 --data / --output / --dpi；--output 扩展名决定格式
     -> read_data_source()          三态路由：inline / @file / stdin（均在 cli.py）
     -> contract.validate()
-    -> ensure_save_parent()
+    -> ensure_output_parent()
     -> render.render_chart()
        -> fonts.configure_fonts()
        -> theme.apply_theme()
@@ -56,8 +56,8 @@ chart.py
 `chart_renderer/cli.py` 是编排层，负责：
 
 - 用 `JsonArgumentParser` 接管 argparse 错误，保证参数错误也输出 JSON。
-- `--data` 三态读取（对齐 querying-data 的 `--query`）：`-`/不传 → stdin；`@<path>` → file；其他 → inline JSON。stdin 读取带 TTY 守卫 + 线程超时，避免非交互环境下挂死。
-- `--save` 必填；扩展名 `.png` / `.svg` 决定输出格式，非法或缺扩展名报错（exit 2）。没有默认输出目录。
+- `--data` 三态读取（对齐 querying-data 的 `--sql` / `--payload`）：`-`/不传 → stdin；`@<path>` → file；其他 → inline JSON。stdin 读取带 TTY 守卫 + 线程超时，避免非交互环境下挂死。
+- `--output` 必填；扩展名 `.png` / `.svg` 决定输出格式，非法或缺扩展名报错（exit 2）。没有默认输出目录。
 - 校验 `--dpi` 是正整数。
 - 成功时输出：
 
@@ -233,10 +233,10 @@ python -m pytest visualizing-data/tests/test_chart_cli.py -q
 ```bash
 python visualizing-data/scripts/chart.py \
   --data @.super-data-analytics/scratch/bar.json \
-  --save .super-data-analytics/results/bar.png
+  --output .super-data-analytics/results/bar.png
 python visualizing-data/scripts/chart.py \
   --data @.super-data-analytics/scratch/line.json \
-  --save .super-data-analytics/results/line.svg
+  --output .super-data-analytics/results/line.svg
 ```
 
 手工 smoke 前把对应 JSON 写到 `<工作区>/.super-data-analytics/scratch/`。smoke 后删除自己生成的输入 JSON 和输出文件。

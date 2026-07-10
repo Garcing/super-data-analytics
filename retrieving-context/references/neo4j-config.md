@@ -23,7 +23,7 @@ GraphRAG 这条线的图结构（实体、关系、embedding）全部声明在 `
 }
 ```
 
-- `env`：sync.py 启动时把 `env` 块灌进 `os.environ`（已有环境变量优先），query.js 直接读 `config.env`。两边都不读 `.env`、不依赖环境变量导出。
+- `env`：sync.py 启动时把 `env` 块灌进 `os.environ`（已有环境变量优先），retrieve.js 直接读 `config.env`。两边都不读 `.env`、不依赖环境变量导出。
 - `graph-config`：纯图结构声明，sync 与 query 共用。
 
 ## embedding 块
@@ -106,7 +106,7 @@ from 表记录的 source_field 值  ==  to 表记录的 target_field 值
 | 阶段 | 谁干 | 用到配置的什么 | 产出 |
 |---|---|---|---|
 | **sync**（写） | `graph_builder.py` 读 `entities` + `relationships` | 按 `match`/`via` 规则算出所有边，`MERGE` 进 Neo4j | 库里物理存在的节点和边 |
-| **query**（读） | `query.js` 的 `fetchGraphContext` | 只看关系的 `type`/`from`/`to`，**完全不读 `match`/`via`** | 沿库里已有边扩出邻居 |
+| **query**（读） | `retrieve.js` 的 `fetchGraphContext` | 只看关系的 `type`/`from`/`to`，**完全不读 `match`/`via`** | 沿库里已有边扩出邻居 |
 
 换句话说：
 - **`match` / `via` 是 sync 阶段的"建图说明书"**——告诉 sync 怎么算边。算完写进库，说明书就可以扔了。
@@ -134,8 +134,8 @@ from 表记录的 source_field 值  ==  to 表记录的 target_field 值
 3. `python scripts/pipeline/sync.py --force-embed` 全量重算 embedding（模型变了维度可能变，必须重建向量索引）。
 
 ### 排查"边没建上"
-1. 先 `node scripts/query.js --schema` 确认配置被正确读入。
-2. 用 Cypher 直接查：`node scripts/query.js --cypher "MATCH (a:实体A)-[:关系类型]->(b:实体B) RETURN count(*)"`。
+1. 先 `node scripts/retrieve.js schema` 确认配置被正确读入。
+2. 用 Cypher 直接查：`node scripts/retrieve.js cypher --statement "MATCH (a:实体A)-[:关系类型]->(b:实体B) RETURN count(*)"`。
 3. count=0 多半是 `match` 字段值对不上（飞书里两表的值拼写/空格不一致），或 `via` 中间表的 `from_field`/`to_field` 取错了列。
 
 ### 排查"扩图没扩出来"

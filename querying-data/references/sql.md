@@ -1,6 +1,6 @@
 # SQL 源用法（Hologres / PostgreSQL）
 
-通过 `node scripts/query.js ... --source sql` 直连 Hologres/PostgreSQL 查询返回数据。凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`HOLOGRES_*`），不读 `.env`、不依赖环境变量导出。
+通过 `node scripts/query.js sql ...` 直连 Hologres/PostgreSQL 查询返回数据。凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`HOLOGRES_*`），不读 `.env`、不依赖环境变量导出。
 
 所有命令在 `querying-data/` 目录下执行，前缀为 `node scripts/query.js`。
 
@@ -8,25 +8,25 @@
 
 ```bash
 # 1) 测试数据库连接
-node scripts/query.js test-connection --source sql
+node scripts/query.js sql test-connection
 
 # 2) 获取数据表 schema（调用方必须提前提供表名，本脚本不负责选表）
-node scripts/query.js schema --source sql <schema.table> [schema.table ...]
+node scripts/query.js sql schema <schema.table> [schema.table ...]
 
-# 3) 查询数据：--query 三种来源（inline / @file / stdin）
-node scripts/query.js query --source sql --query "<SQL>"              # inline
-node scripts/query.js query --source sql --query @<file-path>         # 文件
-node scripts/query.js query --source sql --query -                    # stdin（管道）
+# 3) 查询数据：--sql 三种来源（inline / @file / stdin）
+node scripts/query.js sql query --sql "<SQL>"              # inline
+node scripts/query.js sql query --sql @<file-path>         # 文件
+node scripts/query.js sql query --sql -                    # stdin（管道）
 
-# 追加 --save <file-path> 可落盘结果（仅当用户明确要求时）；支持 .json / .csv / .xlsx
-node scripts/query.js query --source sql --query @./dau.sql --save ./.super-data-analytics/results/sql-result-20260626-103000-dau.json
+# 追加 --output <file-path> 可落盘结果（仅当用户明确要求时）；支持 .json / .csv / .xlsx
+node scripts/query.js sql query --sql @./dau.sql --output ./.super-data-analytics/results/sql-result-20260626-103000-dau.json
 ```
 
 > 子命令清单：`test-connection` / `schema` / `query`。SQL 源没有 `list-tools`。
 
-## `--query` 三来源路由
+## `--sql` 三来源路由
 
-`--query` 是统一入口，按值的形式自动判定来源：
+`--sql` 是 SQL 正文入口，按值的形式自动判定来源：
 
 | 取值 | 来源 | 说明 |
 |---|---|---|
@@ -40,8 +40,8 @@ node scripts/query.js query --source sql --query @./dau.sql --save ./.super-data
 |---|---|---|
 | Agent 支持进程 API | 管道 stdin | 调用方进程在内存直接 `spawn` 子进程，向子进程 stdin 写 UTF-8 SQL；不要为了用 `spawn` 把 SQL 或 driver JS 落盘 |
 | bash/zsh | 管道 stdin | quoted heredoc `<<'EOF'`（引号抑制 `$` 或反引号展开） |
-| PowerShell | 管道 stdin | 统一显式设置 `$OutputEncoding` 为 UTF-8 without BOM；单引号 here-string `@'...'@`；`$sql` 管道到 `node ... --query -` |
-| SQL 需要审阅、复跑或留痕；或管道 stdin 写法报错 | @文件 | agent 把 SQL 写入 `<工作区>/.super-data-analytics/scratch/`，经 `--query @` 传入 |
+| PowerShell | 管道 stdin | 统一显式设置 `$OutputEncoding` 为 UTF-8 without BOM；单引号 here-string `@'...'@`；`$sql` 管道到 `node ... --sql -` |
+| SQL 需要审阅、复跑或留痕；或管道 stdin 写法报错 | @文件 | agent 把 SQL 写入 `<工作区>/.super-data-analytics/scratch/`，经 `--sql @` 传入 |
 | 简短 SQL | 直接 SQL | SQL 直接写入命令行；含 `$` 或反引号时不建议 inline，复杂 SQL 走 file/stdin 更稳 |
 
 **注意事项**
@@ -54,7 +54,7 @@ node scripts/query.js query --source sql --query @./dau.sql --save ./.super-data
 **Agent 进程 API（spawn + stdin）**——不要为了用 spawn 额外生成临时 driver JS：
 
 ```javascript
-const child = spawn('node', ['scripts/query.js', 'query', '--source', 'sql', '--query', '-'], {
+const child = spawn('node', ['scripts/query.js', 'sql', 'query', '--sql', '-'], {
   cwd: 'querying-data',
   stdio: ['pipe', 'pipe', 'pipe'],
 });
@@ -64,7 +64,7 @@ child.stdin.end(sql, 'utf8');
 **bash/zsh quoted heredoc（不落盘、不展开，UTF-8 干净）：**
 
 ```bash
-node scripts/query.js query --source sql --query - <<'EOF'
+node scripts/query.js sql query --sql - <<'EOF'
 SELECT 'a$b`c 中文' AS s;
 EOF
 ```
@@ -80,7 +80,7 @@ $sql = @'
 SELECT '$abc' AS d, '中文 🚀' AS u;
 '@
 
-$sql | node scripts\query.js query --source sql --query -
+$sql | node scripts\query.js sql query --sql -
 ```
 
 ## 输出（stdout envelope）
@@ -103,11 +103,11 @@ $sql | node scripts\query.js query --source sql --query -
 - `row_count` —— 行数。
 - `columns` —— 列元信息（`name` + `dataTypeID`）。
 - `rows` —— 行数据数组。
-- `result_path` —— 仅当传入 `--save` 时出现，指向落盘文件的绝对路径。
+- `result_path` —— 仅当传入 `--output` 时出现，指向落盘文件的绝对路径。
 
-## `--save`（可选落盘）
+## `--output`（可选落盘）
 
-- 默认不保存；仅当用户明确要求时才传 `--save <file-path>`。
+- 默认不保存；仅当用户明确要求时才传 `--output <file-path>`。
 - 支持扩展名：`.json` / `.csv` / `.xlsx`（xlsx 需要 `npm install xlsx`）。
 - 落盘目录由 agent 决定，建议 `<工作区>/.super-data-analytics/results/`。
 - 命名建议：`sql-result-YYYYMMDD-HHMMSS-<主题>.<ext>`（agent 按需命名，不是硬规则）。
@@ -116,7 +116,7 @@ $sql | node scripts\query.js query --source sql --query -
 ## schema
 
 ```bash
-node scripts/query.js schema --source sql dwd.dwd_user dim.dim_date
+node scripts/query.js sql schema dwd.dwd_user dim.dim_date
 ```
 
 调用方负责提供 `schema.table` 列表，脚本按顺序返回每张表的列定义：

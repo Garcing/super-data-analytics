@@ -7,7 +7,7 @@
 ```
 retrieving-context/              检索业务知识图谱（指标定义、数据资产、业务上下文）
 aligning-requirements/           对齐需求口径（入口路由）
-querying-data/                   统一数据查询（--source sql / powerbi，已实现）
+querying-data/                   统一数据查询（数据源子命令 sql / powerbi，已实现）
 diagnosing-anomalies/            指标异动归因方法论
 predicting-trends/               业务趋势预测和目标制定方法论（name: predicting_trends）
 evaluating-impact/               效果评估与实验检验方法论
@@ -100,13 +100,33 @@ React 18 + Vite 6 + Tailwind CSS 3 + Recharts 2 + React Router 7
 
 全局背景色 `--bg-primary: #faf7f2`，Warm Parchment 主题
 
+## CLI 三态输入约定
+
+需要接收长文本、SQL/DAX、JSON、报告源码、提示词等正文输入的 CLI，应统一采用三态输入口径，减少 agent 使用歧义：
+
+- inline：`--flag "<内容>"`，直接把参数值作为正文输入
+- 文件：`--flag @<file>`，读取 UTF-8 文件内容，适合多行、含引号或特殊符号的输入
+- stdin：`--flag -` 或不传该正文 flag 时从管道读取；若 stdin 是交互终端，应立即报错提示用户改用 inline / @文件 / 管道
+
+实现细节需保持一致：文件、stdin、inline 都应 `trim()` 后判空；`@` 后缺路径、文件不存在、文件为空、stdin 为空、stdin 超时都要给出明确错误。非交互 stdin 读取需设置约 15s 超时，避免 agent 子进程忘记关闭 stdin 时永久挂起。
+
+当前已按此口径实现/对齐的入口：
+
+- `querying-data/scripts/query.js sql query --sql ...`
+- `querying-data/scripts/query.js powerbi query --payload ...`
+- `building-reports/scripts/report.js html publish --report ...`
+- `building-reports/scripts/report.js streamlit publish --report ...`
+- `building-reports/scripts/report.js image <generate|submit> --prompt ...`
+- `visualizing-data/scripts/chart.py --data ...`
+- `retrieving-context/scripts/retrieve.js search --question ...` 与 `retrieving-context/scripts/retrieve.js cypher --statement ...`：正文 flag 支持 inline / @文件 / `-` stdin；不传正文 flag 时走 stdin。
+
 ## 关键注意事项
 
 - **Vercel 构建缓存**：修改前端代码后必须 `rm -rf dist` 再部署
-- **DAX 编写**：必须通过 `GetSemanticModelSchema` 确认字段名，参考 `querying-data/references/powerbi.md`
+- **DAX 编写**：没有 artifactId 时先跑 `node scripts/query.js powerbi list-semantic-models` 查看本地语义模型候选；写 DAX 前必须通过 `GetSemanticModelSchema` 确认字段名，参考 `querying-data/references/powerbi.md`
 - **@vercel/blob**：`put()` 必须指定 `access: 'public'`，读取用 `head()` + `fetch(url)`
-- **HTML 报告**：用 `scripts/html/report.js` 发布/列出/读取/删除报告（`publishReport` / `listReports` / `getReport` / `deleteReport` + 子命令 CLI）；接口与输入格式见 `building-reports/references/report_to_html.md`
-- **图片报告**：用 `scripts/image/image.js` 生成图片（apimart gpt-image-2，异步提交→轮询→下载）；`node building-reports/scripts/image/image.js "<提示词>" [--model|--size|--quality ...]`，`--dry-run` 零成本自检；接口与用法见 `building-reports/references/report_to_image.md`
+- **HTML 报告**：用 `scripts/report.js html` 发布/列出/读取/删除报告（`publishReport` / `listReports` / `getReport` / `deleteReport` + 子命令 CLI）；接口与输入格式见 `building-reports/references/report_to_html.md`
+- **图片报告**：用 `scripts/report.js image generate` 生成图片（apimart gpt-image-2，异步提交→轮询→下载）；`node scripts/report.js image generate --prompt "<提示词>" --output <路径> [--model|--size|--quality ...]`，`--dry-run` 零成本自检；接口与用法见 `building-reports/references/report_to_image.md`
 - **Streamlit 报告**：用 `scripts/streamlit/`（本地预览 `streamlit run scripts/streamlit/app.py`，在 `building-reports/` 下执行）；一份报告 = `scripts/streamlit/reports/*.py`，遵循 `references/report_to_streamlit.md`；线上 `https://super-data-analytics.streamlit.app/`，每份报告直达链接 = 线上地址/`<报告title>`；发布新报告 commit 后在 `building-reports/` 下跑 `bash scripts/streamlit/deploy.sh`（subtree push 到 `Garcing/streamlit-reports`，Cloud 自动重新部署）
 
 ## 旧代码保留

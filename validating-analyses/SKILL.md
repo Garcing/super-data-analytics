@@ -12,7 +12,7 @@ metadata:
 
 定位是**最终成品兜底关**，横向适用于任何来源的分析：自己刚产出的、同事交接的、看板截图、SQL 结果、报告草稿、第三方给出的结论。
 
-执行中按需调用 `retrieving-context` 校验指标口径，调用 `querying-data --source sql` 或 `querying-data --source powerbi` 复算关键数字，调用 `visualizing-data` 重画图核对，调用 `building-reports` 落地修订后的报告。各分析域的内部检查不在这里复刻：异动归因查 `diagnosing-anomalies`，效果评估查 `evaluating-impact`，趋势预测查 `predicting_trends`。
+执行中按需调用 `retrieving-context` 校验指标口径，调用 `querying-data sql` 或 `querying-data powerbi` 复算关键数字，调用 `visualizing-data` 重画图核对，调用 `building-reports` 落地修订后的报告。各分析域的内部检查不在这里复刻：异动归因查 `diagnosing-anomalies`，效果评估查 `evaluating-impact`，趋势预测查 `predicting_trends`。
 
 ## 运行环境与依赖
 
@@ -143,8 +143,8 @@ metadata:
 ## 与其他技能协作
 
 - 指标口径、定义、权威来源不清：调用 `retrieving-context`。
-- 需要复算 SQL 明细或聚合：调用 `querying-data --source sql`。
-- 需要复算 PowerBI 语义模型数字：调用 `querying-data --source powerbi`。
+- 需要复算 SQL 明细或聚合：调用 `querying-data sql`。
+- 需要复算 PowerBI 语义模型数字：调用 `querying-data powerbi`。
 - 异动归因类结论的域内检查：交回 `diagnosing-anomalies`。
 - 实验/效果评估类结论的域内检查：交回 `evaluating-impact`。
 - 预测/目标类结论的域内检查：交回 `predicting_trends`。

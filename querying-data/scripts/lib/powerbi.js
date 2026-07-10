@@ -4,8 +4,8 @@ import { ClientSecretCredential } from '@azure/identity';
 // PowerBIClient 构造函数照旧从 process.env 读 POWERBI_*，本文件不再读 .env。
 //
 // artifactId 必须由调用方在 payload 里提供（上游 agent 已选定语义模型）。
-// 若上游上下文里没有 artifactId，由 agent 自行读 ~/.super-data-analytics/config.json 的
-// powerbi-semantic-models 表选出合适的 id 后再传入——脚本不做运行时回落。
+// 若上游上下文里没有 artifactId，由 agent 先运行 `node scripts/query.js powerbi list-semantic-models`，从
+// powerbi-semantic-models 候选中选出合适的 id 后再传入——查询脚本不做运行时回落。
 
 const MCP_URL = 'https://api.fabric.microsoft.com/v1/mcp/powerbi';
 const SCOPE = 'https://analysis.windows.net/powerbi/api/.default';
@@ -173,21 +173,21 @@ export class PowerBIClient {
   }
 }
 
-// PowerBI --query 载荷解析：JSON 对象 { artifactId, daxQueries, maxRows? }
+// PowerBI --payload 载荷解析：JSON 对象 { artifactId, daxQueries, maxRows? }
 // artifactId 必填（上游 agent 已选定语义模型）；maxRows 可选，默认 250
 export function parseDaxPayload(text) {
   let request;
   try {
     request = JSON.parse(text.replace(/^﻿/, '').trim());
   } catch (e) {
-    throw new Error(`PowerBI --query 载荷不是合法 JSON: ${e.message}`);
+    throw new Error(`PowerBI --payload 载荷不是合法 JSON: ${e.message}`);
   }
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new Error('PowerBI 载荷必须是 JSON 对象: { "artifactId": "...", "daxQueries": ["EVALUATE ..."] }');
   }
   const { artifactId, daxQueries, maxRows = 250 } = request;
   if (typeof artifactId !== 'string' || !artifactId.trim()) {
-    throw new Error('PowerBI 载荷缺少 artifactId（上游 agent 应在 payload 里提供；若未知，请先读 config.json 的 powerbi-semantic-models 选定）');
+    throw new Error('PowerBI 载荷缺少 artifactId（上游 agent 应在 payload 里提供；若未知，请先运行 list-semantic-models 选定）');
   }
   if (!Array.isArray(daxQueries) || daxQueries.length === 0 || daxQueries.length > 4) {
     throw new Error('daxQueries 必须是 1 到 4 条 DAX 的数组');
@@ -202,14 +202,14 @@ export function parseDaxPayload(text) {
   return { artifactId, maxRows, daxQueries: normalizedQueries };
 }
 
-// PowerBI --save 仅支持 .json（原样写 MCP 结果）；csv/xlsx 直接报错
+// PowerBI --output 仅支持 .json（原样写 MCP 结果）；csv/xlsx 直接报错
 export async function savePowerBiResult(json, savePath) {
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const { dirname } = await import('node:path');
   const dotIdx = savePath.lastIndexOf('.');
   const ext = dotIdx === -1 ? '' : savePath.slice(dotIdx).toLowerCase();
   if (ext !== '.json') {
-    throw new Error(`PowerBI --save 仅支持 .json（原始 MCP 结果）；收到 ${ext || '(无扩展名)'}。csv/xlsx 暂不支持`);
+    throw new Error(`PowerBI --output 仅支持 .json（原始 MCP 结果）；收到 ${ext || '(无扩展名)'}。csv/xlsx 暂不支持`);
   }
   mkdirSync(dirname(savePath), { recursive: true });
   writeFileSync(savePath, typeof json === 'string' ? json : JSON.stringify(json, null, 2), 'utf-8');

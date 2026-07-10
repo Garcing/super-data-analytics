@@ -1,4 +1,4 @@
-"""报告模板 —— 复制此文件、改名、改内容，本地跑通后用 streamlit.js publish 推到 Blob。
+"""报告模板 —— 复制此文件、改名、改内容，本地跑通后用 report.js streamlit publish 推到 Blob。
 
 报告**不再放仓库**：本地写 .py → `streamlit run` 冒烟 → 推到 Vercel Blob →
 线上 app.py 运行时 fetch + exec 渲染。加报告不动 git、不重新部署。
@@ -6,7 +6,7 @@
 约定：
   - 顶层写 st.* 调用即可（线上 exec 时注入 __name__=="__main__"，与本地 run 一致）。
   - 自包含：只能 `import` 已装包 + `from lib import ...`；不要 import 兄弟报告或外部文件。
-  - meta（title/icon/group/summary）在 publish 时用 flag 传，不写在本文件里。
+  - meta（title/summary/tags）在 publish 时用 flag 传，不写在本文件里。
   - 新包要进 requirements.txt（需重新部署框架）。
 
 标准结构（结论驱动）：
@@ -21,9 +21,9 @@
   streamlit run templates/report-template.py
 
 发布（在 building-reports/ 目录下）：
-  node scripts/streamlit/streamlit.js publish \\
-    --id report-xxx --title "标题" --icon 📊 --group 销售 --summary "一句话" \\
-    --source @<工作区>/.super-data-analytics/scratch/report-xxx.py
+  node scripts/report.js streamlit publish \\
+    --id report-xxx --title "标题" --tags "销售,GMV" --summary "一句话" \\
+    --report @<工作区>/.super-data-analytics/scratch/report-xxx.py
 """
 from __future__ import annotations
 
