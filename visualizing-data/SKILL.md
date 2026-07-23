@@ -55,9 +55,10 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
 1. 要**精确查数**（一行行读数字），不要图形？→ `table`
 2. **单变量分布**（看一群数值的分布形状）？→ `histogram`
 3. **两个数值变量**的关系？→ `scatter`
+   - 若按同一类目比较两个量纲不同的数值 → `combo`（左轴柱，右轴线）
 4. **一个类目 + 一个数值**：
    - 比较类目大小 → `bar`（类目多/标签长 → `horizontal_bar`；还想看累计占比 → `pareto`）
-   - 局部-整体构成 → 切片 ≤5 用 `pie`；有分段 series 用 `stacked_bar`
+   - 局部-整体构成 → 切片 ≤5 用 `pie`；有分段 series 用 `bar` + `series_mode`
    - 按组比较分布（看离散程度）→ `boxplot`
 5. **有序序列**（时间 / 阶段，行顺序有意义）：
    - 趋势 → `line`；强调累积量级 → `area`
@@ -75,14 +76,23 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
 | 展示有序量级和填充趋势 | `area` | 负值会改变含义时用面积图 |
 | 少量切片的局部-整体关系 | `pie` | 超过 5 个切片且未合并 |
 | 两个数值指标关系 | `scatter` | 没有顺序却连线 |
+| 同类目双指标、量纲不同 | `combo` | 让双轴刻度暗示不真实关联 |
 | 矩阵或留存 cohort 结构 | `heatmap` | 3D 曲面或过小标注 |
 | 展示分布 | `histogram` | 饼图或只看均值的柱图 |
 | 按组比较分布 | `boxplot` | 用柱图隐藏离散程度 |
-| 分段叠加构成 | `stacked_bar` | series 太多的堆叠图 |
+| 分段叠加构成 | `bar` + `series_mode: "stacked"` | series 太多的堆叠图 |
 | 用驱动项桥接起点和终点 | `waterfall` | 用普通柱图表达正负拆解 |
 | 有序转化阶段 | `funnel` | 用饼图表达漏斗步骤 |
 | 集中度（降序 + 累计占比） | `pareto` | 需要累计占比却用未排序柱图 |
 | 保留精确行 | `table` | 需要查数时强行转成图形 |
+
+### 生产图表约束
+
+- `data_labels: true` 适合少量、需要精确读数的标记；点、柱或段过多时使用 `false`，避免遮挡。
+- 饼图仅用于不超过 5 个切片；更多构成关系使用 `bar` + `series_mode: "percent_stacked"`。
+- `combo` 的左右轴必须在 `subtitle` 中写明各自单位；双轴用于并列阅读，不表示两个指标存在可直接比较的数值关系。
+- 百分比堆积仅表达构成，不表达绝对规模；需要同时看规模时使用绝对值堆积或另配一张总量图。
+- 类目或字段名较长时优先使用 `horizontal_bar`、缩短展示名称或改用 `table`，不要依赖密集旋转标签。
 
 ---
 
@@ -97,7 +107,7 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
   "subtitle": "2026年6月，单位：万元",
   "data": [{ "区域": "华东", "销售额": 120 }],
   "encoding": { "x": "区域", "y": "销售额" },
-  "options": { "sort": "desc", "value_labels": "auto", "width": 1200, "height": 720 }
+  "options": { "sort": "desc", "data_labels": "auto", "width": 1200, "height": 720 }
 }
 ```
 
@@ -118,16 +128,16 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
 
 | 类型 | 必填字段映射 | 说明 |
 |---|---|---|
-| `bar` | `x`, `y` | 纵向柱状图。`y` 必须数值。 |
+| `bar` | `x`, `y` | 纵向柱状图。`y` 必须数值；可选 `series` 支持分组、绝对值堆积和百分比堆积。 |
 | `horizontal_bar` | `x`, `y` | 横向柱状图，适合长类目标签。`y` 必须数值。 |
-| `line` | `x`, `y` | 有序趋势线。保留输入行顺序。 |
+| `line` | `x`, `y` | 有序趋势线。保留输入行顺序；可选 `series`（或 `color`）生成多折线和图例；可选显示点或平滑曲线。 |
 | `area` | `x`, `y` | 填充面积趋势图。`y` 必须数值。 |
 | `pie` | `label`, `value` | 少量切片占比图。`value` 必须数值。 |
 | `scatter` | `x`, `y` | 散点图，两轴都必须数值。 |
 | `heatmap` | `x`, `y`, `value` | 长表矩阵输入。`value` 必须数值。 |
 | `histogram` | `x` | 单数值字段分布图。 |
 | `boxplot` | `x`, `y` | 按组比较分布。`y` 必须数值。 |
-| `stacked_bar` | `x`, `series`, `value` | 分段叠加构成对比。`value` 必须数值。 |
+| `combo` | `x`, `bar`, `line` | 柱状 + 折线组合图。`bar` 为左轴，`line` 为右轴，二者必须数值。 |
 | `waterfall` | `label`, `delta` | 从起始值开始的正负增量桥图。`delta` 必须数值。 |
 | `funnel` | `stage`, `value` | 有序阶段漏斗图。保留输入行顺序。 |
 | `pareto` | `x`, `y` | 降序柱状图 + 累计占比线。`y` 必须数值。 |
@@ -141,7 +151,11 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
 |---|---|---|
 | `width` / `height` | 全部 | 正整数像素。 |
 | `sort` | `bar`, `horizontal_bar` | `asc` / `ascending` / `desc` / `descending`。 |
-| `value_labels` | `bar`, `horizontal_bar` | `auto` / 布尔 / `true`/`false`/`on`/`off`/`yes`/`no`/`none`。`auto` 给 ≤20 个柱子加值标签。 |
+| `data_labels` | 全部图表 | `true` / `false` / `auto`。统一控制数值标注；`auto` 保留各图的合理默认。箱线图标注中位数；`table` 已显示精确值，不重复添加。 |
+| `axis_labels` | 有坐标轴图表 | 对象，覆盖字段名作为展示轴标题，例如 `{ "x": "周", "y": "收入（万元）" }`；组合图可用 `bar` / `line`，帕累托可用 `cumulative`。 |
+| `series_mode` | `bar` | `grouped`（默认）/ `stacked` / `percent_stacked`。后两种需要 `encoding.series`；百分比堆积仅支持非负值。 |
+| `markers` | `line` | 布尔值，是否显示原始数据点，默认 `true`。 |
+| `smooth` | `line` | 布尔值，是否用 PCHIP 插值绘制平滑曲线，默认 `false`。开启时每条线至少需要 3 个不同 x 点。 |
 | `bins` | `histogram` | 正整数，默认 `10`。 |
 | `strip` | `boxplot` | 类布尔值。true 时加确定性散点叠加层。 |
 | `value_format` | `heatmap` | Matplotlib 标注格式，如 `.0%` / `.2g`。 |
@@ -164,7 +178,7 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
     { "区域": "华南", "销售额": 95 }
   ],
   "encoding": { "x": "区域", "y": "销售额" },
-  "options": { "sort": "desc", "value_labels": "auto" }
+  "options": { "sort": "desc", "data_labels": "auto" }
 }
 ```
 
@@ -199,6 +213,40 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
     { "周": "W4", "DAU": 142000 }
   ],
   "encoding": { "x": "周", "y": "DAU" }
+}
+```
+
+**combo** —— 左轴柱状、右轴折线：
+
+```json
+{
+  "type": "combo",
+  "title": "收入与转化率",
+  "subtitle": "2026年6月，收入单位：万元；转化率单位：%",
+  "data": [
+    { "周": "W1", "收入": 120, "转化率": 12 },
+    { "周": "W2", "收入": 138, "转化率": 15 },
+    { "周": "W3", "收入": 132, "转化率": 14 }
+  ],
+  "encoding": { "x": "周", "bar": "收入", "line": "转化率" }
+}
+```
+
+多折线图例使用可选 `series`：
+
+```json
+{
+  "type": "line",
+  "title": "分客群收入趋势",
+  "subtitle": "2026年6月，按周，单位：万元",
+  "data": [
+    { "周": "W1", "客群": "企业版", "收入": 120 },
+    { "周": "W2", "客群": "企业版", "收入": 138 },
+    { "周": "W1", "客群": "自助版", "收入": 80 },
+    { "周": "W2", "客群": "自助版", "收入": 91 }
+  ],
+  "encoding": { "x": "周", "y": "收入", "series": "客群" },
+  "options": { "markers": true, "smooth": true }
 }
 ```
 
@@ -302,11 +350,11 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
 }
 ```
 
-**stacked_bar** —— 分段叠加构成：
+**bar** —— 分段堆积或百分比堆积：
 
 ```json
 {
-  "type": "stacked_bar",
+  "type": "bar",
   "title": "各区域产品构成",
   "subtitle": "2026年6月，单位：万元",
   "data": [
@@ -315,9 +363,12 @@ skills 文件夹**不放任何动态资源**（输入 JSON、生成的图片）�
     { "区域": "华南", "产品": "A", "销售额": 95 },
     { "区域": "华南", "产品": "B", "销售额": 110 }
   ],
-  "encoding": { "x": "区域", "series": "产品", "value": "销售额" }
+  "encoding": { "x": "区域", "y": "销售额", "series": "产品" },
+  "options": { "series_mode": "stacked" }
 }
 ```
+
+将 `series_mode` 改为 `"percent_stacked"`，即可让每个类目归一为 100%。同一 `x` + `series` 的多行数据会求和。
 
 **waterfall** —— 起点到终点的正负驱动拆解：
 

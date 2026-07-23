@@ -1,0 +1,1 @@
+{"type":"funnel","title":"企业试用转化漏斗","subtitle":"2026年6月，单位：账号","data":[{"stage":"访问定价页","accounts":12800},{"stage":"提交试用申请","accounts":4260},{"stage":"完成企业认证","accounts":2830},{"stage":"创建首个项目","accounts":1760},{"stage":"邀请成员","accounts":1180},{"stage":"转为付费","accounts":620}],"encoding":{"stage":"stage","value":"accounts"},"options":{"data_labels":true}}

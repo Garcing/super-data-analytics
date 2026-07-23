@@ -1,0 +1,1 @@
+{"type":"area","title":"累计付费用户数","subtitle":"2026年6月，单位：人","data":[{"day":"6/1","users":1020},{"day":"6/5","users":1180},{"day":"6/10","users":1390},{"day":"6/15","users":1610},{"day":"6/20","users":1880},{"day":"6/25","users":2140},{"day":"6/30","users":2415}],"encoding":{"x":"day","y":"users"},"options":{"data_labels":true}}

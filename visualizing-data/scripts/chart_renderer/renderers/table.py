@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..contract import ChartSpec
-from ..theme import add_header, create_figure
+from ..theme import AXIS, GRID, INK, LABEL, TABLE_ALT, WHITE, add_header, create_figure
 
 
 def _columns(rows: list[dict]) -> list[str]:
@@ -34,12 +34,12 @@ def render(spec: ChartSpec, dpi: int):
     table.scale(1, 1.35)
 
     for (row, _column), cell in table.get_celld().items():
-        cell.set_edgecolor("#D8DEE9")
+        cell.set_edgecolor(AXIS)
         cell.set_linewidth(0.7)
         if row == 0:
-            cell.set_facecolor("#E5E9F0")
-            cell.set_text_props(weight="bold", color="#1F2937")
+            cell.set_facecolor(GRID)
+            cell.set_text_props(weight="bold", color=INK)
         else:
-            cell.set_facecolor("white" if row % 2 else "#F8FAFC")
-            cell.set_text_props(color="#374151")
+            cell.set_facecolor(WHITE if row % 2 else TABLE_ALT)
+            cell.set_text_props(color=LABEL)
     return fig

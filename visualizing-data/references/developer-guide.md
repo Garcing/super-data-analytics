@@ -189,7 +189,7 @@ def render(spec: ChartSpec, dpi: int):
 - 只从 `spec.options` 读取配置项。
 - 输入顺序有意义时必须保留：`line`、`funnel`、`waterfall`、`table`。
 - 不要让 Seaborn 默认聚合破坏精确值。`bar` 和 `line` 已经刻意避免默认聚合。
-- 需要分组汇总的图表才使用 `pivot_table(..., aggfunc="sum")`，例如 `stacked_bar`、`heatmap`。
+- 需要分组汇总的图表才使用 `pivot_table(..., aggfunc="sum")`，例如带 `series` 的 `bar`、`heatmap`。
 - 随机 jitter 默认不可用；`boxplot` 的 strip 叠加已关闭 jitter，保证确定性。
 - 负值标签要放在合理方向，避免压在图形内部。
 

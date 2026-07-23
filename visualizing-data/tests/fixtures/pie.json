@@ -1,0 +1,1 @@
+{"type":"pie","title":"收入渠道构成","subtitle":"2026年6月，单位：万元","data":[{"channel":"直销","revenue":420},{"channel":"合作伙伴","revenue":265},{"channel":"线上自助","revenue":188},{"channel":"增值服务","revenue":96},{"channel":"其他","revenue":31}],"encoding":{"label":"channel","value":"revenue"},"options":{"data_labels":true}}

@@ -4,7 +4,8 @@ import pandas as pd
 import seaborn as sns
 
 from ..contract import ChartSpec
-from ..theme import clean_axes, prepare_axes
+from ..labels import add_point_labels, axis_label, enabled
+from ..theme import BOX_FILL, LABEL, clean_axes, prepare_axes
 
 
 def _option_bool(value: object, default: bool = False) -> bool:
@@ -25,10 +26,13 @@ def render(spec: ChartSpec, dpi: int):
     frame = pd.DataFrame(spec.data)
 
     fig, ax = prepare_axes(spec, dpi)
-    sns.boxplot(data=frame, x=x, y=y, ax=ax, color="#A0CBE8", width=0.55, fliersize=3)
+    sns.boxplot(data=frame, x=x, y=y, ax=ax, color=BOX_FILL, width=0.55, fliersize=3)
     if _option_bool(spec.options.get("strip"), False):
-        sns.stripplot(data=frame, x=x, y=y, ax=ax, color="#374151", size=4, jitter=False, alpha=0.72)
-    ax.set_xlabel(x)
-    ax.set_ylabel(y)
+        sns.stripplot(data=frame, x=x, y=y, ax=ax, color=LABEL, size=4, jitter=False, alpha=0.72)
+    if enabled(spec.options, frame[x].nunique(), auto=False):
+        medians = frame.groupby(x, sort=False)[y].median().astype(float).tolist()
+        add_point_labels(ax, range(len(medians)), medians)
+    ax.set_xlabel(axis_label(spec.options, "x", x))
+    ax.set_ylabel(axis_label(spec.options, "y", y))
     clean_axes(ax)
     return fig

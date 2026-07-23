@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import pandas as pd
-from matplotlib.patches import Patch
 
 from ..contract import ChartSpec
-from ..theme import clean_axes, prepare_axes
+from ..labels import axis_label, enabled
+from ..theme import LABEL, NEGATIVE, POSITIVE, PRIMARY, WHITE, ZERO, clean_axes, prepare_axes
 
 
-POSITIVE_COLOR = "#54A24B"
-NEGATIVE_COLOR = "#E45756"
-TOTAL_COLOR = "#4C78A8"
-CONNECTOR_COLOR = "#9CA3AF"
+POSITIVE_COLOR = POSITIVE
+NEGATIVE_COLOR = NEGATIVE
+TOTAL_COLOR = PRIMARY
+CONNECTOR_COLOR = ZERO
 
 
 def _option_float(options: dict, key: str, default: float) -> float:
@@ -32,7 +32,7 @@ def _label_bar(ax, index: int, value: float, top: float, minimum: float, maximum
     else:
         y_pos = top - offset
         va = "top"
-    ax.text(index, y_pos, f"{value:g}", ha="center", va=va, fontsize=9, color="#374151")
+    ax.text(index, y_pos, f"{value:g}", ha="center", va=va, fontsize=9, color=LABEL)
 
 
 def render(spec: ChartSpec, dpi: int):
@@ -69,7 +69,7 @@ def render(spec: ChartSpec, dpi: int):
 
     positions = list(range(len(labels)))
     fig, ax = prepare_axes(spec, dpi)
-    ax.bar(positions, heights, bottom=bottoms, color=colors, edgecolor="white", linewidth=0.9)
+    ax.bar(positions, heights, bottom=bottoms, color=colors, edgecolor=WHITE, linewidth=0.9)
 
     for index, y_value in enumerate(connectors):
         ax.plot([index + 0.38, index + 0.62], [y_value, y_value], color=CONNECTOR_COLOR, linewidth=1.0)
@@ -78,22 +78,14 @@ def render(spec: ChartSpec, dpi: int):
     minimum = min(values_for_scale)
     maximum = max(values_for_scale)
     label_values = [start_value, *deltas, running]
-    for index, value in enumerate(label_values):
-        _label_bar(ax, index, value, tops[index], minimum, maximum)
+    if enabled(spec.options, len(label_values), auto=True):
+        for index, value in enumerate(label_values):
+            _label_bar(ax, index, value, tops[index], minimum, maximum)
 
-    ax.axhline(0, color="#9CA3AF", linewidth=0.9)
+    ax.axhline(0, color=ZERO, linewidth=0.9)
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
-    ax.set_xlabel(label)
-    ax.set_ylabel(delta)
-    ax.legend(
-        handles=[
-            Patch(facecolor=TOTAL_COLOR, label="Start / End"),
-            Patch(facecolor=POSITIVE_COLOR, label="Positive"),
-            Patch(facecolor=NEGATIVE_COLOR, label="Negative"),
-        ],
-        frameon=False,
-        loc="best",
-    )
+    ax.set_xlabel(axis_label(spec.options, "x", label))
+    ax.set_ylabel(axis_label(spec.options, "y", delta))
     clean_axes(ax)
     return fig

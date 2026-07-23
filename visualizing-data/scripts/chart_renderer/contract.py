@@ -12,6 +12,7 @@ SUPPORTED_TYPES = {
     "area",
     "bar",
     "boxplot",
+    "combo",
     "funnel",
     "heatmap",
     "histogram",
@@ -20,7 +21,6 @@ SUPPORTED_TYPES = {
     "pareto",
     "pie",
     "scatter",
-    "stacked_bar",
     "table",
     "waterfall",
 }
@@ -72,6 +72,46 @@ def _validate_dimension_option(options: dict[str, Any], key: str) -> None:
         raise ContractError(f"options.{key} must be a positive integer")
 
 
+def _validate_boolean_option(options: dict[str, Any], key: str) -> None:
+    if key in options and not isinstance(options[key], bool):
+        raise ContractError(f"options.{key} must be a boolean")
+
+
+def _validate_data_labels_option(options: dict[str, Any]) -> None:
+    if "value_labels" in options:
+        raise ContractError("options.value_labels is not supported; use options.data_labels")
+    if "data_labels" not in options:
+        return
+    value = options["data_labels"]
+    if value is not True and value is not False and value != "auto":
+        raise ContractError("options.data_labels must be true, false, or 'auto'")
+
+
+def _validate_axis_labels_option(options: dict[str, Any]) -> None:
+    if "axis_labels" not in options:
+        return
+    labels = options["axis_labels"]
+    if not isinstance(labels, dict) or any(not isinstance(value, str) or not value.strip() for value in labels.values()):
+        raise ContractError("options.axis_labels must be an object with non-empty string values")
+
+
+def _validate_bar_options(rows: list[dict[str, Any]], encoding: dict[str, Any], options: dict[str, Any]) -> None:
+    mode = options.get("series_mode", "grouped")
+    if not isinstance(mode, str) or mode not in {"grouped", "stacked", "percent_stacked"}:
+        raise ContractError("options.series_mode must be one of ['grouped', 'stacked', 'percent_stacked']")
+    if mode == "grouped":
+        return
+
+    series = _field_name(encoding, "series", required=False)
+    if series is None:
+        raise ContractError(f"options.series_mode '{mode}' requires encoding.series")
+    if mode == "percent_stacked":
+        y = _field_name(encoding, "y")
+        assert y is not None
+        if any(row[y] < 0 for row in rows):
+            raise ContractError("options.series_mode 'percent_stacked' requires non-negative encoding.y values")
+
+
 def _field_name(encoding: dict[str, Any], role: str, *, required: bool = True) -> str | None:
     value = encoding.get(role)
     if value is None and not required:
@@ -110,11 +150,17 @@ def validate(spec: dict[str, Any]) -> ChartSpec:
         raise ContractError("options must be an object when present")
     _validate_dimension_option(options, "width")
     _validate_dimension_option(options, "height")
+    _validate_data_labels_option(options)
+    _validate_axis_labels_option(options)
+    if chart_type.strip() == "line":
+        _validate_boolean_option(options, "markers")
+        _validate_boolean_option(options, "smooth")
 
     required_roles = {
         "area": ["x", "y"],
         "bar": ["x", "y"],
         "boxplot": ["x", "y"],
+        "combo": ["x", "bar", "line"],
         "funnel": ["stage", "value"],
         "heatmap": ["x", "y", "value"],
         "histogram": ["x"],
@@ -123,7 +169,6 @@ def validate(spec: dict[str, Any]) -> ChartSpec:
         "pareto": ["x", "y"],
         "pie": ["label", "value"],
         "scatter": ["x", "y"],
-        "stacked_bar": ["x", "series", "value"],
         "table": [],
         "waterfall": ["label", "delta"],
     }[chart_type.strip()]
@@ -138,6 +183,7 @@ def validate(spec: dict[str, Any]) -> ChartSpec:
         "area": ["y"],
         "bar": ["y"],
         "boxplot": ["y"],
+        "combo": ["bar", "line"],
         "funnel": ["value"],
         "heatmap": ["value"],
         "histogram": ["x"],
@@ -146,12 +192,14 @@ def validate(spec: dict[str, Any]) -> ChartSpec:
         "pareto": ["y"],
         "pie": ["value"],
         "scatter": ["x", "y"],
-        "stacked_bar": ["value"],
         "waterfall": ["delta"],
     }.get(chart_type.strip(), []):
         field = _field_name(encoding, role)
         assert field is not None
         _ensure_numeric(rows, field, role)
+
+    if chart_type.strip() == "bar":
+        _validate_bar_options(rows, encoding, options)
 
     return ChartSpec(
         chart_type=chart_type.strip(),

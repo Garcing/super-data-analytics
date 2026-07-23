@@ -3,7 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from ..contract import ChartSpec
-from ..theme import PALETTE, add_header, create_figure
+from ..labels import enabled
+from ..theme import LABEL, PALETTE, WHITE, add_header, create_figure
 
 
 def render(spec: ChartSpec, dpi: int):
@@ -16,12 +17,12 @@ def render(spec: ChartSpec, dpi: int):
     ax.pie(
         frame[value].astype(float),
         labels=frame[label].astype(str),
-        autopct="%1.1f%%",
+        autopct="%1.1f%%" if enabled(spec.options, len(frame), auto=True) else None,
         startangle=90,
         counterclock=False,
         colors=PALETTE,
-        textprops={"fontsize": 9, "color": "#374151"},
-        wedgeprops={"linewidth": 1, "edgecolor": "white"},
+        textprops={"fontsize": 9, "color": LABEL},
+        wedgeprops={"linewidth": 1, "edgecolor": WHITE},
     )
     ax.axis("equal")
     return fig

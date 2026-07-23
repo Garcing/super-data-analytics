@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +65,36 @@ def assert_readable_image(path: Path) -> None:
     colors = image.getcolors(maxcolors=image.width * image.height + 1)
     assert colors is not None
     assert len(colors) > 1
+
+
+def test_fixtures_cover_every_supported_chart_type() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from chart_renderer.contract import SUPPORTED_TYPES
+
+        fixture_types = {load_fixture(path.name)["type"] for path in FIXTURES.glob("*.json")}
+        assert fixture_types == SUPPORTED_TYPES
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_all_fixtures_render_png(tmp_path: Path) -> None:
+    for fixture in FIXTURES.glob("*.json"):
+        result = run_fixture(fixture.name, tmp_path, output_name=f"{fixture.stem}.png")
+        payload = parse_stdout(result)
+        assert result.returncode == 0, f"{fixture.name}: {result.stderr}"
+        assert_readable_image(Path(payload["path"]))
+
+
+def test_renderer_colors_are_defined_only_in_theme() -> None:
+    renderer_root = SCRIPTS_DIR / "chart_renderer"
+    color_literal = re.compile(r"[\"']#[0-9A-Fa-f]{6}[\"']")
+    offenders = [
+        path.relative_to(renderer_root).as_posix()
+        for path in renderer_root.rglob("*.py")
+        if path.name != "theme.py" and color_literal.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []
 
 
 # --- 三态输入 -----------------------------------------------------------------
@@ -238,10 +269,10 @@ def test_cli_renders_boxplot_png(tmp_path: Path) -> None:
     assert_readable_image(output)
 
 
-def test_cli_renders_stacked_bar_png(tmp_path: Path) -> None:
+def test_cli_renders_stacked_series_bar_png(tmp_path: Path) -> None:
     result = run_spec(
         {
-            "type": "stacked_bar",
+            "type": "bar",
             "title": "Sales by region",
             "subtitle": "Product contribution",
             "data": [
@@ -250,7 +281,8 @@ def test_cli_renders_stacked_bar_png(tmp_path: Path) -> None:
                 {"region": "South", "product": "A", "sales": 10},
                 {"region": "South", "product": "B", "sales": 11},
             ],
-            "encoding": {"x": "region", "series": "product", "value": "sales"},
+            "encoding": {"x": "region", "y": "sales", "series": "product"},
+            "options": {"series_mode": "stacked"},
         },
         tmp_path,
     )
@@ -303,7 +335,7 @@ def test_bar_renderer_preserves_duplicate_category_rows() -> None:
                 {"category": "B", "value": 40},
             ],
             encoding={"x": "category", "y": "value"},
-            options={"value_labels": True},
+            options={"data_labels": True},
         )
 
         fig = bar.render(spec, dpi=144)
@@ -336,7 +368,7 @@ def test_horizontal_bar_renderer_preserves_duplicate_category_rows() -> None:
                 {"category": "B", "value": 40},
             ],
             encoding={"x": "category", "y": "value"},
-            options={"value_labels": True},
+            options={"data_labels": True},
         )
 
         fig = bar.render(spec, dpi=144)
@@ -349,6 +381,148 @@ def test_horizontal_bar_renderer_preserves_duplicate_category_rows() -> None:
             plt.close(fig)
     finally:
         sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_bar_renderer_groups_series_and_draws_legend() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import bar
+
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Sales by region",
+            subtitle="Grouped series should share each category",
+            data=[
+                {"region": "East", "product": "A", "sales": 10},
+                {"region": "East", "product": "B", "sales": 20},
+                {"region": "West", "product": "A", "sales": 15},
+                {"region": "West", "product": "B", "sales": 5},
+            ],
+            encoding={"x": "region", "y": "sales", "series": "product"},
+            options={},
+        )
+
+        fig = bar.render(spec, dpi=144)
+        ax = fig.axes[0]
+        try:
+            assert [patch.get_height() for patch in ax.patches] == pytest.approx([10, 15, 20, 5])
+            legend = ax.get_legend()
+            assert legend is not None
+            assert [text.get_text() for text in legend.get_texts()] == ["A", "B"]
+            assert legend.get_bbox_to_anchor().transformed(ax.transAxes.inverted()).x0 > 1
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_bar_renderer_stacks_series_values() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import bar
+
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Sales by region",
+            subtitle="Stacked series should accumulate within each category",
+            data=[
+                {"region": "East", "product": "A", "sales": 10},
+                {"region": "East", "product": "B", "sales": 20},
+                {"region": "West", "product": "A", "sales": 15},
+                {"region": "West", "product": "B", "sales": 5},
+            ],
+            encoding={"x": "region", "y": "sales", "series": "product"},
+            options={"series_mode": "stacked"},
+        )
+
+        fig = bar.render(spec, dpi=144)
+        ax = fig.axes[0]
+        try:
+            assert [patch.get_height() for patch in ax.patches] == pytest.approx([10, 15, 20, 5])
+            assert [patch.get_y() for patch in ax.patches] == pytest.approx([0, 0, 10, 15])
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_bar_renderer_normalizes_series_to_percent_stacks() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import bar
+
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Sales mix by region",
+            subtitle="Percent stacks should total one hundred per category",
+            data=[
+                {"region": "East", "product": "A", "sales": 10},
+                {"region": "East", "product": "B", "sales": 20},
+                {"region": "West", "product": "A", "sales": 15},
+                {"region": "West", "product": "B", "sales": 5},
+            ],
+            encoding={"x": "region", "y": "sales", "series": "product"},
+            options={"series_mode": "percent_stacked"},
+        )
+
+        fig = bar.render(spec, dpi=144)
+        ax = fig.axes[0]
+        try:
+            assert [patch.get_height() for patch in ax.patches] == pytest.approx([100 / 3, 75, 200 / 3, 25])
+            assert [patch.get_y() for patch in ax.patches] == pytest.approx([0, 0, 100 / 3, 75])
+            assert ax.get_ylabel() == "sales (%)"
+            assert [text.get_text() for text in ax.texts] == ["33.3%", "75.0%", "66.7%", "25.0%"]
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_stacked_bar_type_is_not_supported(tmp_path: Path) -> None:
+    result = run_spec(
+        {
+            "type": "stacked_bar",
+            "title": "Legacy stacked bar",
+            "subtitle": "Only the bar entry point is supported",
+            "data": [{"region": "East", "product": "A", "sales": 10}],
+            "encoding": {"x": "region", "series": "product", "value": "sales"},
+        },
+        tmp_path,
+    )
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+    assert "stacked_bar" not in payload["error"]
+
+
+def test_percent_stacked_bar_rejects_negative_values(tmp_path: Path) -> None:
+    result = run_spec(
+        {
+            "type": "bar",
+            "title": "Sales mix",
+            "subtitle": "Percent stacks require non-negative values",
+            "data": [
+                {"region": "East", "product": "A", "sales": 10},
+                {"region": "East", "product": "B", "sales": -5},
+            ],
+            "encoding": {"x": "region", "y": "sales", "series": "product"},
+            "options": {"series_mode": "percent_stacked"},
+        },
+        tmp_path,
+    )
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+    assert "percent_stacked" in payload["error"]
 
 
 def test_line_renderer_preserves_duplicate_x_rows_in_input_order() -> None:
@@ -383,6 +557,102 @@ def test_line_renderer_preserves_duplicate_x_rows_in_input_order() -> None:
             plt.close(fig)
     finally:
         sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_line_renderer_groups_by_series_and_draws_legend() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import line
+
+        spec = ChartSpec(
+            chart_type="line",
+            title="Revenue by segment",
+            subtitle="Series should render as separate lines with a legend",
+            data=[
+                {"month": "Jan", "segment": "Enterprise", "revenue": 10},
+                {"month": "Feb", "segment": "Enterprise", "revenue": 14},
+                {"month": "Jan", "segment": "SMB", "revenue": 6},
+                {"month": "Feb", "segment": "SMB", "revenue": 9},
+            ],
+            encoding={"x": "month", "y": "revenue", "series": "segment"},
+            options={},
+        )
+
+        fig = line.render(spec, dpi=144)
+        ax = fig.axes[0]
+        try:
+            assert len(ax.lines) == 2
+            assert [line_object.get_label() for line_object in ax.lines] == ["Enterprise", "SMB"]
+            assert [list(line_object.get_ydata()) for line_object in ax.lines] == [
+                pytest.approx([10, 14]),
+                pytest.approx([6, 9]),
+            ]
+            legend = ax.get_legend()
+            assert legend is not None
+            assert [text.get_text() for text in legend.get_texts()] == ["Enterprise", "SMB"]
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_line_renderer_smooths_each_series_and_can_hide_markers() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import line
+
+        spec = ChartSpec(
+            chart_type="line",
+            title="Revenue by segment",
+            subtitle="Smooth lines should retain the original observations separately",
+            data=[
+                {"month": "Jan", "segment": "Enterprise", "revenue": 10},
+                {"month": "Feb", "segment": "Enterprise", "revenue": 14},
+                {"month": "Mar", "segment": "Enterprise", "revenue": 12},
+                {"month": "Jan", "segment": "SMB", "revenue": 6},
+                {"month": "Feb", "segment": "SMB", "revenue": 9},
+                {"month": "Mar", "segment": "SMB", "revenue": 8},
+            ],
+            encoding={"x": "month", "y": "revenue", "series": "segment"},
+            options={"markers": False, "smooth": True},
+        )
+
+        fig = line.render(spec, dpi=144)
+        ax = fig.axes[0]
+        try:
+            assert len(ax.lines) == 2
+            assert [line_object.get_label() for line_object in ax.lines] == ["Enterprise", "SMB"]
+            assert all(len(line_object.get_xdata()) > 3 for line_object in ax.lines)
+            assert all(line_object.get_marker() == "None" for line_object in ax.lines)
+            assert not ax.collections
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_line_options_reject_non_boolean_marker_flag(tmp_path: Path) -> None:
+    result = run_spec(
+        {
+            "type": "line",
+            "title": "DAU trend",
+            "subtitle": "Boolean line options only",
+            "data": [{"week": "W1", "dau": 12}, {"week": "W2", "dau": 18}],
+            "encoding": {"x": "week", "y": "dau"},
+            "options": {"markers": "yes"},
+        },
+        tmp_path,
+    )
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+    assert "options.markers" in payload["error"]
 
 
 def test_boxplot_strip_overlay_disables_jitter(monkeypatch) -> None:
@@ -514,6 +784,139 @@ def test_cli_renders_pareto_png(tmp_path: Path) -> None:
     assert_readable_image(output)
 
 
+def test_combo_renderer_uses_left_axis_for_bars_and_right_axis_for_line() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import combo
+
+        spec = ChartSpec(
+            chart_type="combo",
+            title="Revenue and conversion",
+            subtitle="Bars use the left axis and the line uses the right axis",
+            data=[
+                {"month": "Jan", "revenue": 120, "conversion": 0.12},
+                {"month": "Feb", "revenue": 150, "conversion": 0.16},
+                {"month": "Mar", "revenue": 135, "conversion": 0.14},
+            ],
+            encoding={"x": "month", "bar": "revenue", "line": "conversion"},
+            options={"data_labels": True},
+        )
+
+        fig = combo.render(spec, dpi=144)
+        left, right = fig.axes
+        try:
+            assert [patch.get_height() for patch in left.patches] == pytest.approx([120, 150, 135])
+            assert left.get_ylabel() == "revenue"
+            assert list(right.lines[0].get_ydata()) == pytest.approx([0.12, 0.16, 0.14])
+            assert right.get_ylabel() == "conversion"
+            assert left.get_legend() is None
+            assert len(fig.legends) == 1
+            legend = fig.legends[0]
+            assert legend is not None
+            assert [text.get_text() for text in legend.get_texts()] == ["revenue", "conversion"]
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            legend_box = legend.get_window_extent(renderer)
+            right_axis_box = right.get_tightbbox(renderer)
+            assert not legend_box.overlaps(right_axis_box)
+            assert {text.get_text() for text in left.texts} == {"120", "150", "135"}
+            assert {text.get_text() for text in right.texts} == {"0.12", "0.16", "0.14"}
+            assert all(text.get_position()[0] < index for index, text in enumerate(left.texts))
+            assert all(text.xy[0] > index for index, text in enumerate(right.texts))
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_header_layout_keeps_multiline_title_above_subtitle() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.theme import prepare_axes
+
+        spec = ChartSpec(
+            chart_type="bar",
+            title="Revenue performance across strategic accounts\nand priority market segments",
+            subtitle="Monthly view with the latest booked revenue and forecast context",
+            data=[{"month": "Jan", "revenue": 120}],
+            encoding={"x": "month", "y": "revenue"},
+            options={},
+        )
+        fig, ax = prepare_axes(spec, dpi=144)
+        try:
+            title, subtitle = fig.texts[:2]
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            title_box = title.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+            subtitle_box = subtitle.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+            assert title_box.y0 > subtitle_box.y1
+            assert ax.get_position().y1 < subtitle_box.y0
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_combo_renderer_uses_axis_label_overrides() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import combo
+
+        spec = ChartSpec(
+            chart_type="combo",
+            title="Revenue and conversion",
+            subtitle="Display labels should not expose field names",
+            data=[{"week": "W1", "revenue": 120, "conversion": 12}, {"week": "W2", "revenue": 138, "conversion": 15}],
+            encoding={"x": "week", "bar": "revenue", "line": "conversion"},
+            options={"axis_labels": {"x": "周", "bar": "收入（万元）", "line": "转化率（%）"}},
+        )
+        fig = combo.render(spec, dpi=144)
+        left, right = fig.axes
+        try:
+            assert left.get_xlabel() == "周"
+            assert left.get_ylabel() == "收入（万元）"
+            assert right.get_ylabel() == "转化率（%）"
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
+def test_line_renderer_adds_raw_point_labels_when_enabled() -> None:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from matplotlib import pyplot as plt
+
+        from chart_renderer.contract import ChartSpec
+        from chart_renderer.renderers import line
+
+        spec = ChartSpec(
+            chart_type="line",
+            title="DAU trend",
+            subtitle="Labels should use raw values",
+            data=[{"week": "W1", "dau": 12}, {"week": "W2", "dau": 18}],
+            encoding={"x": "week", "y": "dau"},
+            options={"data_labels": True},
+        )
+        fig = line.render(spec, dpi=144)
+        ax = fig.axes[0]
+        try:
+            assert [text.get_text() for text in ax.texts] == ["12", "18"]
+        finally:
+            plt.close(fig)
+    finally:
+        sys.path.remove(str(SCRIPTS_DIR))
+
+
 def test_cli_renders_waterfall_png(tmp_path: Path) -> None:
     result = run_fixture("waterfall.json", tmp_path)
     payload = parse_stdout(result)
@@ -631,6 +1034,24 @@ def test_invalid_dpi_returns_json_error(tmp_path: Path) -> None:
     assert result.stderr == ""
     assert payload["ok"] is False
     assert "dpi" in payload["error"]
+
+
+def test_value_labels_option_is_rejected(tmp_path: Path) -> None:
+    result = run_spec(
+        {
+            "type": "bar",
+            "title": "Legacy option",
+            "subtitle": "Only data_labels is supported",
+            "data": [{"category": "A", "value": 10}],
+            "encoding": {"x": "category", "y": "value"},
+            "options": {"value_labels": True},
+        },
+        tmp_path,
+    )
+    payload = parse_stdout(result)
+    assert result.returncode == 2
+    assert payload["ok"] is False
+    assert "data_labels" in payload["error"]
 
 
 def test_nonnumeric_width_returns_json_validation_error(tmp_path: Path) -> None:

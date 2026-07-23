@@ -17,6 +17,7 @@ RENDERER_MODULES = {
     "area": "area",
     "bar": "bar",
     "boxplot": "boxplot",
+    "combo": "combo",
     "funnel": "funnel",
     "heatmap": "heatmap",
     "histogram": "histogram",
@@ -25,7 +26,6 @@ RENDERER_MODULES = {
     "pareto": "pareto",
     "pie": "pie",
     "scatter": "scatter",
-    "stacked_bar": "stacked_bar",
     "table": "table",
     "waterfall": "waterfall",
 }

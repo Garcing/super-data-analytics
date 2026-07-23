@@ -4,6 +4,7 @@ import pandas as pd
 import seaborn as sns
 
 from ..contract import ChartSpec
+from ..labels import axis_label, enabled
 from ..theme import prepare_axes
 
 
@@ -18,7 +19,7 @@ def render(spec: ChartSpec, dpi: int):
     sns.heatmap(
         matrix,
         ax=ax,
-        annot=True,
+        annot=enabled(spec.options, matrix.size, auto=True),
         fmt=spec.options.get("value_format", ".2g"),
         cmap="Blues",
         linewidths=0.8,
@@ -26,8 +27,8 @@ def render(spec: ChartSpec, dpi: int):
         cbar_kws={"shrink": 0.82, "label": value},
         annot_kws={"fontsize": 9},
     )
-    ax.set_xlabel(x)
-    ax.set_ylabel(y)
+    ax.set_xlabel(axis_label(spec.options, "x", x))
+    ax.set_ylabel(axis_label(spec.options, "y", y))
     ax.tick_params(axis="x", labelrotation=0)
     ax.tick_params(axis="y", labelrotation=0)
     return fig
