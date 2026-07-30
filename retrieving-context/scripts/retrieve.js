@@ -6,6 +6,7 @@
  *   node scripts/retrieve.js schema
  *   node scripts/retrieve.js search --question "<问题>" [--top-k 5] [--targets 表,指标]
  *   node scripts/retrieve.js cypher --statement "<CYPHER>"
+ *   node scripts/retrieve.js doc --doc "<飞书 Docx URL 或 token>"
  *
  * --question / --statement 各支持三态输入：
  *   --question "<文本>"    inline
@@ -22,9 +23,9 @@
  *   4. Output JSON to stdout (logs go to stderr)
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import neo4j from "neo4j-driver";
 
@@ -177,6 +178,97 @@ async function readFromStdin(kind) {
 }
 
 // ---------------------------------------------------------------------------
+// Lark Docx fetch (doc)
+// ---------------------------------------------------------------------------
+
+function findLarkCliEntry() {
+  const candidates = [];
+  const pathDirs = (process.env.PATH || "").split(delimiter).filter(Boolean);
+
+  for (const dir of pathDirs) {
+    candidates.push(
+      join(dir, "node_modules", "@larksuite", "cli", "scripts", "run.js")
+    );
+  }
+
+  if (process.env.APPDATA) {
+    candidates.push(
+      join(
+        process.env.APPDATA,
+        "npm",
+        "node_modules",
+        "@larksuite",
+        "cli",
+        "scripts",
+        "run.js"
+      )
+    );
+  }
+
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
+function fetchLarkDoc(doc) {
+  const args = [
+    "docs",
+    "+fetch",
+    "--doc",
+    doc,
+    "--doc-format",
+    "markdown",
+    "--as",
+    "user",
+  ];
+
+  const env = {
+    ...process.env,
+    LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1",
+    LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1",
+  };
+
+  let stdout;
+  try {
+    const cliEntry = findLarkCliEntry();
+    if (cliEntry) {
+      stdout = execFileSync(process.execPath, [cliEntry, ...args], {
+        encoding: "utf-8",
+        env,
+        timeout: 60000,
+      });
+    } else {
+      stdout = execFileSync("lark-cli", args, {
+        encoding: "utf-8",
+        env,
+        timeout: 60000,
+      });
+    }
+  } catch (err) {
+    const detail = String(err.stderr || err.stdout || err.message).trim();
+    throw new Error(`读取飞书文档失败${detail ? `: ${detail}` : ""}`);
+  }
+
+  let envelope;
+  try {
+    envelope = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error("lark-cli 返回了无法解析的 JSON");
+  }
+
+  if (envelope.ok !== true) {
+    const message =
+      envelope.error?.message || envelope.error?.hint || "未知错误";
+    throw new Error(`读取飞书文档失败: ${message}`);
+  }
+
+  const document = envelope.data?.document;
+  if (!document) {
+    throw new Error("lark-cli 返回成功，但结果中缺少 document");
+  }
+
+  return document;
+}
+
+// ---------------------------------------------------------------------------
 // Encode question via Python subprocess
 // ---------------------------------------------------------------------------
 
@@ -275,6 +367,38 @@ async function searchVectorIndex(session, indexName, label, embedding, topK) {
 // Graph context expansion
 // ---------------------------------------------------------------------------
 
+async function fetchTableRelationshipChain(session, relationshipId) {
+  const cypher = `
+    MATCH (current:\`表关系\` {\`表关系ID\`: $relationshipId})
+    MATCH path = (current)-[:\`基于\`*0..10]->(step:\`表关系\`)
+    OPTIONAL MATCH (step)-[tableRel]->(table:\`表\`)
+    WHERE type(tableRel) IN ['起始于', '加入']
+    RETURN length(path) AS depth,
+           properties(step) AS relationship,
+           collect(DISTINCT {
+             role: type(tableRel),
+             properties: properties(table)
+           }) AS tables
+    ORDER BY depth DESC
+  `;
+
+  const result = await session.run(cypher, { relationshipId });
+  return result.records.map((record) => {
+    const depth = record.get("depth");
+    const tables = (record.get("tables") || [])
+      .filter((item) => item?.role && item?.properties)
+      .map((item) => ({
+        role: item.role,
+        properties: cleanProperties(item.properties),
+      }));
+    return {
+      depth: neo4j.isInt(depth) ? depth.toNumber() : depth,
+      relationship: cleanProperties(record.get("relationship")),
+      tables,
+    };
+  });
+}
+
 async function fetchGraphContext(session, label, nodeId, relationships) {
   // 扩图阶段：边在 sync 阶段已按 match / via 配置建好写入库里，
   // 这里只沿已有边走，用节点 elementId 定位起点，不再读 match / source_field。
@@ -322,12 +446,37 @@ async function fetchGraphContext(session, label, nodeId, relationships) {
         if (!context[otherLabel]) context[otherLabel] = [];
 
         for (const record of result.records) {
-          context[otherLabel].push(cleanProperties(record.get("props")));
+          const props = cleanProperties(record.get("props"));
+          if (otherLabel === "表关系" && props["表关系ID"]) {
+            props["关系链"] = await fetchTableRelationshipChain(
+              session,
+              props["表关系ID"]
+            );
+          }
+          context[otherLabel].push(props);
         }
       }
     } catch (err) {
       console.error(
         `[retrieve] Graph expansion failed for ${label}-${rel.type}-${otherLabel}: ${err.message}`
+      );
+    }
+  }
+
+  if (label === "表关系") {
+    const current = await session.run(
+      `
+        MATCH (n:\`表关系\`)
+        WHERE elementId(n) = $nodeId
+        RETURN n.\`表关系ID\` AS relationshipId
+      `,
+      { nodeId }
+    );
+    const relationshipId = current.records[0]?.get("relationshipId");
+    if (relationshipId) {
+      context["关系链"] = await fetchTableRelationshipChain(
+        session,
+        relationshipId
       );
     }
   }
@@ -451,6 +600,10 @@ function parseArgs(argv) {
     return { command: "schema" };
   }
 
+  if (command === "doc") {
+    return parseDocArgs(rest);
+  }
+
   if (command === "search") {
     return parseSearchArgs(rest);
   }
@@ -530,11 +683,45 @@ function parseCypherArgs(args) {
   return { command: "cypher", statement };
 }
 
+function parseDocArgs(args) {
+  let doc = null;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--doc") {
+      if (doc !== null) {
+        console.error("[retrieve] 重复参数: --doc");
+        process.exit(1);
+      }
+      const value = args[++i];
+      if (!value || value.startsWith("-")) {
+        console.error("[retrieve] --doc 缺少飞书 Docx URL 或 token");
+        process.exit(1);
+      }
+      doc = value.trim();
+    } else {
+      console.error(`[retrieve] doc 未知参数: ${arg}`);
+      printUsage();
+      process.exit(1);
+    }
+  }
+
+  if (!doc) {
+    console.error(
+      '[retrieve] doc 需要 --doc "<飞书 Docx URL 或 token>"'
+    );
+    process.exit(1);
+  }
+
+  return { command: "doc", doc };
+}
+
 function printUsage() {
   console.error("Usage:");
   console.error("  node scripts/retrieve.js schema");
   console.error('  node scripts/retrieve.js search --question "<问题>" [--top-k 5] [--targets 表,指标]');
   console.error('  node scripts/retrieve.js cypher --statement "<CYPHER>"');
+  console.error('  node scripts/retrieve.js doc --doc "<飞书 Docx URL 或 token>"');
   console.error("  # --question / --statement 支持 inline / @file / -(stdin) 三态；不传正文 flag 时走 stdin");
 }
 
@@ -544,6 +731,12 @@ function printUsage() {
 
 async function main() {
   const parsed = parseArgs(process.argv);
+
+  if (parsed.command === "doc") {
+    const document = fetchLarkDoc(parsed.doc);
+    console.log(JSON.stringify(document, null, 2));
+    return;
+  }
 
   const config = loadConfig();
   const gc = config["graph-config"] || {};

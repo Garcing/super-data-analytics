@@ -56,6 +56,13 @@ node scripts/retrieve.js search --question "用户问题" [--top-k 5] [--targets
 node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) AS 数量"
 ```
 
+**飞书文档读取模式**（已知 Docx URL 或 token，读取最新完整正文）：
+```bash
+node scripts/retrieve.js doc --doc "https://my.feishu.cn/docx/xxx"
+```
+
+该命令使用飞书用户身份读取文档，以 Markdown 返回 `document_id`、`revision_id` 和 `content`。它不连接 Neo4j，也不解析或改写正文。
+
 `--question` / `--statement` 都支持三态输入：
 - `--statement "<CYPHER>"` inline
 - `--statement @<file>` 从文件读（避免中文反引号标签的 shell 转义地狱）
@@ -64,8 +71,9 @@ node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) A
 参数：
 - `search --question`：语义检索正文，支持 inline / `@file` / stdin 三态；不传 `--question` 时走 stdin
 - `cypher --statement`：Cypher 查询正文，支持 inline / `@file` / stdin 三态；不传 `--statement` 时走 stdin
+- `doc --doc "<URL或token>"`：读取飞书 Docx 最新完整正文；`--doc` 可接 URL 或 token
 - `--top-k N`：每个向量索引返回的最大结果数，默认 5（仅语义检索）
-- `--targets 逗号分隔的实体名`：限制搜索范围。可用值：业务线,业务板块,业务小点,指标,维度,表（仅语义检索）
+- `--targets 逗号分隔的实体名`：限制搜索范围。可用值：业务线,业务板块,业务小点,数据看板,指标,维度,表,表关系（仅语义检索）
 - `schema`：打印实体 + 关系后退出，不连库
 
 ## 核心流程
@@ -79,7 +87,7 @@ node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) A
 
 执行语义检索前，先跑 `node scripts/retrieve.js schema` 了解有哪些实体，判断问题可能涉及哪些，用 `--targets` 缩小范围。
 
-**8 个可检索实体**：业务线、业务板块、业务小点、指标、维度、数据看板、数据域、表
+**8 个可检索实体**：业务线、业务板块、业务小点、数据看板、指标、维度、表、表关系
 
 **路由原则：宁可多搜不要漏搜。只要有 1% 的可能性涉及某个实体，就加上。**
 
@@ -87,28 +95,28 @@ node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) A
 
 | 问题倾向 | 推荐 targets | 理由 |
 |---------|-------------|------|
-| 问指标/度量 | 指标,业务小点,业务板块 | 指标可能归属业务小点或板块 |
-| 问数据表 | 表,维度,数据域 | 表关联维度和数据域 |
+| 问指标/度量 | 指标,表,表关系,维度 | 指标关联计算表、Join 链和常用维度 |
+| 问数据表 | 表,维度,表关系 | 表关联来源维度和 Join 链 |
 | 问业务架构 | 业务线,业务板块,业务小点 | 三级层级 |
-| 问看板/报表 | 指标,数据看板 | 看板展示指标 |
+| 问看板/报表 | 数据看板,指标 | 看板和指标都可能直接命中 |
 | 不确定 | 所有实体（不加 --targets） | 全搜最安全 |
 
 **示例**：
-- "复购人数是什么" → `--targets 指标,业务小点,业务板块`
-- "听课明细去哪张表看" → `--targets 表,维度,数据域`
-- "前端增长投放的业务结构" → `--targets 业务线,业务板块,业务小点,指标`
+- "复购人数是什么" → `--targets 指标,表,表关系,维度`
+- "听课明细去哪张表看" → `--targets 表,维度,表关系`
+- "前端增长投放的业务结构" → `--targets 业务线,业务板块,业务小点`
 
 ### 第三步：Cypher 模式
 
 根据 `schema` 输出（即 config.json 的 `graph-config` 块）中的实体和关系构造 Cypher：
-- 实体标签：业务线、业务板块、业务小点、指标、维度、数据看板、数据域、表
-- 关系类型：包含、涉及、展示、筛选、关联
+- 实体标签：业务线、业务板块、业务小点、数据看板、指标、维度、表、表关系
+- 关系类型：包含、使用、启用、常用维度、来源于、起始于、加入、基于
 - 节点属性参考 graph-config.yaml 中每个实体的 key_field
 
 ### 第四步：解读结果，格式化回答
 
 - 引用具体的指标定义、表名、业务板块名称
-- 说明层级关系（业务线 → 业务板块 → 业务小点 → 指标）
+- 说明层级关系（业务线 → 业务板块 → 业务小点）或指标计算链（指标 → 表 / 表关系 / 维度）
 - 如果语义检索结果不充分（score < 0.5），换关键词或改用 Cypher 查询
 
 ## 输出格式
@@ -130,10 +138,11 @@ node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) A
 
 ## 回答指引
 
-- **指标类问题**：给出指标定义、所属业务板块、在哪个数据看板可以看
-- **数据表问题**：给出表中文名、表名全称、所属数据域、上下游关联表
+- **指标类问题**：给出指标定义、计算说明、参与计算表、使用表关系、默认时间字段和常用维度组
+- **数据表问题**：给出中文表名、表名、别名、类型、粒度、来源维度和相关 Join 步骤
+- **表关系问题**：按前置关系递归展开，依次说明起始表、加入表、JOIN 类型、JOIN 条件和关联基数
 - **业务层级问题**：给出完整的 业务线→业务板块→业务小点 链路
-- **维度问题**：给出维度名称、字段名称、级别、来自哪张表
+- **维度问题**：给出维度名称、来源字段、维度组和来源表
 
 ## 数据同步（维护时使用）
 
@@ -144,7 +153,7 @@ node scripts/retrieve.js cypher --statement "MATCH (n:\`表\`) RETURN count(n) A
 ### `python scripts/pipeline/sync.py`（无参数）— 全流程重建
 
 从零重建整个图数据库，按顺序执行三个阶段：
-1. **拉飞书数据**：9 张表全拉下来
+1. **拉飞书数据**：8 张表全拉下来
 2. **构建 Neo4j 图**：清空旧数据 → 建节点 → 建关系
 3. **向量化**：拼 search_text → 建向量索引 → 生成 embedding
 
