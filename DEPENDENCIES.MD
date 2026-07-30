@@ -29,7 +29,7 @@
 
 ## 各 Skill 依赖
 
-### aligning-requirements
+### orchestrating-analytics
 
 纯方法论，无脚本、无 Node/Python 第三方依赖、无环境变量。
 

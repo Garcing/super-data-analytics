@@ -1,54 +1,106 @@
 ---
 name: querying-data
-description: 统一数据查询入口，按数据源子命令（sql / powerbi）路由到对应驱动；支持 inline / @file / stdin 三种查询输入
-metadata:
-  skill-series: super-data-analytics
-  chinese-name: 查询数据
+description: 统一数据查询入口。默认使用 SQL 查询 Hologres/PostgreSQL；仅当用户明确要求 Power BI、DAX 或指定 Power BI 语义模型时使用 powerbi 分支。支持 SQL/PowerBI 的连接测试、schema 获取、查询执行，以及 inline、@file、stdin 三态正文输入。用于执行用户提供的查询，或执行由上游语义层与 SQL Spec 编译出的查询。
 ---
 
 # 查询数据
 
-统一数据查询入口，按数据源子命令（`sql` / `powerbi`）路由到对应驱动。所有命令在 `querying-data/` 目录下执行，前缀 `node scripts/query.js`。
+在 `querying-data/` 目录执行：
 
 ```bash
 node scripts/query.js <sql|powerbi> <命令> [参数]
 ```
 
-## 运行环境与依赖
+本技能负责可靠执行查询，不负责自行定义业务指标。业务问题尚未解析为明确指标、表、关系和过滤条件时，先调用 `orchestrating-analytics` / `retrieving-context`。
 
-- Node.js `>=20.0.0`。
-- 在 `querying-data/scripts/` 执行 `npm ci`；依赖以该目录的 `package.json` / `package-lock.json` 为准：`@azure/identity`、`pg`、`pg-protocol`、`xlsx`。
-- 凭证只写入 `~/.super-data-analytics/config.json` 的 `env`：
-  - SQL/Hologres：`HOLOGRES_HOST`、`HOLOGRES_PORT`、`HOLOGRES_DATABASE`、`HOLOGRES_USER`、`HOLOGRES_PASSWORD`。
-  - Power BI：`POWERBI_CLIENT_ID`、`POWERBI_CLIENT_SECRET`、`POWERBI_TENANT_ID`；语义模型候选来自 `powerbi-semantic-models`，可用 `node scripts/query.js powerbi list-semantic-models` 查看。
-- 可选进程变量 `SQL_QUERY_STDIN_TIMEOUT_MS` 只调整 stdin 超时，不属于凭证。
+## 数据源选择
 
-完整安装矩阵见仓库根目录 `DEPENDENCIES.MD`。
+### 默认：SQL
 
+未明确指定数据源时一律使用 `sql`，包括：
 
-## Step 1 识别数据源
+- 普通查数、指标计算和业务分析
+- 语义层命中的指标、表、维度和表关系
+- Hologres、PostgreSQL、表、字段、schema 或数仓问题
+- 用户提供 SQL
 
-按用户请求里的信号词判定数据源子命令：
+### 显式分支：Power BI
 
-| 信号 | 路由到 |
-|---|---|
-| DAX / 语义模型 / 度量值 / Power BI / 看板 / 报表 / KPI 指标定义 | `powerbi` |
-| Hologres / 表 / SQL / 字段 / schema / 数仓分区 / OSS 外表 | `sql` |
-| 模糊（"查下 DAU"、"看看最近销量"），看不出走哪边 | 先问用户，或调 `retrieving-context` 拉业务上下文判定 |
+只有以下情况使用 `powerbi`：
 
-## Step 2 读对应源的用法
+- 用户明确要求 Power BI 或 DAX
+- 用户指定 Power BI semantic model / artifactId
+- 用户给出 DAX，并要求执行
+- SQL 路径不可用，且用户确认改用 Power BI
 
-**执行查询前，必须先读对应源的 reference**——里面写明 CLI 形态、载荷 schema、`--output` 规则、shell 写法等细节：
+“指标、语义层、看板、报表、KPI”本身不再触发 Power BI；这些概念默认通过受治理语义上下文编译为 SQL。
 
-- `sql` → 读 [`references/sql.md`](references/sql.md)
-- `powerbi` → 读 [`references/powerbi.md`](references/powerbi.md)
+## 执行前置
 
-## 通用约定（两个源共同）
+接受以下任一输入：
 
-- 正文输入三种模式（同一套规则，文本内容不同：SQL 用 `--sql` 收 SQL 字符串，PowerBI 用 `--payload` 收 JSON 载荷）：
-  - `--sql "<SQL>"` / `--payload '<JSON>'` inline
-  - `--sql @<file-path>` / `--payload @<file-path>` 文件
-  - `--sql -` / `--payload -` 或不传正文 flag → stdin（管道）
-- `--output <file-path>` 仅在用户明确要求落盘时才传；不传则结果只打到 stdout。
-- 结果落盘目录约定 `<工作区>/.super-data-analytics/results/`；命名由 agent 决定。
-- 凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块——脚本不读 `.env`、不依赖环境变量导出。配置缺失或字段不全时脚本报错指引补全，由 agent 引导用户提供后写回 config.json，再重试。
+1. 用户提供的明确 SQL/DAX。
+2. 上游形成的 SQL Spec 和完整语义上下文。
+3. 已明确的表、字段、关系、过滤条件和输出要求。
+
+只有模糊业务问题时不要直接猜 SQL。先用 `retrieving-context` 找到指标、参与计算表、关系和维度；需要完整编排时调用 `orchestrating-analytics`。
+
+SQL Spec 引用了飞书 SQL 文档但未提供正文时，在 `retrieving-context/` 下执行：
+
+```bash
+node scripts/retrieve.js doc --doc "<Docx URL 或 token>"
+```
+
+## 执行步骤
+
+1. 根据上述规则选择数据源。
+2. 执行查询前必须完整阅读对应 reference：
+   - SQL → [`references/sql.md`](references/sql.md)
+   - Power BI → [`references/powerbi.md`](references/powerbi.md)
+3. 检查查询与上游规格一致。
+4. 执行查询。
+5. 检查返回结构、空结果和明显异常。
+6. 返回结果及必要的来源、时间和限制说明。
+
+## SQL 查询要求
+
+由语义层组装 SQL 时：
+
+- 使用最新 SQL 文档正文，不使用旧对话中的副本。
+- 每张语义表保持约定别名。
+- 表 SQL 作为 CTE 或子查询嵌入，保留其业务逻辑。
+- 只做必要的字段别名适配和数据库方言调整。
+- 严格按语义层表关系链的顺序和 JOIN 条件连接。
+- 使用指标计算表达式、过滤条件和默认时间字段。
+- 最终输出粒度必须符合 SQL Spec。
+
+执行前检查字段、别名、JOIN、字段类型、聚合粒度、时间范围和排除项。执行后检查行数、空值、重复、异常全零、时间覆盖及适用的业务约束。
+
+不得因为 SQL 成功运行就宣称口径正确。
+
+## 通用输入与输出
+
+正文支持三态输入：
+
+- SQL：`--sql "<SQL>"` / `--sql @<file>` / `--sql -`
+- Power BI：`--payload '<JSON>'` / `--payload @<file>` / `--payload -`
+- 不传正文 flag 时从 stdin 读取
+
+`--output <file>` 仅在用户明确要求结果落盘时使用。结果目录建议：
+
+```text
+<工作区>/.super-data-analytics/results/
+```
+
+复杂 SQL 需要用户审阅、复跑或留痕时，保存最终实际执行版本并通过 `--sql @<file>` 运行，确保展示版本与执行版本一致。普通一次性查询优先 stdin，不强制落盘。
+
+## 环境
+
+- Node.js `>=20.0.0`
+- 在 `querying-data/scripts/` 执行 `npm ci`
+- 凭证来自 `~/.super-data-analytics/config.json`
+  - SQL：`HOLOGRES_HOST`、`HOLOGRES_PORT`、`HOLOGRES_DATABASE`、`HOLOGRES_USER`、`HOLOGRES_PASSWORD`
+  - Power BI：`POWERBI_CLIENT_ID`、`POWERBI_CLIENT_SECRET`、`POWERBI_TENANT_ID`
+- `SQL_QUERY_STDIN_TIMEOUT_MS` 可调整 stdin 超时
+
+Power BI 能力保留为兼容分支，不作为默认查询方法。

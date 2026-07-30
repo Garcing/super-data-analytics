@@ -6,8 +6,8 @@
 
 ```
 retrieving-context/              检索业务知识图谱（指标定义、数据资产、业务上下文）
-aligning-requirements/           对齐需求口径（入口路由）
-querying-data/                   统一数据查询（数据源子命令 sql / powerbi，已实现）
+orchestrating-analytics/         编排数据分析（入口路由、实体消歧、SQL Spec、流程验收）
+querying-data/                   统一数据查询（SQL 默认；Power BI 显式兼容）
 diagnosing-anomalies/            指标异动归因方法论
 predicting-trends/               业务趋势预测和目标制定方法论（name: predicting_trends）
 evaluating-impact/               效果评估与实验检验方法论
@@ -30,33 +30,34 @@ validating-analyses/             分析成品质检（横向）：交付前独�
 ## 数据流
 
 板块 0（语料）← 所有板块可引用
-板块 1（需求）→ 板块 2（数据）→ 板块 3（分析）→ 板块 4（报告）
+板块 1（编排）→ 板块 2（数据）→ 板块 3（分析）→ 板块 4（报告）
 
 ## 触发路由
 
 收到数据分析请求时，根据意图明确程度选择路径。LLM 本身就是路由器——读下面的规则，自己判断走哪条路。
 
-### 直连路径（跳过 alignment）
+### 直连路径（跳过 orchestration）
 
-满足**任意一条**即可直连具体 skill，不需要先走 aligning-requirements：
+满足**任意一条**即可直连具体 skill，不需要先走 orchestrating-analytics：
 
 - 用户给了明确的 SQL / DAX 语句
 - 用户说"跑一下"/"查一下"/"拉一下" + 具体指标名
 - 请求只涉及单一数据源、单一指标、明确的时间范围
 - 用户明确说"不需要对齐需求"或"直接查"
 
-### 对齐路径（先走 alignment）
+跳过编排不等于跳过语义层：具体业务指标仍先用 `retrieving-context` 解析受治理口径，再默认用 `querying-data sql` 执行。只有用户明确提供 DAX、要求 Power BI 或指定 Power BI 模型时才走 `powerbi`。
 
-满足**任意一条**则先走 aligning-requirements 对齐需求：
+### 编排路径（先走 orchestration）
+
+满足**任意一条**则先走 orchestrating-analytics 编排：
 
 - 请求包含"分析"、"为什么"、"看看情况"、"帮忙看看"等模糊词
-- 涉及多个指标、多个维度、需要拆解归因
-- 需要跨数据源（同时用 Power BI 和 SQL）
+- 涉及多个指标、实体、维度、关系或数据源，需要拆解归因
 - 用户的意图需要多轮提问才能明确
 
 ### 完整路径（全流程）
 
-满足**任意一条**则走 align → query → analyze → report → dispatch：
+满足**任意一条**则走 orchestrate → query → analyze → report → dispatch：
 
 - 用户说"帮我出一份 XX 报告"/"做一次 XX 分析"
 - 明确涉及 从分析到交付 的完整链路
@@ -66,7 +67,7 @@ validating-analyses/             分析成品质检（横向）：交付前独�
 以下 skill 不属于上述路径，但任何 skill 在执行中都可以随时调用：
 
 - `retrieving-context`：需要知道指标定义、表名、业务层级时
-- `aligning-requirements`：执行中发现需求不明确时，可以中途补走对齐
+- `orchestrating-analytics`：执行中发现实体、口径或流程不明确时，可以中途补走编排
 - `diagnosing-anomalies`：业务指标上涨、下跌、异常波动或告警后，需要严谨归因方法论时使用
 - `predicting_trends`：业务预测、趋势外推、目标制定、目标达成判断、资源预算预估等需要未来预测结果时使用
 - `evaluating-impact`：产品上线、运营活动、Push、发券、投放、A/B 实验、DID 试点等需要判断“动作是否有效、ROI 是否为正、是否可以全量/加码/停止”时使用。

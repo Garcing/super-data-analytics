@@ -5,7 +5,7 @@ description: 业务预测和目标制定方法论。用于回答下月/下季度
 
 # 业务趋势预测
 
-本技能提供业务预测和目标制定的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，调用 `querying-data powerbi` 或 `querying-data sql` 获取历史序列，调用 `visualizing-data` 生成预测图表，调用 `building-reports` 承接报告交付。
+本技能提供业务预测和目标制定的方法论，不直接负责取数或生成报告。执行中按需调用 `retrieving-context` 明确指标定义，默认调用 `querying-data sql` 获取历史序列；仅在用户明确指定 Power BI/DAX 时调用 `querying-data powerbi`。调用 `visualizing-data` 生成预测图表，调用 `building-reports` 承接报告交付。
 
 ## 运行环境与依赖
 

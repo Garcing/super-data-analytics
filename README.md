@@ -22,8 +22,8 @@
 
 ```
 retrieving-context/              0 语料：检索业务知识图谱（指标定义、数据资产、业务上下文）
-aligning-requirements/           1 需求：入口路由，意图识别 + 轻重分流 + 需求对齐 + 流程编排
-querying-data/                   2 数据：统一查询入口（数据源子命令 sql / powerbi）
+orchestrating-analytics/         1 编排：意图识别 + 实体消歧 + SQL Spec + 流程编排
+querying-data/                   2 数据：统一查询入口（SQL 默认，Power BI 显式兼容）
 diagnosing-anomalies/            3 分析：指标异动归因方法论 + 贡献度计算脚本
 predicting-trends/               3 分析：业务趋势预测和目标制定方法论 + 轻量预测脚本
 evaluating-impact/               3 分析：效果评估与实验检验方法论 + A/B / DID / ROI 脚本
@@ -37,7 +37,7 @@ validating-analyses/             横向质检：交付前复核口径、计算�
 
 ```
 板块 0（语料）  ← 所有板块可随时引用
-板块 1（需求）→ 板块 2（数据）→ 板块 3（分析）→ 板块 4（报告）
+板块 1（编排）→ 板块 2（数据）→ 板块 3（分析）→ 板块 4（报告）
 ```
 
 板块 3 的三个方法论技能互为兄弟：`diagnosing-anomalies` 回答「为什么变了」、`predicting_trends` 回答「未来会怎样 / 目标怎么定」、`evaluating-impact` 回答「做的事情有没有用 / 是否值得继续」。
@@ -46,7 +46,7 @@ validating-analyses/             横向质检：交付前复核口径、计算�
 
 ## 三、触发路由
 
-收到数据分析请求时，按意图明确程度选路径（详细规则见 [aligning-requirements/SKILL.md](aligning-requirements/SKILL.md)）。
+收到数据分析请求时，按意图明确程度选路径（详细规则见 [orchestrating-analytics/SKILL.md](orchestrating-analytics/SKILL.md)）。
 
 ### 直连路径（跳过对齐）
 
@@ -57,11 +57,13 @@ validating-analyses/             横向质检：交付前复核口径、计算�
 - 只涉及单一数据源、单一指标、明确时间范围
 - 用户明确说「不需要对齐」「直接查」
 
-### 对齐路径（先走 alignment）
+跳过入口编排不等于跳过语义层：具体业务指标仍先用 `retrieving-context` 解析受治理口径，再默认用 `querying-data sql` 执行。只有用户明确提供 DAX、要求 Power BI 或指定 Power BI 模型时才走 `powerbi`。
+
+### 编排路径（先走 orchestration）
 
 - 请求含「分析 / 为什么 / 看看情况」等模糊词
 - 涉及多指标、多维度、需要拆解归因
-- 需要跨数据源（同时用 Power BI 和 SQL）
+- 涉及多个指标、实体、关系或数据源
 - 意图需要多轮提问才能明确
 
 ### 横向服务（任何 skill 执行中都可调用）
@@ -70,7 +72,7 @@ validating-analyses/             横向质检：交付前复核口径、计算�
 | --- | --- |
 | `retrieving-context` | 需要知道指标定义、表名、业务层级、看板位置时 |
 | `visualizing-data` | 需要把结构化数据画成数值必须准确的单图时 |
-| `aligning-requirements` | 执行中发现需求不明确，可中途补走对齐 |
+| `orchestrating-analytics` | 执行中发现实体、口径或流程不明确，可中途补走编排 |
 | `validating-analyses` | 分析/报告交付前，独立复核是否准确、有据、可分享 |
 
 ---
@@ -80,8 +82,8 @@ validating-analyses/             横向质检：交付前复核口径、计算�
 | 板块 | skill 名 | 职责 | 主要入口 |
 | --- | --- | --- | --- |
 | 语料 | `retrieving-context` | GraphRAG：飞书多维表格 → Neo4j → 向量语义检索 + 图扩展 | `node retrieving-context/scripts/retrieve.js search --question "..."` |
-| 需求 | `aligning-requirements` | 入口路由、轻重分流、需求对齐、流程编排、交付验收 | 纯方法论，无脚本 |
-| 数据 | `querying-data` | 统一查询，按 `sql\|powerbi` 数据源子命令路由，支持 inline / @file / stdin 三态输入 | `node querying-data/scripts/query.js sql query --sql ...` |
+| 编排 | `orchestrating-analytics` | 入口路由、实体消歧、语义检索、SQL Spec、流程编排、交付验收 | 纯方法论，无脚本 |
+| 数据 | `querying-data` | SQL 默认查询；Power BI 显式兼容；支持 inline / @file / stdin 三态输入 | `node querying-data/scripts/query.js sql query --sql ...` |
 | 分析 | `diagnosing-anomalies` | 异动归因方法论 + 贡献度计算 | `python diagnosing-anomalies/scripts/contribution.py ...` |
 | 分析 | `predicting_trends` | 趋势预测和目标制定方法论 + 轻量预测 | `python predicting-trends/scripts/forecast.py <input.json>` |
 | 分析 | `evaluating-impact` | 效果评估与实验检验方法论 + A/B / DID / ROI | `python evaluating-impact/scripts/impact.py <input.json>` |
@@ -195,6 +197,6 @@ python -m pytest visualizing-data/tests/test_chart_cli.py -q
 | --- | --- |
 | [AGENTS.md](AGENTS.md) | 给 agent 的精简架构 / 路由 / 部署速查 |
 | [DEPENDENCIES.MD](DEPENDENCIES.MD) | 运行时、外部服务、各 skill 依赖清单 |
-| [aligning-requirements/SKILL.md](aligning-requirements/SKILL.md) | 入口路由的完整对齐方法论与示例 |
+| [orchestrating-analytics/SKILL.md](orchestrating-analytics/SKILL.md) | 数据分析入口、实体消歧、SQL Spec 与流程编排 |
 | 各 `<skill>/SKILL.md` | 单个技能的触发词、流程、命令、注意事项 |
 | 各 `<skill>/references/` | 输入契约、视觉规范、模型选择、DAX 编写等深度参考 |

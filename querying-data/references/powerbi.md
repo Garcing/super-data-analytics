@@ -2,6 +2,8 @@
 
 通过 `node scripts/query.js powerbi ...` 直连 Microsoft Fabric MCP HTTP 端点（`https://api.fabric.microsoft.com/v1/mcp/powerbi`），使用 Azure AD Client Credentials 零交互认证。凭证统一来自 `~/.super-data-analytics/config.json` 的 `env` 块（`POWERBI_CLIENT_ID` / `POWERBI_CLIENT_SECRET` / `POWERBI_TENANT_ID`），不读 `.env`、不依赖环境变量导出。
 
+Power BI 是保留的显式兼容能力，不是默认查询路径。仅当用户明确要求 Power BI、DAX、指定 semantic model / artifactId，或确认从 SQL 降级到 Power BI 时使用。普通指标、语义层、看板和报表问题默认走 SQL。
+
 所有命令在 `querying-data/` 目录下执行，前缀为 `node scripts/query.js`。
 
 ## CLI 命令
