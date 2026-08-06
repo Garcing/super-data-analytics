@@ -54,45 +54,70 @@ node scripts/retrieve.js doc --doc "<Docx URL 或 token>"
 ## 执行步骤
 
 1. 根据上述规则选择数据源。
-2. 执行查询前必须完整阅读对应 reference：
-   - SQL → [`references/sql.md`](references/sql.md)
-   - Power BI → [`references/powerbi.md`](references/powerbi.md)
-3. 检查查询与上游规格一致。
-4. 执行查询。
-5. 检查返回结构、空结果和明显异常。
-6. 返回结果及必要的来源、时间和限制说明。
+2. SQL 直接按下文执行；Power BI 执行前完整阅读 [`references/powerbi.md`](references/powerbi.md)。
+3. 检查查询与上游规格一致后执行。
+4. 检查结果并返回必要的来源、时间和限制说明。
 
-## SQL 查询要求
+## SQL
 
-由语义层组装 SQL 时：
+### 查询契约
 
-- 使用最新 SQL 文档正文，不使用旧对话中的副本。
-- 每张语义表保持约定别名。
-- 表 SQL 作为 CTE 或子查询嵌入，保留其业务逻辑。
-- 只做必要的字段别名适配和数据库方言调整。
-- 严格按语义层表关系链的顺序和 JOIN 条件连接。
-- 使用指标计算表达式、过滤条件和默认时间字段。
-- 最终输出粒度必须符合 SQL Spec。
+执行生成的 SQL 前，应已有：
 
-执行前检查字段、别名、JOIN、字段类型、聚合粒度、时间范围和排除项。执行后检查行数、空值、重复、异常全零、时间覆盖及适用的业务约束。
+- 指标表达式、过滤条件
+- 统计粒度与去重键
+- 时间字段和范围
+- 参与表、稳定别名及最新 SQL 文档正文
+- 表关系链
+- 维度、筛选和输出要求
+
+信息不足时返回 `orchestrating-analytics` / `retrieving-context`，不要从数据库猜口径、表、字段或 JOIN。
+
+### 组装规则
+
+- 保留语义表 SQL 的业务逻辑，只做必要的别名和方言适配。
+- 使用语义层约定的表别名；将 SQL 文档作为 CTE 或子查询嵌入。若 Hologres 拒绝多层 CTE，改用等价派生表，不改写业务逻辑。
+- 普通表严格按已启用关系的顺序、类型和条件连接，不因字段同名自行推断。
+- 维度只有 `field` 时直接引用已确认语义一致的字段；同时提供 `join` 时，按维度契约的来源表和关联键补充连接。
+- 不以相似字段、名称模式、枚举顺序、`CASE` 或“非 A 即 B”发明业务维度，除非治理元数据明确规定映射。
+- 严格使用指标表达式、默认时间字段、过滤条件和 SQL Spec 输出粒度。
+
+### 校验
+
+执行前检查字段与别名存在、JOIN 两侧含义和类型兼容、维表关联键唯一性足以保持粒度、一对多连接不会放大结果。
+
+执行后检查：
+
+- 返回列、行数和粒度
+- 空结果、异常全零、关键字段 NULL 和时间覆盖
+- 关联前后业务键数量、重复与维度匹配率
+- 数据新鲜度及适用的数学、业务约束
 
 不得因为 SQL 成功运行就宣称口径正确。
 
-## 通用输入与输出
+### CLI
 
-正文支持三态输入：
+```bash
+node scripts/query.js sql test-connection
+node scripts/query.js sql schema <schema.table> [schema.table ...]
+node scripts/query.js sql query --sql "<SQL>"
+node scripts/query.js sql query --sql @<file>
+node scripts/query.js sql query --sql -
+```
 
-- SQL：`--sql "<SQL>"` / `--sql @<file>` / `--sql -`
-- Power BI：`--payload '<JSON>'` / `--payload @<file>` / `--payload -`
-- 不传正文 flag 时从 stdin 读取
+复杂 SQL 默认通过 stdin 执行；需要审阅、复跑或留痕时才保存为文件并使用 `@<file>`。含 `$`、反引号或多行内容时避免直接 inline。PowerShell 管道必须将 `$OutputEncoding` 和控制台输出设为 UTF-8。
+
+## Power BI
+
+Power BI 只是兼容分支。命中前述显式条件时，完整阅读 [`references/powerbi.md`](references/powerbi.md)，再按其中的模型发现、schema 确认和 DAX 执行流程操作。正文使用 `--payload '<JSON>'`、`--payload @<file>` 或 `--payload -`。
+
+## 结果落盘
 
 `--output <file>` 仅在用户明确要求结果落盘时使用。结果目录建议：
 
 ```text
 <工作区>/.super-data-analytics/results/
 ```
-
-复杂 SQL 需要用户审阅、复跑或留痕时，保存最终实际执行版本并通过 `--sql @<file>` 运行，确保展示版本与执行版本一致。普通一次性查询优先 stdin，不强制落盘。
 
 ## 环境
 
