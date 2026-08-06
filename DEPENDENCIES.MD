@@ -51,7 +51,7 @@ Node 安装目录：`retrieving-context/scripts/`。
 - Node：`neo4j-driver`；清单为 `package.json` + `package-lock.json`。
 - Python 安装文件：`retrieving-context/scripts/pipeline/requirements.txt`。
 - Python：`neo4j`、`sentence-transformers`。代码不 import PyYAML，已从 requirements 删除。
-- 模型：默认 `BAAI/bge-small-zh-v1.5`，首次 `node scripts/sync.js --download-model` 会下载到 `scripts/pipeline/models/`。
+- 模型：默认 `BAAI/bge-small-zh-v1.5`，首次 `python scripts/pipeline/sync.py --download-model` 会下载到 `scripts/pipeline/models/`。
 - 外部：`lark-cli`。
 - 配置：`NEO4J_URI`、`NEO4J_DATABASE`、`NEO4J_USER`、`NEO4J_PASSWORD`、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`PYTHON_PATH`，以及 `graph-config.embedding/entities/relationships`。
 
@@ -73,7 +73,7 @@ Python 3.10+ 标准库实现。`evaluating-impact/requirements.txt` 是注释型
 
 - 运行：`matplotlib`、`pandas`、`pillow`、`seaborn`。
 - 测试：`pytest`。
-- 系统字体：中文标签需要任一可用 CJK 字体；字体不属于 pip 依赖，缺失时 CLI 会输出 warning。
+- 系统字体：中文标签需要任一可用 CJK 字体（推荐 `sudo apt install fonts-noto-cjk`）；字体不属于 pip 依赖，缺失时 CLI 会输出 warning 且图中中文显示为方框。安装字体后需清除 matplotlib 缓存：`rm -rf ~/.cache/matplotlib`。
 - 不读取 `config.json` 或环境变量。
 
 ### using-templates
@@ -115,7 +115,7 @@ python -m pip install -r visualizing-data/requirements.txt
 python -m pip install -r building-reports/scripts/streamlit/requirements.txt
 
 # 飞书 CLI
-npm install -g @anthropic-ai/lark-cli
+npm install -g @larksuite/cli
 lark-cli config init
 lark-cli auth login
 ```
@@ -135,3 +135,39 @@ npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix retrieving-conte
 npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix building-reports/scripts
 npm ci --ignore-scripts --no-audit --no-fund --dry-run --prefix building-reports/scripts/html
 ```
+
+## 环境验证日志（2026-08-06）
+
+以下为首次部署时的实测记录，供后续排障参考。
+
+### 全量测试结果
+
+| 测试 | 结果 | 说明 |
+| --- | --- | --- |
+| `diagnosing-anomalies` pytest | ✅ 3 passed | 标准库实现，无外部依赖 |
+| `predicting-trends` pytest | ✅ 10 passed | 标准库实现 |
+| `evaluating-impact` pytest | ✅ 9 passed | 标准库实现 |
+| `visualizing-data` pytest | ✅ 50 passed, 1 warning | seaborn 0.13 对 matplotlib 3.11 的 `vert` 参数弃用 warning，不影响功能 |
+| Node.js 4 目录 npm ci dry-run | ✅ 全部通过 | |
+| `querying-data` CLI 冒烟 | ✅ --help 正常 | |
+| `retrieving-context` CLI 冒烟 | ✅ schema 正常（Neo4j 已连接） | |
+| `querying-data powerbi` test-connection | ✅ 连接成功，4 tools | |
+| `building-reports` html/streamlit list | ✅ 报告列表正常 | |
+| `building-reports` image dry-run | ✅ 参数校验通过 | |
+| `visualizing-data` chart 生成 | ✅ PNG 输出正常（安装 CJK 字体后） | |
+
+### 已修复的文档错误
+
+1. **retrieving-context 模型下载路径**：原文写 `node scripts/sync.js --download-model`（不存在），实际是 `python scripts/pipeline/sync.py --download-model`。已修正。
+2. **飞书 CLI 安装包名**：原文写 `npm install -g @anthropic-ai/lark-cli`（不存在），实际是 `npm install -g @larksuite/cli`。已修正。
+3. **CJK 字体安装指引不完整**：原文只提"缺失时 CLI 会输出 warning"，未说明安装方法和缓存清理。已补充 `sudo apt install fonts-noto-cjk` + `rm -rf ~/.cache/matplotlib`。
+
+### 已知外部依赖问题（需用户处理）
+
+1. **Hologres 连接**：公网 IP 不在 Hologres 白名单中，需要通过公司 VPN 使用内网地址（如 `192.168.5.121:31223`）连接。VPN 配置文件（`.ovpn` + `ta.key` + `ca.crt`）需放在 `/etc/openvpn/client/`，凭证写入 `/etc/openvpn/client/auth.txt`。建议配置 systemd service 实现开机自启和断线重连。
+2. **lark-cli 未绑定 Hermes**：`using-templates` 等依赖飞书的 skill 报 `hermes context detected but lark-cli is not bound`。需要用户确认身份策略后运行 `lark-cli config bind --source hermes --identity bot-only`（或 `user-default`）。
+3. **APIMART_API_KEY**：config.json 中该项被占位符 `«redacted:sk-…»` 脱敏，`building-reports image generate` 实际调用会失败。需要用户提供真实 key。
+
+### Python 解释器注意
+
+Ubuntu 24.04 默认 `python3` 可能指向 Hermes venv（无 pip）。安装依赖时应使用系统 Python（如 `python3.12 -m pip install -r ... --break-system-packages`）。`config.json` 的 `PYTHON_PATH` 应指向可用的系统 Python 解释器。
