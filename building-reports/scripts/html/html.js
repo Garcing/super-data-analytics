@@ -25,8 +25,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   loadConfig,
-  setupProxy,
-  closeProxy,
+  ensureProxyEnv,
   parseInputFlag,
   readContentSource,
   withOptimisticLock,
@@ -38,17 +37,12 @@ const INDEX_PATH = 'html-reports-index.json'
 const CACHE_MAX_AGE = 60 // CDN 缓存 60s，保证新报告 ~1min 内对前端可见
 
 loadConfig(CREDENTIAL_KEYS)
-const proxyState = await setupProxy()
+const proxyOk = ensureProxyEnv()
 
 const { put, head, del } = await import('@vercel/blob')
 
 // ---------------------------- Blob 读写封装 ----------------------------
 function getConfig() {
-  if (proxyState.proxyUrl && !proxyState.proxyConfigured) {
-    throw new Error(
-      `检测到代理 ${proxyState.proxyUrl}，但 undici 未安装。请在 scripts 下运行: npm install undici`,
-    )
-  }
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     throw new Error('BLOB_READ_WRITE_TOKEN 未配置。请写入 ~/.super-data-analytics/config.json 的 env 块后重试。')
   }
@@ -278,10 +272,9 @@ export async function runCli(argv = process.argv.slice(2)) {
     console.error(cmd && !['publish', 'list', 'get', 'delete'].includes(cmd) ? USAGE : (err.message || String(err)))
     exitCode = 1
   }
-  if (proxyState.proxyConfigured) await closeProxy()
   if (exitCode !== 0) process.exitCode = exitCode
 }
 
-if (isMain) {
+if (isMain && proxyOk) {
   await runCli()
 }

@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 
 export const CONFIG_PATH = join(homedir(), '.super-data-analytics', 'config.json');
 
@@ -45,29 +46,25 @@ export function loadConfig(credentialKeys) {
   }
 }
 
-// 代理感知：原生 fetch 默认忽略 HTTPS_PROXY（与 Python requests 不同），
-// 检测到代理时通过 undici 的 ProxyAgent 显式接管。返回 { proxyUrl, proxyConfigured }。
-export async function setupProxy() {
+// 代理感知（尽力而为，非必需）：原生 fetch 默认忽略 HTTPS_PROXY（与 Python requests 不同）。
+// Node 24+ 原生支持 NODE_USE_ENV_PROXY，但必须在进程启动前注入（运行时改 process.env 无效），
+// 故检测到代理且为 Node 24+ 时，用相同 argv 重 spawn 自身并补上该标志。
+// 低版本 Node 不支持 → 直接放行，fetch 自行处理（代理非必需，失败也由调用方自然感知）。
+// 返回 true=当前进程可继续主流程；false=已触发 re-exec，调用方应跳过主流程。
+export function ensureProxyEnv() {
   const proxyUrl =
     process.env.HTTPS_PROXY || process.env.https_proxy ||
     process.env.HTTP_PROXY || process.env.http_proxy ||
     process.env.ALL_PROXY || process.env.all_proxy;
-  if (!proxyUrl) return { proxyUrl: null, proxyConfigured: false };
-  try {
-    const { ProxyAgent, setGlobalDispatcher } = await import('undici');
-    setGlobalDispatcher(new ProxyAgent(proxyUrl));
-    return { proxyUrl, proxyConfigured: true };
-  } catch {
-    return { proxyUrl, proxyConfigured: false };
-  }
-}
-
-// 关闭代理连接池，避免 Windows 下 process.exit 时 undici 句柄未关触发 libuv 断言崩溃。
-export async function closeProxy() {
-  try {
-    const { getGlobalDispatcher } = await import('undici');
-    await getGlobalDispatcher().close();
-  } catch { /* ignore */ }
+  if (!proxyUrl || process.env.NODE_USE_ENV_PROXY) return true;
+  const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
+  if (Number.isNaN(nodeMajor) || nodeMajor < 24) return true;
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
+  });
+  child.on('exit', (code) => process.exit(code ?? 1));
+  return false;
 }
 
 // ---------- 通用三态输入（inline / @file / stdin），与 querying-data 的 --sql / --payload 同构 ----------

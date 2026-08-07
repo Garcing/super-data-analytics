@@ -215,9 +215,8 @@ node scripts/report.js image download <task_id> --output <路径>           # �
 
 ### 依赖与代理
 
-- **依赖**：代理用 `undici`，已挂在 `scripts/node_modules`（供 `lib/shared.js` 解析）；`scripts/image` 子目录另有独立 `node_modules`。
-- **代理**：自动检测 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`，经 `undici` 的 `ProxyAgent` 走代理。代理下 `undici` 解析不到会明确报错。退出前会主动关闭代理连接池，避免 Windows 下句柄未关导致的崩溃。
-- Node 自带 `fetch`（Node 18+），除 `undici` 外无其它外部依赖。
+- **依赖**：Node 自带 `fetch`（Node 20+），无额外代理依赖；`scripts/` 下仅需 `npm ci` 装 `@vercel/blob`。
+- **代理**：自动检测 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`，为可选项——Node 24+ 原生支持 `NODE_USE_ENV_PROXY`，此时脚本 re-exec 自身注入该变量让 fetch 走代理；低版本 Node 不支持则放行，代理非必需。
 
 ---
 

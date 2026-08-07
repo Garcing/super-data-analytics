@@ -77,7 +77,7 @@ node scripts/report.js html delete <reportId>                  # 删除
 | `BLOB_READ_WRITE_TOKEN` | 直连 Blob 读写（整个 store 写权限，注意保管） |
 | `VERCEL_REPORTS_URL` | 仅用于拼可分享的前端链接（如 `https://project-6hzz6.vercel.app`） |
 
-**不需要在 Vercel 项目设置里配任何环境变量**（旧版的 `BLOB_READ_WRITE_TOKEN` / `API_SECRET` 可删）。Blob 命名：报告 `html-reports/<id>.json`，索引 `html-reports-index.json`；索引用 **ifMatch 乐观锁**写、blob 设 `cacheControlMaxAge=60`（新报告对前端约 1 分钟可见）。配置缺失时报错指引补全，代理（`HTTPS_PROXY` 等）由 `undici` 自动接管。
+**不需要在 Vercel 项目设置里配任何环境变量**（旧版的 `BLOB_READ_WRITE_TOKEN` / `API_SECRET` 可删）。Blob 命名：报告 `html-reports/<id>.json`，索引 `html-reports-index.json`；索引用 **ifMatch 乐观锁**写、blob 设 `cacheControlMaxAge=60`（新报告对前端约 1 分钟可见）。配置缺失时报错指引补全，代理（`HTTPS_PROXY` 等）为可选项：Node 24+ 下由原生 `NODE_USE_ENV_PROXY` 接管（脚本检测到代理会自动 re-exec 补上该标志，无额外依赖），低版本放行、代理非必需。
 
 ## 部署（前端代码变更后）
 

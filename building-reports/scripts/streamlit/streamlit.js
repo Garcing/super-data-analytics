@@ -21,12 +21,12 @@
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadConfig, setupProxy, closeProxy, parseInputFlag, readContentSource, withOptimisticLock, sleep } from '../lib/shared.js'
+import { loadConfig, ensureProxyEnv, parseInputFlag, readContentSource, withOptimisticLock, sleep } from '../lib/shared.js'
 
 const CREDENTIAL_KEYS = ['BLOB_READ_WRITE_TOKEN']
 
 loadConfig(CREDENTIAL_KEYS)
-const proxyState = await setupProxy()
+const proxyOk = ensureProxyEnv()
 
 const { put, head, del } = await import('@vercel/blob')
 
@@ -260,10 +260,9 @@ export async function runCli(argv = process.argv.slice(2)) {
     console.error(cmd && !['publish', 'list', 'get', 'delete'].includes(cmd) ? USAGE : (err.message || String(err)))
     exitCode = 1
   }
-  if (proxyState.proxyConfigured) await closeProxy()
   if (exitCode !== 0) process.exitCode = exitCode
 }
 
-if (isMain) {
+if (isMain && proxyOk) {
   await runCli()
 }

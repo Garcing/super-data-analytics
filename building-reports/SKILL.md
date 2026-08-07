@@ -25,7 +25,7 @@ metadata:
 ## 运行环境与依赖
 
 - Node.js `>=20.0.0`。
-- 报告 CLI：在 `building-reports/scripts/` 执行 `npm ci`，安装共享的 `@vercel/blob` 与 `undici`。HTML/Image/Streamlit 的 Node CLI 都从这里解析共享依赖；`scripts/image/` 不再维护重复的 package/lock。
+- 报告 CLI：在 `building-reports/scripts/` 执行 `npm ci`，安装共享的 `@vercel/blob`。HTML/Image/Streamlit 的 Node CLI 都从这里解析共享依赖；`scripts/image/` 不再维护重复的 package/lock。
 - HTML 前端：另在 `building-reports/scripts/html/` 执行 `npm ci`，安装 React/Vite/Tailwind/Recharts 前端依赖。
 - Streamlit：Python `>=3.10`，执行 `python -m pip install -r scripts/streamlit/requirements.txt`。
 - 飞书文档/幻灯片由 `lark-doc` / `lark-slides` 技能及其依赖负责。

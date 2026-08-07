@@ -21,13 +21,13 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname, join, resolve, extname } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { loadConfig, setupProxy, closeProxy, parseInputFlag, readContentSource } from '../lib/shared.js'
+import { loadConfig, ensureProxyEnv, parseInputFlag, readContentSource } from '../lib/shared.js'
 
 const CREDENTIAL_KEYS = ['APIMART_API_KEY', 'APIMART_BASE_URL']
 
 // 模块加载时注入凭证 + 代理（与 querying-data / report.js 同构：config.json 唯一来源）
 loadConfig(CREDENTIAL_KEYS)
-const proxyState = await setupProxy()
+const proxyOk = ensureProxyEnv()
 
 // ---------------------------- 常量 ----------------------------
 const DEFAULT_BASE_URL = 'https://api.apimart.ai/v1'
@@ -52,9 +52,6 @@ const PARAM_MATRIX = {
 // ---------------------------- 配置 ----------------------------
 /** 读取并校验基础配置。 */
 function getConfig() {
-  if (proxyState.proxyUrl && !proxyState.proxyConfigured) {
-    throw new Error(`检测到代理 ${proxyState.proxyUrl}，但 undici 未安装，无法走代理。请在 scripts 下运行: npm install undici`)
-  }
   const apiKey = process.env.APIMART_API_KEY || ''
   const baseUrl = (process.env.APIMART_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '')
   if (!apiKey) {
@@ -434,13 +431,9 @@ export async function runCli(argv = process.argv.slice(2)) {
     console.error(err.message || String(err))
     exitCode = 1
   }
-  // 干净关闭代理连接池，避免 Windows 下 process.exit 时 undici 句柄未关闭触发 libuv 断言崩溃
-  if (proxyState.proxyConfigured) {
-    await closeProxy()
-  }
   if (exitCode !== 0) process.exitCode = exitCode
 }
 
-if (isMain) {
+if (isMain && proxyOk) {
   await runCli()
 }

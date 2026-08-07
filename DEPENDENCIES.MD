@@ -87,9 +87,9 @@ Python 3.10+ 标准库实现。`evaluating-impact/requirements.txt` 是注释型
 
 分为共享 Node CLI、HTML 前端和 Streamlit Python 三层：
 
-- `building-reports/scripts/`：`@vercel/blob`、`undici`，清单为 `package.json` + `package-lock.json`。HTML/Image/Streamlit 的 Node CLI 从此处解析共享依赖。
+- `building-reports/scripts/`：`@vercel/blob`，清单为 `package.json` + `package-lock.json`。HTML/Image/Streamlit 的 Node CLI 从此处解析共享依赖；代理为可选项——Node 24+ 下经 `lib/shared.js` 的 `ensureProxyEnv` 自动 re-exec 注入 `NODE_USE_ENV_PROXY` 让 fetch 走代理，低版本放行（代理非必需）。无独立代理依赖（`undici` 仅作为 `@vercel/blob` 的传递依赖存在）。
 - `building-reports/scripts/html/`：React 18、React DOM 18、React Router 7、Recharts 2；开发依赖为 Vite 6、React plugin、Tailwind CSS 3、PostCSS、Autoprefixer。清单为独立的 `package.json` + `package-lock.json`。
-- `building-reports/scripts/image/`：没有独立 package/lock；`image.js` 使用父级共享依赖，避免重复安装 `undici` 和不必要地把 Node 门槛抬到 22.19。
+- `building-reports/scripts/image/`：没有独立 package/lock；`image.js` 使用父级共享依赖。
 - `building-reports/scripts/streamlit/requirements.txt`：`streamlit`、`pandas`、`plotly`。
 - 配置：`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`、`APIMART_BASE_URL`。
 - 外部：Vercel CLI（HTML 部署）；Git/Bash（Streamlit subtree 发布）；飞书格式由 `lark-doc` / `lark-slides` 负责。
