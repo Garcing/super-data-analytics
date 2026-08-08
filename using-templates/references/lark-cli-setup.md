@@ -5,7 +5,7 @@ feishu-briefs.js 依赖 lark-cli 来操作飞书文档。
 ## 安装
 
 ```bash
-npm install -g @anthropic-ai/lark-cli
+npm install -g @larksuite/cli
 ```
 
 ## 初始化
