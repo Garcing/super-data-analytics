@@ -223,7 +223,7 @@ class Neo4jClient:
             rows = []
             for rec in result:
                 obj = {}
-                for key in rec.keys:
+                for key in rec.keys():
                     val = rec[key]
                     if hasattr(val, "properties"):
                         val = _clean_properties(dict(val.properties))
