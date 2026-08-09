@@ -45,3 +45,16 @@ def retrieve_schema() -> dict[str, Any]:
 def retrieve_doc(params: DocIn) -> dict[str, Any]:
     """读取飞书文档为 markdown。readOnly。"""
     return _doc(params.doc)
+
+
+class SyncIn(BaseModel):
+    only: str | None = Field(default=None, description="fetch|graph|embed；None 全跑")
+    dry_run: bool = False
+    force_embed: bool = False
+
+
+@mcp.tool(name="sync")
+def sync(params: SyncIn) -> dict[str, Any]:
+    """同步飞书多维表 → Neo4j → ONNX 向量（首次或刷新语义层数据）。destructive。"""
+    from sda_mcp.skills.retrieving_context_sync import sync_graph
+    return sync_graph(params.only, params.dry_run, params.force_embed)
