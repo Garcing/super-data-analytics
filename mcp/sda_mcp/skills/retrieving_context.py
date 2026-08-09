@@ -212,6 +212,11 @@ class Neo4jClient:
 
         return context
 
+    def execute(self, cypher: str, **params) -> None:
+        """通用写/DDL 执行（MERGE/SET/CREATE/CLEAR）。无返回。"""
+        with self._session() as s:
+            s.run(cypher, **params)
+
     def run_cypher(self, statement: str) -> list[dict]:
         with self._session() as s:
             result = s.run(statement)

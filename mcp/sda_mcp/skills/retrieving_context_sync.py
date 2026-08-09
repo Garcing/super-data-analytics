@@ -1,0 +1,391 @@
+"""GraphRAG sync 内核：飞书多维表 → Neo4j 图 → fastembed(ONNX) 向量。
+
+移植 retrieving-context/scripts/pipeline/{sync,feishu_reader,graph_builder,embedding}.py，
+去 CLI/argparse/print；embedding 用 fastembed（与查询侧 retrieving_context.embed 同源 →
+向量自洽，无 ONNX/PyTorch 混用 parity 风险）。失败抛 SkillError。
+
+公共入口：sync_graph(only=None, dry_run=False, force_embed=False) -> dict[str,Any]。
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from datetime import datetime, timezone
+from typing import Any
+
+from sda_mcp.config import get_env, load_config
+from sda_mcp.errors import ConfigError, ExternalAPIError, ValidationError
+from sda_mcp.skills.retrieving_context import Neo4jClient
+
+_SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
+                         "embedding_dimensions", "embedding_updated_at"})
+
+
+def _escape(label: str) -> str:
+    """Escape a label for Cypher backtick quotes (replace ` with ``)。
+
+    对齐 graph_builder._escape / embedding._escape。
+    """
+    return label.replace("`", "``")
+
+
+def _should_vectorize(cfg: dict) -> bool:
+    """对齐 embedding._should_vectorize：vector_index 默认 True。"""
+    return (cfg or {}).get("vector_index", True) is not False
+
+
+def _format_value(value) -> str:
+    """对齐 embedding._format_value：list 用中文顿号连接，其余 str()。"""
+    if isinstance(value, list):
+        return "、".join(str(v) for v in value)
+    return str(value)
+
+
+# ---------- Phase 1: feishu fetch（移植 feishu_reader.py）----------
+
+def _lark_cli(*args: str) -> dict:
+    """lark-cli base 子命令，--as bot，返回解析后 JSON。移植 feishu_reader._run_lark_cli。"""
+    lark = shutil.which("lark-cli") or "lark-cli"
+    try:
+        proc = subprocess.run([lark, *args, "--as", "bot"],
+                              capture_output=True, text=True, timeout=120)
+    except FileNotFoundError as exc:
+        raise ConfigError("未找到 lark-cli") from exc
+    if proc.returncode != 0:
+        raise ExternalAPIError(f"lark-cli 失败: {(proc.stderr or '').strip()[:300]}")
+    lines = proc.stdout.strip().split("\n")
+    start = next((i for i, ln in enumerate(lines) if ln.strip().startswith("{")), None)
+    if start is None:
+        raise ExternalAPIError(f"lark-cli 无 JSON 输出: {proc.stdout[:300]}")
+    try:
+        return json.loads("\n".join(lines[start:]))
+    except json.JSONDecodeError as exc:
+        raise ExternalAPIError("lark-cli 返回非 JSON") from exc
+
+
+def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
+    """移植 feishu_reader.fetch_table_fields（过滤 auto_number）。"""
+    data = _lark_cli("base", "+field-list", "--base-token", app_token, "--table-id", table_id)
+    return [{"name": f["name"], "type": f["type"], "id": f["id"]}
+            for f in data.get("data", {}).get("fields", []) if f["type"] != "auto_number"]
+
+
+def _extract_cell(field_type: str, cell: Any) -> Any:
+    """移植 feishu_reader._extract_cell_value。"""
+    if cell is None:
+        return None
+    if field_type in ("select", "multi_select") and isinstance(cell, list):
+        return cell[0] if field_type == "select" and len(cell) == 1 else cell
+    if isinstance(cell, str):
+        return cell.strip() or None
+    return cell
+
+
+def fetch_table_records(app_token: str, table_id: str, fields: list[dict] | None = None) -> list[dict]:
+    """移植 feishu_reader.fetch_table_records（分页 200，列对齐，过滤 None）。"""
+    if fields is None:
+        fields = fetch_table_fields(app_token, table_id)
+    field_map = {f["name"]: f["type"] for f in fields}
+    field_names = {f["name"] for f in fields}
+    all_rows: list[list] = []
+    offset = 0
+    page_size = 200
+    while True:
+        resp = _lark_cli("base", "+record-list", "--base-token", app_token, "--table-id", table_id,
+                         "--format", "json", "--limit", str(page_size), "--offset", str(offset))
+        payload = resp.get("data", {})
+        rows = payload.get("data", [])
+        col_names = payload.get("fields", [])
+        col_index = {n: i for i, n in enumerate(col_names)}
+        all_rows.extend(rows)
+        if not payload.get("has_more", False) or len(rows) < page_size:
+            break
+        offset += len(rows)
+    records = []
+    for row in all_rows:
+        rec = {}
+        for name in field_names:
+            if name in col_index:
+                val = _extract_cell(field_map[name], row[col_index[name]])
+                if val is not None:
+                    rec[name] = val
+        records.append(rec)
+    return records
+
+
+def _fetch_all_feishu(gc: dict) -> dict[str, list[dict]]:
+    """移植 sync.fetch_all_feishu_data：拉所有 entity + via 中间表。"""
+    app_token = get_env("FEISHU_GRAPH_BITABLE_APP_TOKEN")["FEISHU_GRAPH_BITABLE_APP_TOKEN"]
+    data: dict[str, list[dict]] = {}
+    for label, cfg in (gc.get("entities") or {}).items():
+        tid = cfg["table_id"]
+        fields = fetch_table_fields(app_token, tid)
+        data[label] = fetch_table_records(app_token, tid, fields)
+    seen = set()
+    for rel in (gc.get("relationships") or []):
+        via = rel.get("via")
+        if via and via.get("table_id") not in seen:
+            seen.add(via["table_id"])
+            tid = via["table_id"]
+            fields = fetch_table_fields(app_token, tid)
+            data[f"via_{tid}"] = fetch_table_records(app_token, tid, fields)
+    return data
+
+
+# ---------- Phase 2: graph build（移植 graph_builder.py，逐行对齐 Cypher）----------
+
+def _clear_graph(client: Neo4jClient) -> None:
+    """移植 graph_builder.clear_graph：MATCH (n) DETACH DELETE n。"""
+    client.execute("MATCH (n) DETACH DELETE n")
+
+
+def _build_nodes(client: Neo4jClient, entities: dict, feishu_data: dict) -> dict[str, int]:
+    """移植 graph_builder.build_nodes：MERGE on key_field + SET n += props，幂等去重。"""
+    counts: dict[str, int] = {}
+    for label, cfg in entities.items():
+        key_field = cfg["key_field"]
+        records = feishu_data.get(label, [])
+        if not records:
+            counts[label] = 0
+            continue
+        esc_label = _escape(label)
+        esc_key = _escape(key_field)
+        for record in records:
+            key_value = record.get(key_field)
+            if key_value is None:
+                continue
+            other_props = {k: v for k, v in record.items() if k != key_field}
+            cypher = (
+                f"MERGE (n:`{esc_label}` {{`{esc_key}`: $key_value}}) "
+                f"SET n += $props"
+            )
+            client.execute(cypher, key_value=key_value, props=other_props)
+        rows = client.run_cypher(f"MATCH (n:`{esc_label}`) RETURN count(n) AS cnt")
+        counts[label] = int(rows[0]["cnt"]) if rows else 0
+    return counts
+
+
+def _build_relationships(client: Neo4jClient, relationships: list, entities: dict,
+                         feishu_data: dict) -> dict[str, int]:
+    """移植 graph_builder.build_relationships：direct match + via 中间表两种模式。"""
+    counts: dict[str, int] = {}
+    for rel_cfg in relationships:
+        rel_type = rel_cfg["type"]
+        from_label = rel_cfg["from"]
+        to_label = rel_cfg["to"]
+        tag = f"{from_label}-{rel_type}->{to_label}"
+        from_key = entities[from_label]["key_field"]
+        to_key = entities[to_label]["key_field"]
+        count = 0
+
+        esc_from = _escape(from_label)
+        esc_to = _escape(to_label)
+        esc_rel = _escape(rel_type)
+        esc_from_key = _escape(from_key)
+        esc_to_key = _escape(to_key)
+
+        if "via" in rel_cfg:
+            via_cfg = rel_cfg["via"]
+            via_table_id = via_cfg["table_id"]
+            via_from_field = via_cfg["from_field"]
+            via_to_field = via_cfg["to_field"]
+            via_props_fields = via_cfg.get("properties", [])
+            via_records = feishu_data.get(f"via_{via_table_id}", [])
+            for via_rec in via_records:
+                from_val = via_rec.get(via_from_field)
+                to_val = via_rec.get(via_to_field)
+                if from_val is None or to_val is None:
+                    continue
+                props = {k: via_rec[k] for k in via_props_fields
+                         if k in via_rec and via_rec[k] is not None}
+                cypher = (
+                    f"MATCH (a:`{esc_from}` {{`{esc_from_key}`: $from_val}}) "
+                    f"MATCH (b:`{esc_to}` {{`{esc_to_key}`: $to_val}}) "
+                    f"MERGE (a)-[r:`{esc_rel}`]->(b) "
+                    f"SET r += $props"
+                )
+                client.execute(cypher, from_val=from_val, to_val=to_val, props=props)
+                count += 1
+        else:
+            match_cfg = rel_cfg["match"]
+            source_field = match_cfg["source_field"]
+            target_field = match_cfg["target_field"]
+            from_records = feishu_data.get(from_label, [])
+            to_records = feishu_data.get(to_label, [])
+            to_lookup: dict[str, list] = {}
+            for rec in to_records:
+                target_val = rec.get(target_field)
+                key_val = rec.get(to_key)
+                if target_val is None or key_val is None:
+                    continue
+                vals = [target_val] if not isinstance(target_val, list) else target_val
+                for v in vals:
+                    to_lookup.setdefault(v, []).append(key_val)
+            for from_rec in from_records:
+                from_key_val = from_rec.get(from_key)
+                if from_key_val is None:
+                    continue
+                source_value = from_rec.get(source_field)
+                if source_value is None:
+                    continue
+                source_values = source_value if isinstance(source_value, list) else [source_value]
+                for source_val in source_values:
+                    matched_to_keys = to_lookup.get(source_val)
+                    if not matched_to_keys:
+                        continue
+                    for to_key_val in matched_to_keys:
+                        cypher = (
+                            f"MATCH (a:`{esc_from}` {{`{esc_from_key}`: $from_key_val}}) "
+                            f"MATCH (b:`{esc_to}` {{`{esc_to_key}`: $to_key_val}}) "
+                            f"MERGE (a)-[:`{esc_rel}`]->(b)"
+                        )
+                        client.execute(cypher, from_key_val=from_key_val, to_key_val=to_key_val)
+                        count += 1
+        counts[tag] = count
+    return counts
+
+
+# ---------- Phase 3: embed（移植 embedding.py 的非 embed 部分 + fastembed 替换）----------
+
+def _generate_search_text(client: Neo4jClient, entities: dict) -> dict[str, int]:
+    """移植 embedding.generate_search_text（84-136）：拼 '字段名：值。' 写回 n.search_text。"""
+    counts: dict[str, int] = {}
+    for label, cfg in entities.items():
+        if not _should_vectorize(cfg):
+            continue
+        esc_label = _escape(label)
+        rows = client.run_cypher(
+            f"MATCH (n:`{esc_label}`) "
+            f"RETURN properties(n) AS props, elementId(n) AS id"
+        )
+        count = 0
+        for row in rows:
+            props = row.get("props") or {}
+            node_id = row.get("id")
+            parts: list[str] = []
+            for key, value in props.items():
+                if key in _SKIP_PROPS:
+                    continue
+                if value is None:
+                    continue
+                parts.append(f"{key}：{_format_value(value)}。")
+            text = "".join(parts)
+            if not text:
+                continue
+            client.execute(
+                f"MATCH (n) WHERE elementId(n) = $id "
+                f"SET n.search_text = $text",
+                id=node_id, text=text,
+            )
+            count += 1
+        counts[label] = count
+    return counts
+
+
+def _create_vector_indexes(client: Neo4jClient, entities: dict, dimensions: int) -> list[str]:
+    """移植 embedding.create_vector_indexes（139-179）：CREATE VECTOR INDEX IF NOT EXISTS，cosine。"""
+    index_names: list[str] = []
+    for label, cfg in entities.items():
+        if not _should_vectorize(cfg):
+            continue
+        esc_label = _escape(label)
+        index_name = f"{label}_embedding_index"
+        cypher = (
+            f"CREATE VECTOR INDEX `{_escape(index_name)}` IF NOT EXISTS "
+            f"FOR (n:`{esc_label}`) ON (n.embedding) "
+            f"OPTIONS {{ "
+            f"indexConfig: {{ "
+            f"`vector.dimensions`: {dimensions}, "
+            f"`vector.similarity_function`: 'cosine' "
+            f"}} "
+            f"}}"
+        )
+        client.execute(cypher)
+        index_names.append(index_name)
+    return index_names
+
+
+def _embed_nodes(client: Neo4jClient, entities: dict, dimensions: int, force: bool) -> dict[str, int]:
+    """生成 embedding。**关键差异**：用 fastembed 批量编码（retrieving_context.embed 同源），
+    替代原 SentenceTransformer。fastembed 对 bge 默认 L2 归一化（与原 normalize_embeddings=True 一致）。
+    写回字段对齐 embedding.embed_nodes（264-277）：n.embedding / embedding_model /
+    embedding_dimensions / embedding_updated_at。"""
+    model = (load_config().get("graph-config", {}).get("embedding", {}) or {}).get(
+        "model", "BAAI/bge-small-zh-v1.5")
+    from fastembed import TextEmbedding
+    fe = TextEmbedding(model_name=model)
+    counts: dict[str, int] = {}
+    for label, cfg in entities.items():
+        if not _should_vectorize(cfg):
+            continue
+        esc_label = _escape(label)
+        where = ("n.search_text IS NOT NULL" if force
+                 else "n.search_text IS NOT NULL AND n.embedding IS NULL")
+        rows = client.run_cypher(
+            f"MATCH (n:`{esc_label}`) WHERE {where} "
+            f"RETURN elementId(n) AS id, n.search_text AS text"
+        )
+        if not rows:
+            counts[label] = 0
+            continue
+        texts = [r["text"] for r in rows]
+        ids = [r["id"] for r in rows]
+        vecs = list(fe.embed(texts))   # fastembed 批量，已 L2 归一化
+        now = datetime.now(timezone.utc).isoformat()
+        for nid, emb in zip(ids, vecs):
+            client.execute(
+                f"MATCH (n) WHERE elementId(n) = $id "
+                f"SET n.embedding = $emb, "
+                f"    n.embedding_model = $model, "
+                f"    n.embedding_dimensions = $dims, "
+                f"    n.embedding_updated_at = datetime($now)",
+                id=nid, emb=list(emb), model=model, dims=dimensions, now=now,
+            )
+        counts[label] = len(ids)
+    return counts
+
+
+# ---------- 编排 ----------
+
+def sync_graph(only: str | None = None, dry_run: bool = False, force_embed: bool = False) -> dict[str, Any]:
+    """同步飞书多维表 → Neo4j → ONNX 向量。
+
+    Args:
+        only: 'fetch' | 'graph' | 'embed'，只跑某阶段；None 全跑。
+        dry_run: 只 fetch 预览，不写库。
+        force_embed: 重新生成全部 embedding（即使已存在）。
+    Returns: 各阶段计数 {fetch:{...}, nodes:{...}, relationships:{...}, search_text:{...}, indexes:n, embed:{...}}。
+    """
+    if only is not None and only not in ("fetch", "graph", "embed"):
+        raise ValidationError("only 必须是 fetch|graph|embed 或 None")
+    gc = load_config().get("graph-config", {}) or {}
+    if "entities" not in gc:
+        raise ConfigError("config.json 缺 graph-config.entities")
+    dimensions = (gc.get("embedding", {}) or {}).get("dimensions", 512)
+    result: dict[str, Any] = {}
+
+    if only in (None, "fetch", "graph"):
+        feishu_data = _fetch_all_feishu(gc)
+        result["fetch"] = {k: len(v) for k, v in feishu_data.items()}
+    else:
+        feishu_data = {}
+
+    if dry_run:
+        return result
+
+    client = Neo4jClient()
+    try:
+        if only in (None, "graph"):
+            if only is None:
+                _clear_graph(client)
+            result["nodes"] = _build_nodes(client, gc["entities"], feishu_data)
+            result["relationships"] = _build_relationships(
+                client, gc.get("relationships", []), gc["entities"], feishu_data)
+        if only in (None, "embed"):
+            result["search_text"] = _generate_search_text(client, gc["entities"])
+            result["indexes"] = len(_create_vector_indexes(client, gc["entities"], dimensions))
+            result["embed"] = _embed_nodes(client, gc["entities"], dimensions, force_embed)
+    finally:
+        client.close()
+    return result
