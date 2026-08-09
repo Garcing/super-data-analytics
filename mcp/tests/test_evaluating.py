@@ -18,7 +18,8 @@ def test_did_basic():
     r = evaluate({"analysis_type": "did",
                   "treatment_before": 100, "treatment_after": 130,
                   "control_before": 100, "control_after": 110})
-    assert r["did_effect"] == 10
+    # treatment_change=30, control_change=10 → did_effect=20
+    assert r["did_effect"] == 20
     assert "ok" not in r
 
 
