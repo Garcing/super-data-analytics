@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sda-mcp"
+version = "0.1.0"
+description = "super-data-analytics 的干净 Python 内核 + FastMCP 服务（子项目 1.A：分析内核）"
+requires-python = ">=3.10"
+# 本计划零运行时依赖（三个分析内核均为标准库）。
+# 后续计划在此追加 fastmcp、httpx、psycopg[binary]、neo4j、matplotlib、fastembed 等。
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["sda_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
