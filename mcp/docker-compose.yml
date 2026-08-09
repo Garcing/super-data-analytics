@@ -11,4 +11,6 @@ services:
       SDA_CONFIG_PATH: /root/.super-data-analytics/config.json
     volumes:
       - ${HOME}/.super-data-analytics/config.json:/root/.super-data-analytics/config.json:ro
+      # lark-cli 鉴权态（模板/文档/sync 工具需要；宿主 lark-cli config init 产生）
+      - ${HOME}/.lark-cli:/root/.lark-cli:ro
     restart: unless-stopped
