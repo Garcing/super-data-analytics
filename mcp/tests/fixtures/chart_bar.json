@@ -1,0 +1,3 @@
+{"type": "bar", "title": "各渠道 GMV", "subtitle": "2025年8月",
+ "data": [{"channel": "APP", "gmv": 120}, {"channel": "Web", "gmv": 80}, {"channel": "小程序", "gmv": 60}],
+ "encoding": {"x": "channel", "y": "gmv"}}
