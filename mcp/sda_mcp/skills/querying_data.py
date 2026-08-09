@@ -74,7 +74,7 @@ class HologresClient:
         self._dsn = (
             f"host={env['HOLOGRES_HOST']} port={env['HOLOGRES_PORT']} "
             f"dbname={env['HOLOGRES_DATABASE']} user={env['HOLOGRES_USER']} "
-            f"password={env['HOLOGRES_PASSWORD']} connect_timeout=10")
+            f"password={env['HOLOGRES_PASSWORD']} connect_timeout=20")
 
     def _connect(self) -> psycopg.Connection:
         try:

@@ -14,6 +14,11 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e . \
     && pip install --no-cache-dir uvicorn
 
+# 中国服务器直连 HuggingFace 不通：走 hf-mirror.com + 关 Xet（Xet cas-server 在镜像源 401）
+# 否则 fastembed 预下载模型 / 运行时回源都会失败。构建期与运行期都需要这两个变量。
+ENV HF_ENDPOINT=https://hf-mirror.com \
+    HF_HUB_DISABLE_XET=1
+
 # 预下载 bge-small ONNX 模型，避免运行时拉取（fastembed 首次会下载）
 RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5')"
 
