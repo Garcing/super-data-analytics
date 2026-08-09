@@ -7,7 +7,7 @@ from sda_mcp.skills.building_reports import (
     publish_report as _publish, list_reports as _list, get_report as _get,
     delete_report as _delete, generate_image as _gen,
 )
-from sda_mcp.tools._common import mcp, to_dict
+from sda_mcp.tools._common import mcp
 
 
 class PublishIn(BaseModel):
@@ -54,7 +54,8 @@ def report_html_delete(params: IdIn) -> dict[str, Any]:
 
 @mcp.tool(name="report_image_generate")
 def report_image_generate(params: ImageGenIn) -> dict[str, Any]:
-    """apimart gpt-image-2 异步生图（最长 ~180s）。返回图片 URL+字节。"""
+    """apimart gpt-image-2 异步生图（最长 ~180s）。返回图片 URL+状态。"""
     opts = {k: v for k, v in params.model_dump().items() if k != "prompt" and v is not None}
     r = _gen(params.prompt, **opts)
-    return to_dict(r)
+    return {"task_id": r.task_id, "cost": r.cost, "status": r.status,
+            "images": [{"url": im.url, "error": im.error} for im in r.images]}
