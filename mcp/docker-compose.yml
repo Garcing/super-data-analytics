@@ -1,0 +1,14 @@
+services:
+  sda-mcp:
+    build: .
+    container_name: sda-mcp
+    # host 网络：连 127.0.0.1:7687 Neo4j；hermes 走 localhost:3100；eth0/tailscale 直通
+    network_mode: host
+    environment:
+      # 静态 Bearer token（hermes/笔记本经 Caddy 同一 token）。部署时在此填或用 .env
+      SDA_MCP_TOKEN: ${SDA_MCP_TOKEN}
+      # config.json 挂载点（宿主 ~/.super-data-analytics/config.json）
+      SDA_CONFIG_PATH: /root/.super-data-analytics/config.json
+    volumes:
+      - ${HOME}/.super-data-analytics/config.json:/root/.super-data-analytics/config.json:ro
+    restart: unless-stopped
