@@ -1,0 +1,297 @@
+"""retrieving_context 内核：GraphRAG 向量检索 + 图扩展 + Cypher + 飞书文档，
+从原 retrieve.js 移植为纯 Python。embedding 用 fastembed(ONNX) in-process。
+去 CLI/三态/{ok} 信封；失败抛 SkillError。行为对齐 retrieving-context/scripts/retrieve.js。
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from functools import lru_cache
+from typing import Any
+
+from neo4j import GraphDatabase
+
+from sda_mcp.config import load_config
+from sda_mcp.errors import ConfigError, DataSourceError, ExternalAPIError, ValidationError
+
+_INTERNAL_PROPS = {
+    "search_text", "embedding", "embedding_model", "embedding_dimensions", "embedding_updated_at",
+}
+
+
+def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in (raw or {}).items() if k not in _INTERNAL_PROPS}
+
+
+def _build_schema(gc: dict[str, Any]) -> dict[str, Any]:
+    entities = []
+    for label, cfg in (gc.get("entities") or {}).items():
+        entities.append({
+            "label": label,
+            "key_field": cfg.get("key_field"),
+            "table_id": cfg.get("table_id"),
+            "vector_index": cfg.get("vector_index", True),
+        })
+    relationships = []
+    for rel in (gc.get("relationships") or []):
+        out = {"type": rel.get("type"), "from": rel.get("from"), "to": rel.get("to")}
+        if rel.get("match"):
+            out["match"] = {
+                "source_field": rel["match"].get("source_field"),
+                "target_field": rel["match"].get("target_field"),
+            }
+        if rel.get("via"):
+            out["via"] = {
+                "table_id": rel["via"].get("table_id"),
+                "from_field": rel["via"].get("from_field"),
+                "to_field": rel["via"].get("to_field"),
+                "properties": rel["via"].get("properties", []),
+            }
+        relationships.append(out)
+    return {"embedding": gc.get("embedding", {}), "entities": entities, "relationships": relationships}
+
+
+def schema() -> dict[str, Any]:
+    gc = load_config().get("graph-config", {})
+    return _build_schema(gc)
+
+
+@lru_cache(maxsize=1)
+def _embedder():
+    try:
+        from fastembed import TextEmbedding
+    except ImportError as exc:
+        raise ConfigError("fastembed 未安装") from exc
+    gc = load_config().get("graph-config", {})
+    model = gc.get("embedding", {}).get("model", "BAAI/bge-small-zh-v1.5")
+    return TextEmbedding(model_name=model)
+
+
+def embed(text: str) -> list[float]:
+    if not isinstance(text, str) or not text.strip():
+        raise ValidationError("question 不能为空")
+    return list(next(_embedder().embed([text])))
+
+
+class Neo4jClient:
+    def __init__(self) -> None:
+        env = load_config().get("env", {})
+        uri = env.get("NEO4J_URI", "bolt://localhost:7687")
+        database = env.get("NEO4J_DATABASE", "neo4j")
+        user = env.get("NEO4J_USER", "neo4j")
+        password = env.get("NEO4J_PASSWORD")
+        if not password:
+            raise ConfigError("NEO4J_PASSWORD 未在 config.json 的 env 块中找到")
+        self._database = database
+        self._driver = GraphDatabase.driver(uri, auth=(user, password))
+
+    def close(self) -> None:
+        self._driver.close()
+
+    def _session(self):
+        return self._driver.session(database=self._database)
+
+    def find_vector_index_name(self, label: str) -> str | None:
+        with self._session() as s:
+            try:
+                for rec in s.run("SHOW VECTOR INDEXES YIELD name, labelsOrTypes"):
+                    labels = rec["labelsOrTypes"]
+                    if labels and label in labels:
+                        return rec["name"]
+            except Exception:
+                return None
+        return None
+
+    def search_vector_index(self, index_name: str, label: str, embedding: list[float], top_k: int) -> list[dict]:
+        esc = label.replace("`", "``")
+        cypher = (
+            "CALL db.index.vector.queryNodes($indexName, $topK, $embedding) "
+            "YIELD node, score "
+            f"WHERE node:`{esc}` "
+            "RETURN elementId(node) AS id, score, properties(node) AS properties "
+            "ORDER BY score DESC"
+        )
+        try:
+            with self._session() as s:
+                return [{"id": r["id"], "score": r["score"], "properties": dict(r["properties"])}
+                        for r in s.run(cypher, indexName=index_name, topK=top_k, embedding=embedding)]
+        except Exception:
+            return []
+
+    def fetch_table_relationship_chain(self, relationship_id) -> list[dict]:
+        cyp = (
+            "MATCH (current:`表关系` {`表关系ID`: $relationshipId}) "
+            "MATCH path = (current)-[:`基于`*0..10]->(step:`表关系`) "
+            "OPTIONAL MATCH (step)-[tableRel]->(table:`表`) "
+            "WHERE type(tableRel) IN ['起始于', '加入'] "
+            "RETURN length(path) AS depth, properties(step) AS relationship, "
+            "collect(DISTINCT {role: type(tableRel), properties: properties(table)}) AS tables "
+            "ORDER BY depth DESC"
+        )
+        with self._session() as s:
+            rows = []
+            for rec in s.run(cyp, relationshipId=relationship_id):
+                tables = [
+                    {"role": t["role"], "properties": _clean_properties(dict(t["properties"]))}
+                    for t in (rec["tables"] or []) if t and t.get("role") and t.get("properties")
+                ]
+                rows.append({"depth": rec["depth"],
+                             "relationship": _clean_properties(dict(rec["relationship"])),
+                             "tables": tables})
+            return rows
+
+    def fetch_graph_context(self, label: str, node_id: str, relationships: list[dict]) -> dict:
+        """Port of retrieve.js fetchGraphContext (402-485). 沿库里已有边扩展，
+        不再读 match / source_field。失败按 per-rel continue。"""
+        context: dict[str, Any] = {}
+
+        relevant = [rel for rel in relationships if rel.get("from") == label or rel.get("to") == label]
+
+        for rel in relevant:
+            try:
+                is_from = rel.get("from") == label
+                is_to = rel.get("to") == label
+                other_label = rel.get("to") if is_from else rel.get("from")
+                if not other_label:
+                    continue
+
+                esc_other = other_label.replace("`", "``")
+                esc_rel_type = (rel.get("type") or "").replace("`", "``")
+
+                # 自环走无向；否则按 from/to 判方向
+                if is_from and is_to:
+                    rel_pattern = f"-[:`{esc_rel_type}`]-"
+                elif is_from:
+                    rel_pattern = f"-[:`{esc_rel_type}`]->"
+                else:
+                    rel_pattern = f"<-[:`{esc_rel_type}`]-"
+
+                # 自环时排除起点自身
+                self_exclude = " AND elementId(other) <> $nodeId" if other_label == label else ""
+
+                cypher = (
+                    f"MATCH (n){rel_pattern}(other:`{esc_other}`) "
+                    f"WHERE elementId(n) = $nodeId{self_exclude} "
+                    "RETURN properties(other) AS props "
+                    "LIMIT 20"
+                )
+
+                with self._session() as s:
+                    records = list(s.run(cypher, nodeId=node_id))
+
+                if not records:
+                    continue
+
+                context.setdefault(other_label, [])
+                for rec in records:
+                    props = _clean_properties(dict(rec["props"]))
+                    if other_label == "表关系" and props.get("表关系ID"):
+                        props["关系链"] = self.fetch_table_relationship_chain(props["表关系ID"])
+                    context[other_label].append(props)
+            except Exception:
+                # 对齐 retrieve.js：单条关系失败不影响其余扩展
+                continue
+
+        if label == "表关系":
+            try:
+                with self._session() as s:
+                    cur = list(s.run(
+                        "MATCH (n:`表关系`) "
+                        "WHERE elementId(n) = $nodeId "
+                        "RETURN n.`表关系ID` AS relationshipId",
+                        nodeId=node_id,
+                    ))
+                if cur:
+                    rid = cur[0].get("relationshipId")
+                    if rid is not None:
+                        context["关系链"] = self.fetch_table_relationship_chain(rid)
+            except Exception:
+                pass
+
+        return context
+
+    def run_cypher(self, statement: str) -> list[dict]:
+        with self._session() as s:
+            result = s.run(statement)
+            rows = []
+            for rec in result:
+                obj = {}
+                for key in rec.keys:
+                    val = rec[key]
+                    if hasattr(val, "properties"):
+                        val = _clean_properties(dict(val.properties))
+                    elif isinstance(val, list):
+                        val = [_clean_properties(dict(v.properties)) if hasattr(v, "properties") else v for v in val]
+                    obj[key] = val
+                rows.append(obj)
+            return rows
+
+
+def search(question: str, top_k: int = 5, targets: list[str] | None = None) -> dict[str, Any]:
+    if not isinstance(question, str) or not question.strip():
+        raise ValidationError("question 不能为空")
+    gc = load_config().get("graph-config", {})
+    entities = gc.get("entities") or {}
+    relationships = gc.get("relationships") or []
+    target_labels = [label for label, c in entities.items()
+                     if c.get("vector_index", True) and (not targets or label in targets)]
+    embedding_vec = embed(question)
+    client = Neo4jClient()
+    try:
+        all_results = []
+        for label in target_labels:
+            index_name = client.find_vector_index_name(label)
+            if not index_name:
+                continue
+            for hit in client.search_vector_index(index_name, label, embedding_vec, top_k):
+                context = client.fetch_graph_context(label, hit["id"], relationships) if relationships else {}
+                all_results.append({
+                    "label": label,
+                    "score": hit["score"],
+                    "properties": _clean_properties(dict(hit["properties"])),
+                    "context": context,
+                })
+        all_results.sort(key=lambda x: x["score"], reverse=True)
+        return {"question": question, "results": all_results}
+    finally:
+        client.close()
+
+
+def cypher(statement: str) -> dict[str, Any]:
+    if not isinstance(statement, str) or not statement.strip():
+        raise ValidationError("statement 不能为空")
+    client = Neo4jClient()
+    try:
+        return {"cypher": statement, "rows": client.run_cypher(statement)}
+    finally:
+        client.close()
+
+
+def doc(doc_id: str) -> dict[str, Any]:
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        raise ValidationError("doc 不能为空")
+    args = ["docs", "+fetch", "--doc", doc_id, "--doc-format", "markdown", "--as", "user"]
+    env = {**os.environ, "LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "LARKSUITE_CLI_NO_SKILLS_NOTIFIER": "1"}
+    lark = shutil.which("lark-cli")
+    try:
+        if lark:
+            proc = subprocess.run([lark, *args], capture_output=True, text=True, timeout=60, env=env)
+        else:
+            proc = subprocess.run(["lark-cli", *args], capture_output=True, text=True, timeout=60, env=env)
+    except FileNotFoundError as exc:
+        raise ExternalAPIError("未找到 lark-cli，请先 npm install -g @larksuite/cli 并 lark-cli auth login") from exc
+    if proc.returncode != 0:
+        raise ExternalAPIError(f"读取飞书文档失败: {(proc.stderr or proc.stdout).strip()[:300]}")
+    try:
+        envelope = json.loads(proc.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise ExternalAPIError("lark-cli 返回了无法解析的 JSON") from exc
+    if envelope.get("ok") is not True:
+        err = envelope.get("error") or {}
+        raise ExternalAPIError(f"读取飞书文档失败: {err.get('message') or err.get('hint') or '未知错误'}")
+    document = (envelope.get("data") or {}).get("document")
+    if not document:
+        raise ExternalAPIError("lark-cli 返回成功，但结果中缺少 document")
+    return document
