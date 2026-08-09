@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # lark-cli（模板/文档/sync 工具用；走 npmmirror 加速）。鉴权态由 compose 挂载 ~/.lark-cli
+# 锁 1.0.83 与宿主一致：新版会误读旧版 token 格式 → invalid_client
 RUN npm config set registry https://registry.npmmirror.com \
-    && npm install -g @larksuite/cli \
+    && npm install -g @larksuite/cli@1.0.83 \
     && lark-cli --version
 
 WORKDIR /app
