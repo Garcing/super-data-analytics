@@ -167,7 +167,10 @@ def forecast_seasonal_naive(values, horizon, options=None, season_length=0):
 
 def forecast_moving_average(values, horizon, options=None, season_length=0):
     options = options or {}
-    window = int(options.get("window", min(3, len(values))))
+    if "window" in options:
+        window = _require_int(options["window"], "window")
+    else:
+        window = min(3, len(values))
     if window < 1 or window > len(values):
         raise ForecastError("moving_average window must fit available history")
     level = mean(values[-window:])
@@ -176,7 +179,10 @@ def forecast_moving_average(values, horizon, options=None, season_length=0):
 
 def forecast_weighted_moving_average(values, horizon, options=None, season_length=0):
     options = options or {}
-    window = int(options.get("window", min(3, len(values))))
+    if "window" in options:
+        window = _require_int(options["window"], "window")
+    else:
+        window = min(3, len(values))
     if window < 1 or window > len(values):
         raise ForecastError("weighted_moving_average window must fit available history")
     recent = values[-window:]
@@ -278,7 +284,10 @@ def backtest_model(model, values, options, season_length):
     actual = values[-holdout:]
     backtest_options = dict(options)
     if model in {"moving_average", "weighted_moving_average"}:
-        backtest_options["window"] = min(int(backtest_options.get("window", min(3, len(train)))), len(train))
+        if "window" in backtest_options:
+            backtest_options["window"] = min(_require_int(backtest_options["window"], "window"), len(train))
+        else:
+            backtest_options["window"] = min(3, len(train))
     predicted = run_model(model, train, holdout, backtest_options, season_length)
     metrics = error_metrics(actual, predicted)
     return {

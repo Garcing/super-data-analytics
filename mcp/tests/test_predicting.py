@@ -34,3 +34,11 @@ def test_non_integer_horizon_now_rejected():
 def test_missing_field_raises():
     with pytest.raises(ForecastError):
         forecast({"grain": "day", "horizon": 1, "model": "naive", "series": SERIES})
+
+
+def test_non_integer_window_now_rejected():
+    # 原 int(2.7)==2 静默截断；内核已收紧为抛错。
+    with pytest.raises(ForecastError):
+        forecast({"metric": "gmv", "grain": "day", "horizon": 2,
+                  "model": "moving_average", "series": SERIES,
+                  "options": {"window": 2.7}})

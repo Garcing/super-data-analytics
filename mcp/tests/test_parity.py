@@ -8,8 +8,6 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-import pytest
-
 from sda_mcp.skills.diagnosing import contribute
 from sda_mcp.skills.predicting import forecast
 from sda_mcp.skills.evaluating import evaluate
