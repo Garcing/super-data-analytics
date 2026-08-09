@@ -25,7 +25,6 @@ from sda_mcp.skills.building_reports.blob_store import BlobInfo, VercelBlobClien
 INDEX_PATH = "html-reports-index.json"
 REPORT_PREFIX = "html-reports"
 CACHE_MAX_AGE = 60           # CDN 缓存 60s，新报告 ~1min 内可见
-_ETAG_MAX_RETRIES = 12       # 覆盖 60s 刷新窗口
 _LOCK_ATTEMPTS = 5
 _LOCK_BASE_DELAY = 0.300
 
@@ -53,28 +52,29 @@ def _put_json(client: VercelBlobClient, pathname: str, obj: Any, if_match: str |
 
 
 def _read_index_with_etag(client: VercelBlobClient) -> tuple[dict[str, Any], str | None]:
-    """head() 强一致 etag vs 公开读(CDN) etag 对比，一致才用。移植 html.js readIndexWithEtag。"""
-    for i in range(_ETAG_MAX_RETRIES):
-        blob = client.head(INDEX_PATH)
-        if not blob or not blob.url:
-            return {"reports": []}, None
-        head_etag = (blob.etag or "").removeprefix("W/")
-        resp = httpx.get(blob.url, timeout=httpx.Timeout(15.0))
-        if resp.status_code >= 400:
-            return {"reports": []}, None
-        fetch_etag = resp.headers.get("etag", "").removeprefix("W/")
-        if fetch_etag == head_etag:
-            data: dict[str, Any] = {"reports": []}
-            text = resp.text
-            if text:
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError:
-                    data = {"reports": []}
-            return data, head_etag
-        if i < _ETAG_MAX_RETRIES - 1:
-            time.sleep(i + 1)
-    raise ExternalAPIError("索引读取一直陈旧（CDN 缓存未刷新）。请稍后重试——新报告约 1 分钟可见。")
+    """读索引（强一致新鲜内容）+ 返回当前 etag 供写时 ifMatch。
+
+    Vercel Blob API 的 head 不返回 etag（实测本 store 如此），故不能用
+    "head etag == fetch etag" 对比法。改用 head 的 uploaded_at 作 cache-buster
+    绕过 CDN 陈旧（60s 缓存），直接拿 fetch 响应的 etag（当前内容的真实 etag）
+    作为乐观锁凭证。"""
+    blob = client.head(INDEX_PATH)
+    if not blob or not blob.url:
+        return {"reports": []}, None
+    url = blob.url
+    if blob.uploaded_at:
+        url = f"{url}{'&' if '?' in url else '?'}v={blob.uploaded_at}"
+    resp = httpx.get(url, timeout=httpx.Timeout(15.0))
+    if resp.status_code >= 400:
+        return {"reports": []}, None
+    etag = resp.headers.get("etag") or blob.etag
+    data: dict[str, Any] = {"reports": []}
+    if resp.text:
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            data = {"reports": []}
+    return data, etag
 
 
 def _build_index_entry(report_id: str, body: dict[str, Any], uploaded_at: str | None) -> dict[str, Any]:
