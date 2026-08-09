@@ -1,0 +1,4 @@
+{"baseline_total": 1000, "current_total": 1200,
+ "items": [{"name": "华东", "baseline": 400, "current": 520},
+           {"name": "华南", "baseline": 350, "current": 380},
+           {"name": "华北", "baseline": 250, "current": 300}]}
