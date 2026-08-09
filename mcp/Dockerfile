@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-noto-cjk \
         nodejs \
         npm \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # lark-cli（模板/文档/sync 工具用；走 npmmirror 加速）。鉴权态由 compose 挂载 ~/.lark-cli
