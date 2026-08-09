@@ -16,6 +16,10 @@ from sda_mcp.skills.building_reports import (
     publish_report, list_reports, get_report, delete_report,
     submit_image, get_image_status, generate_image,
 )
+from sda_mcp.skills.using_templates import (
+    list_templates, read_template, create_template, update_template, delete_template,
+    CreateResult, UpdateResult, DeleteResult,
+)
 
 __all__ = [
     "contribute", "ContributionResult",
@@ -27,4 +31,5 @@ __all__ = [
     "retrieve_search", "retrieve_cypher", "retrieve_schema", "retrieve_doc",
     "publish_report", "list_reports", "get_report", "delete_report",
     "submit_image", "get_image_status", "generate_image",
+    "list_templates", "read_template", "create_template", "update_template", "delete_template",
 ]
