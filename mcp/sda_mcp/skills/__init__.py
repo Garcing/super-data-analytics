@@ -12,6 +12,10 @@ from sda_mcp.skills.retrieving_context import (
     search as retrieve_search, cypher as retrieve_cypher,
     schema as retrieve_schema, doc as retrieve_doc,
 )
+from sda_mcp.skills.building_reports import (
+    publish_report, list_reports, get_report, delete_report,
+    submit_image, get_image_status, generate_image,
+)
 
 __all__ = [
     "contribute", "ContributionResult",
@@ -21,4 +25,6 @@ __all__ = [
     "sql_query", "sql_schema", "sql_test_connection", "SqlResult",
     "powerbi_list_models", "powerbi_list_tools", "powerbi_schema", "powerbi_query",
     "retrieve_search", "retrieve_cypher", "retrieve_schema", "retrieve_doc",
+    "publish_report", "list_reports", "get_report", "delete_report",
+    "submit_image", "get_image_status", "generate_image",
 ]
