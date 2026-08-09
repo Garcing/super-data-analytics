@@ -1,18 +1,22 @@
 # super-data-analytics MCP 服务镜像
 FROM python:3.12-slim
 
-# CJK 字体（中文图表必需）+ 基础工具
+# 中国服务器：apt/pip 一律走国内镜像，否则构建极慢甚至超时
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
+
+# CJK 字体（中文图表必需）
 RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 先装依赖（分层缓存）
+# 先装依赖（分层缓存）。走清华 PyPI 镜像
 COPY pyproject.toml ./
 # 项目以 editable 安装；依赖在 pyproject 的 dependencies 声明
-RUN pip install --no-cache-dir -e . \
-    && pip install --no-cache-dir uvicorn
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -e . \
+    && pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple uvicorn
 
 # 中国服务器直连 HuggingFace 不通：走 hf-mirror.com + 关 Xet（Xet cas-server 在镜像源 401）
 # 否则 fastembed 预下载模型 / 运行时回源都会失败。构建期与运行期都需要这两个变量。
