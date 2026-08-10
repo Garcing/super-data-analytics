@@ -1,4 +1,4 @@
-"""模板工具（using_templates 内核，包 lark-cli）→ MCP 工具。"""
+"""模板工具（using_templates 内核，经 FeishuClient 走飞书开放平台）→ MCP 工具。"""
 from typing import Any
 
 from pydantic import BaseModel, Field
