@@ -245,3 +245,73 @@ def test_list_bitable_records_paginates_via_page_token(monkeypatch):
     items = f.FeishuClient().list_bitable_records("APP", "tbl1")
     assert [i["record_id"] for i in items] == ["r1", "r2"]
     assert calls == [None, "PT2"]
+
+
+# --- 健壮性：HTTP 错误 / 非 JSON 响应 / 翻页防御 ---
+
+def test_request_http_500_raises_external(monkeypatch):
+    """raise_for_status → ExternalAPIError（HTTP 状态码错误路径）。"""
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    monkeypatch.setattr(f.httpx, "request",
+                        lambda *a, **k: _Resp({"code": 0, "data": {}}, status=500))
+    with pytest.raises(ExternalAPIError):
+        f.FeishuClient()._request("GET", "/open-apis/x")
+
+
+def test_request_non_json_body_raises_external(monkeypatch):
+    """非 JSON 200 响应（网关 HTML 错误页）→ json.JSONDecodeError(ValueError) 归一为 ExternalAPIError。"""
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+
+    class _BadResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _BadResp())
+    with pytest.raises(ExternalAPIError):
+        f.FeishuClient()._request("GET", "/open-apis/x")
+
+
+def test_token_non_json_body_raises_external(monkeypatch):
+    """token 端点同样：非 JSON 200 响应归一为 ExternalAPIError（非裸 ValueError）。"""
+    f._reset_token_cache()
+
+    class _BadResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            raise ValueError("not json")
+
+    monkeypatch.setattr(f.httpx, "post", lambda *a, **k: _BadResp())
+    monkeypatch.setattr(f, "get_env",
+                        lambda *k: {"FEISHU_APP_ID": "a", "FEISHU_APP_SECRET": "b"})
+    with pytest.raises(ExternalAPIError):
+        f._get_tenant_token()
+
+
+def test_list_folder_files_breaks_when_has_more_but_no_token(monkeypatch):
+    """has_more=True 但缺 next_page_token/page_token → 防御性 break，不无限循环。"""
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    calls = []
+
+    def _req(method, url, params=None, **k):
+        calls.append(1)
+        return _Resp({"code": 0, "data": {"files": [
+            {"token": "d1", "name": "a", "type": "docx"}],
+            "has_more": True}})  # 故意无 token
+
+    monkeypatch.setattr(f.httpx, "request", _req)
+    files = f.FeishuClient().list_folder_files("ROOT")
+    assert len(files) == 1 and files[0]["token"] == "d1"
+    assert len(calls) == 1   # 只调一次即 break，未陷入死循环
+

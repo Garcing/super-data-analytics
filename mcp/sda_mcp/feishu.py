@@ -23,6 +23,8 @@ _TOKEN_REFRESH_MARGIN = 300  # 过期前 5 分钟刷新
 # 已用真实 base（BHINbLiOKa4rXDsLTlQcRwuSn9c）逐字段验证值结构（2026-08-10）：
 #   Text(1)/SingleSelect(3) → 裸字符串；MultiSelect(4) → 字符串列表；
 #   Formula(20)/Lookup(19) 文本结果 → [{text,type}] 片段数组（官方：查找引用本质=公式，value 同构）。
+# 注意：这些常量被 sync 层（skills/retrieving_context_sync.py）import 做字段类型分派，
+# 看似"未使用"实则跨模块契约，勿删。
 _F_TEXT = 1
 _F_NUMBER = 2
 _F_SINGLE_SELECT = 3
@@ -57,7 +59,9 @@ def _get_tenant_token() -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
+        # ValueError 覆盖 json.JSONDecodeError：网关返回非 JSON 200 响应（如 Caddy HTML 错误页）时，
+        # resp.json() 抛 ValueError（非 httpx.HTTPError），需归一成 ExternalAPIError。
         raise ExternalAPIError(f"获取 tenant_access_token 失败: {exc}") from exc
     if data.get("code") != 0:
         raise ExternalAPIError(f"获取 tenant_access_token 失败: {data.get('msg')}")
@@ -89,7 +93,8 @@ class FeishuClient:
             )
             resp.raise_for_status()
             data = resp.json()
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
+            # ValueError 覆盖 json.JSONDecodeError：非 JSON 200 响应（网关 HTML 错误页）归一为 ExternalAPIError。
             raise ExternalAPIError(f"飞书 API {method} {path} 失败: {exc}") from exc
         # 业务码校验在 _request 内统一做（_check 抛 ExternalAPIError，非 HTTPError，
         # 不会被上面的 except 捕获）。各端点方法的 _check 调用因此成为幂等无副作用的二次校验。
