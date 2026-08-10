@@ -235,7 +235,7 @@ mcp.super-data-analytics.online {
 | **HuggingFace 不通** | 服务器直连 HF 超时。Dockerfile 固化 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（否则 fastembed 拉模型/Xet 401 失败）。 |
 | **中国镜像** | Dockerfile 用 tuna apt/PyPI；否则构建从中国极慢/超时。 |
 | **飞书自建应用授权** | 模板文件夹、graph 多维表、retrieve_doc 目标文档须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
-| **sync 字段类型拍平** | 开放平台多维表记录里，超链接(type=15) 返回 `{text,link}` 裸 dict、公式(20)/查找引用(19) 返回 `[{text,type}]` 片段数组。`_simplify_value` 必须全部拍平成可读串再写 Neo4j，否则 `SET n += $props` 报 Map 类型错。旧 lark-cli 把单元格格式化成串，故旧流水线无此问题。 |
+| **sync 字段类型清洗** | 开放平台多维表各类型值结构差异大，`_simplify_value` 逐类型拍平成 Neo4j 原生类型（str/int/float/bool/list[str]），否则 `SET n += $props` 报 Map 类型错。已用专用测试 base 全字段验证：Number(2) 返回**字符串**需转数字；DateTime(5) 是 ms 时间戳→格式化；Checkbox(7) bool；AutoNumber(1005) 已纳入不再过滤；URL(15)/Text(1)/公式文本 是 `[{text}]`/`{text,link}`→拼串。**公式/lookup 按结果 ui_type 分派**（读 `property.type.ui_type`）：文本拼串、数字转数字、日期格式化（ms 毫秒 vs Excel 日序号，按量级区分：直接引用日期返回 `[ms]`，TODAY()/EDATE() 返回日序号如 46245=2026-08-11）、单选/多选返回**选项 ID** 用表级 optId→name 映射反查。**已知边界**：EDATE() 等日期运算被飞书标成 `ui_type=Number`，与真数字不可区分，按数字存（飞书元数据限制）。 |
 | **Hologres** | 走 VPN(tun0)；`connect_timeout=20s`（VPN 偶发握手慢）。空字段名 psycopg 返回空串，内核已 `name or col_N` 兜底。 |
 | **Neo4j `Record.keys()`** | 是方法不是属性，`run_cypher` 必须 `rec.keys()`。 |
 | **Vercel Blob 索引** | head API 不返回 etag；索引用 `uploaded_at` cache-buster 绕 CDN 60s 陈旧，取 fetch 响应 etag 给写时 ifMatch。 |
