@@ -22,13 +22,13 @@
 │                          │ stateless, :3100            │    │
 │                          │ 24 工具, Bearer 校验        │    │
 │                          │ in-process 调用 Python 内核 │    │
-│                          │ + lark-cli 子进程           │    │
+│                          │ + 飞书开放平台 REST         │    │
 │                          └───────────┬────────────────┘    │
 │                          127.0.0.1   │ 卷挂载              │
 │              ┌───────────────────────┴──────────────┐      │
 │              ▼                                     ▼      │
 │   Neo4j5(127.0.0.1:7687)              config.json(宿主)    │
-│              │                                     + lark-cli 密钥链 │
+│              │                                     （飞书凭证在内）│
 │              └─ 不改原 skill 代码树 ─────────────────┘      │
 └─────────────────────────┬──────────────────────────────────┘
                 VPN(tun0) │                  │ HTTPS
@@ -69,7 +69,7 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 | **可视化** | `chart` | matplotlib 渲染 → ImageContent + Blob URL |
 | **报告** | `report_html_publish` / `_list` / `_get` / `_delete` | HTML 报告（Vercel Blob，索引乐观锁）|
 | | `report_image_generate` | apimart gpt-image-2 异步生图（最长 180s）|
-| **模板** | `template_list` / `_read` / `_create` / `_update` / `_delete` | 飞书模板文档（包 lark-cli）|
+| **模板** | `template_list` / `_read` / `_create` / `_update` / `_delete` | 飞书模板文档（开放平台 REST）|
 
 > `report_image_generate` 在**服务器无代理时不可用**（apimart 不通）；本机走代理可用。其余 23 个服务器全可用。
 
@@ -78,8 +78,8 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 ## 3. 部署
 
 ### 前置（服务器：腾讯云 lighthouse，已具备）
-- Docker + Compose、Neo4j（`127.0.0.1:7687`）、Caddy（active）、lark-cli（已 `config init` 授权）。
-- `~/.super-data-analytics/config.json`（所有 key 真实值）。
+- Docker + Compose、Neo4j（`127.0.0.1:7687`）、Caddy（active）。
+- `~/.super-data-analytics/config.json`（所有 key 真实值，含飞书自建应用 `FEISHU_APP_ID`/`FEISHU_APP_SECRET`）。
 - VPN（openvpn tun0）连 Hologres 内网。
 
 ### 3.1 代码就位
@@ -100,8 +100,8 @@ SDA_MCP_TOKEN=<一个长随机串>
 ### 3.3 构建并启动
 ```bash
 cd ~/sda-mcp
-docker compose build        # 首次 ~5-10min；含 CJK 字体 + Node/lark-cli + bge ONNX 模型
-docker compose up -d        # host 网络，挂 config.json + lark-cli 密钥链
+docker compose build        # 首次 ~5-10min；含 CJK 字体 + bge ONNX 模型（无 Node/lark-cli）
+docker compose up -d        # host 网络，仅挂 config.json
 ```
 镜像 `sda-mcp-sda-mcp:latest`（~1.7GB）。容器 `sda-mcp`，`restart: unless-stopped`。
 
@@ -122,10 +122,8 @@ environment:
   SDA_CONFIG_PATH: /root/.super-data-analytics/config.json
 volumes:
   - ${HOME}/.super-data-analytics/config.json:/root/.super-data-analytics/config.json:ro
-  - ${HOME}/.lark-cli:/root/.lark-cli                      # lark-cli config 引用
-  - ${HOME}/.local/share/lark-cli:/root/.local/share/lark-cli  # 真正的密钥/加密 token
 ```
-> **lark-cli 密钥在文件密钥链** `~/.local/share/lark-cli/`（`master.key` + `*.enc`），不是 `~/.lark-cli`（只存引用）。两个目录都要挂，否则 API 调用报 `invalid_client`。
+> 飞书走开放平台 REST：凭证（`FEISHU_APP_ID`/`FEISHU_APP_SECRET`）在 config.json 的 `env` 块，无需挂 lark-cli 密钥链。
 
 ---
 
@@ -201,9 +199,8 @@ mcp.super-data-analytics.online {
 |---|---|
 | **apimart 生图** | 服务器直连 `api.apimart.ai` 超时（无代理）。`report_image_generate` 仅本机走代理可用。给容器加 `HTTPS_PROXY` 即可服务器启用。 |
 | **HuggingFace 不通** | 服务器直连 HF 超时。Dockerfile 固化 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（否则 fastembed 拉模型/Xet 401 失败）。 |
-| **中国镜像** | Dockerfile 用 tuna apt/PyPI + npmmirror npm；否则构建从中国极慢/超时。 |
-| **lark-cli 版本** | 锁 `@larksuite/cli@1.0.83`（新版误读旧版 token 格式 → invalid_client）。密钥在 `~/.local/share/lark-cli/`。 |
-| **lark-cli 密钥链** | `~/.lark-cli/config.json` 只存引用；真正的 `master.key`+`*.enc` 在 `~/.local/share/lark-cli/`。容器两个目录都要挂。 |
+| **中国镜像** | Dockerfile 用 tuna apt/PyPI；否则构建从中国极慢/超时。 |
+| **飞书自建应用授权** | 模板文件夹、graph 多维表、retrieve_doc 目标文档须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
 | **Hologres** | 走 VPN(tun0)；`connect_timeout=20s`（VPN 偶发握手慢）。空字段名 psycopg 返回空串，内核已 `name or col_N` 兜底。 |
 | **Neo4j `Record.keys()`** | 是方法不是属性，`run_cypher` 必须 `rec.keys()`。 |
 | **Vercel Blob 索引** | head API 不返回 etag；索引用 `uploaded_at` cache-buster 绕 CDN 60s 陈旧，取 fetch 响应 etag 给写时 ifMatch。 |
@@ -217,7 +214,7 @@ mcp.super-data-analytics.online {
 
 | 块 | key |
 |---|---|
-| `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`/`APIMART_BASE_URL`、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`FEISHU_TEMPLATE_FOLDER_TOKEN`、`FEISHU_TEMPLATE_DELETE_PASSWORD` |
+| `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`/`APIMART_BASE_URL`、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（自建应用，tenant token 鉴权）、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`FEISHU_TEMPLATE_FOLDER_TOKEN`、`FEISHU_TEMPLATE_DELETE_PASSWORD` |
 | `graph-config` | `embedding.model`（`BAAI/bge-small-zh-v1.5`）、`entities`、`relationships` |
 | `powerbi-semantic-models` | Power BI 语义模型列表 |
 

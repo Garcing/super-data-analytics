@@ -26,9 +26,9 @@
 
 ## 部署要点（详见 mcp/README.md）
 - 服务器 `~/sda-mcp/`（git archive 传输）；`.env` 存 `SDA_MCP_TOKEN`。
-- 卷挂载：`config.json` + `~/.lark-cli` + **`~/.local/share/lark-cli`**（lark-cli 真密钥在这）。
+- 卷挂载：仅 `config.json`（飞书走开放平台 REST，凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json，不再挂 lark-cli 密钥链）。
 - hermes config.yaml 的 `mcp_servers.sda` → `gateway restart`。
-- 构建用中国镜像（tuna apt/PyPI + npmmirror）；fastembed 模型靠 `HF_ENDPOINT=hf-mirror.com` + `HF_HUB_DISABLE_XET=1`。
+- 构建用中国镜像（tuna apt/PyPI）；fastembed 模型靠 `HF_ENDPOINT=hf-mirror.com` + `HF_HUB_DISABLE_XET=1`。
 
 ## 本机接入 MCP
 - `~/.claude.json` 的 `mcpServers.sda`（user scope，已配）→ 任何新对话自动有 `mcp__sda__*` 工具。
@@ -43,11 +43,12 @@ cd ~/sda-mcp && docker compose up -d --force-recreate  # 改代码后重建
 ```
 
 ## 踩过的坑（别重蹈）
-- lark-cli 密钥在 `~/.local/share/lark-cli/`（不是 `~/.lark-cli`）；锁版本 `@larksuite/cli@1.0.83`。
+- 飞书自建应用（`tenant_access_token`）须把模板文件夹 / graph 多维表 / retrieve_doc 目标文档**共享给应用**，否则权限报错；凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。
 - Neo4j `Record.keys()` 是方法（要加 `()`）。
 - Vercel Blob head API 不返回 etag → 索引用 `uploaded_at` cache-buster。
 - HuggingFace 中国不通 → hf-mirror + 关 Xet。
 - apimart 服务器不通（无代理）。
+- 飞书 docx↔markdown：读走 `docs/v1/content`（非 docx/v1）；写走 convert + 「创建嵌套块」descendant 接口（body `{children_id, descendants}`，表格 block 剥 `table.property.merge_info`）。
 
 ## MCP 权威参考
 `/mcp-builder` 技能（Anthropic 官方 MCP 手册）——不确定的 MCP 用法先查它。
