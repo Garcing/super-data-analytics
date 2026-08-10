@@ -4,17 +4,14 @@
 """
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import subprocess
 from functools import lru_cache
 from typing import Any
 
 from neo4j import GraphDatabase
 
 from sda_mcp.config import load_config
-from sda_mcp.errors import ConfigError, DataSourceError, ExternalAPIError, ValidationError
+from sda_mcp.errors import ConfigError, DataSourceError, ValidationError
+from sda_mcp.feishu import FeishuClient
 
 _INTERNAL_PROPS = {
     "search_text", "embedding", "embedding_model", "embedding_dimensions", "embedding_updated_at",
@@ -275,28 +272,8 @@ def cypher(statement: str) -> dict[str, Any]:
 
 
 def doc(doc_id: str) -> dict[str, Any]:
+    """读取飞书 docx 文档为 markdown。"""
     if not isinstance(doc_id, str) or not doc_id.strip():
         raise ValidationError("doc 不能为空")
-    args = ["docs", "+fetch", "--doc", doc_id, "--doc-format", "markdown", "--as", "user"]
-    env = {**os.environ, "LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "LARKSUITE_CLI_NO_SKILLS_NOTIFIER": "1"}
-    lark = shutil.which("lark-cli")
-    try:
-        if lark:
-            proc = subprocess.run([lark, *args], capture_output=True, text=True, timeout=60, env=env)
-        else:
-            proc = subprocess.run(["lark-cli", *args], capture_output=True, text=True, timeout=60, env=env)
-    except FileNotFoundError as exc:
-        raise ExternalAPIError("未找到 lark-cli，请先 npm install -g @larksuite/cli 并 lark-cli auth login") from exc
-    if proc.returncode != 0:
-        raise ExternalAPIError(f"读取飞书文档失败: {(proc.stderr or proc.stdout).strip()[:300]}")
-    try:
-        envelope = json.loads(proc.stdout.strip())
-    except json.JSONDecodeError as exc:
-        raise ExternalAPIError("lark-cli 返回了无法解析的 JSON") from exc
-    if envelope.get("ok") is not True:
-        err = envelope.get("error") or {}
-        raise ExternalAPIError(f"读取飞书文档失败: {err.get('message') or err.get('hint') or '未知错误'}")
-    document = (envelope.get("data") or {}).get("document")
-    if not document:
-        raise ExternalAPIError("lark-cli 返回成功，但结果中缺少 document")
-    return document
+    content = FeishuClient().get_doc_markdown(doc_id)
+    return {"content": content, "document_id": doc_id}

@@ -1,7 +1,6 @@
 """retrieving_context 内核 mock 单元测试（离线）。"""
-import json
 import pytest
-from sda_mcp.errors import ConfigError, ValidationError, ExternalAPIError
+from sda_mcp.errors import ValidationError
 from sda_mcp.skills import retrieving_context as r
 
 GC = {
@@ -56,31 +55,17 @@ def test_cypher_empty():
         r.cypher("  ")
 
 
-def test_doc_ok(monkeypatch):
-    class P:
-        returncode = 0
-        stdout = json.dumps({"ok": True, "data": {"document": {"document_id": "d1", "content": "# t"}}})
-        stderr = ""
-    monkeypatch.setattr(r.shutil, "which", lambda name: "/fake/lark-cli")
-    monkeypatch.setattr(r.subprocess, "run", lambda *a, **k: P())
-    d = r.doc("someurl")
-    assert d["document_id"] == "d1"
+def test_doc_returns_markdown(monkeypatch):
+    monkeypatch.setattr(r.FeishuClient, "get_doc_markdown",
+                        lambda self, tok: "# 标题\n正文")
+    out = r.doc("DOCTOKEN")
+    assert out["content"] == "# 标题\n正文"
+    assert out["document_id"] == "DOCTOKEN"
 
 
-def test_doc_failure_envelope(monkeypatch):
-    class P:
-        returncode = 0
-        stdout = json.dumps({"ok": False, "error": {"message": "no perm"}})
-        stderr = ""
-    monkeypatch.setattr(r.shutil, "which", lambda name: "/fake/lark-cli")
-    monkeypatch.setattr(r.subprocess, "run", lambda *a, **k: P())
-    with pytest.raises(ExternalAPIError):
-        r.doc("someurl")
-
-
-def test_doc_empty():
+def test_doc_empty_id_raises():
     with pytest.raises(ValidationError):
-        r.doc("  ")
+        r.doc("")
 
 
 class _FakeSession:
