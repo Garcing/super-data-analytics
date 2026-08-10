@@ -235,7 +235,7 @@ mcp.super-data-analytics.online {
 | **HuggingFace 不通** | 服务器直连 HF 超时。Dockerfile 固化 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（否则 fastembed 拉模型/Xet 401 失败）。 |
 | **中国镜像** | Dockerfile 用 tuna apt/PyPI；否则构建从中国极慢/超时。 |
 | **飞书自建应用授权** | 模板文件夹、graph 多维表、retrieve_doc 目标文档须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
-| **sync 字段类型清洗** | 开放平台多维表各类型值结构差异大，`_simplify_value` 逐类型拍平成 Neo4j 原生类型（str/int/float/bool/list[str]），否则 `SET n += $props` 报 Map 类型错。对照官方《记录数据结构》文档全覆盖：Text/URL `[{text}]`/`{text,link}`→拼串（换行文本保留\n）；Number(2) 返回**字符串**→转数字；DateTime(5) ms 时间戳→格式化；Checkbox bool；AutoNumber 已纳入不再过滤；人员/附件/群组/创建人/修改人 `[{id,name}]`→名字列表；地理位置→full_address；创建/更新时间→日期；单/双向关联 record_id 不可读→丢弃。**公式/lookup 按结果 `data_type`(int) 分派**（不用 ui_type 字符串——设过格式后可能缺失）：文本/数字/日期（ms 毫秒 vs Excel 日序号按量级区分）/单选多选（返回**选项 ID** 用表级 optId→name 映射反查）。防御性兼容文档示例的 `{type,value}` 包装（实测为裸值）。 |
+| **sync 字段类型清洗** | 开放平台多维表各类型值结构差异大，`_simplify_value` 逐类型拍平成 Neo4j 原生类型（str/int/float/bool/list[str]），否则 `SET n += $props` 报 Map 类型错。**支持**：Text/URL `[{text}]`/`{text,link}`→拼串（换行保留\n）；Number(2) 返回**字符串**→转数字；DateTime(5) ms→格式化；Checkbox bool；单选/多选。**公式/lookup 按结果 `data_type`(int) 分派**（不用 ui_type——设过格式后可能缺失）：文本/数字/日期（ms 毫秒 vs Excel 日序号按量级区分）/单选多选（返回**选项 ID** 用表级 optId→name 映射反查）；防御性兼容文档示例的 `{type,value}` 包装。**不支持**（语义层用不到、值结构复杂）：人员/附件/群组/位置/系统时间/关联 → 返回 `（X字段，暂不支持取值）` 提示给 agent，不做清洗（降低维护成本）。 |
 | **Hologres** | 走 VPN(tun0)；`connect_timeout=20s`（VPN 偶发握手慢）。空字段名 psycopg 返回空串，内核已 `name or col_N` 兜底。 |
 | **Neo4j `Record.keys()`** | 是方法不是属性，`run_cypher` 必须 `rec.keys()`。 |
 | **Vercel Blob 索引** | head API 不返回 etag；索引用 `uploaded_at` cache-buster 绕 CDN 60s 陈旧，取 fetch 响应 etag 给写时 ifMatch。 |

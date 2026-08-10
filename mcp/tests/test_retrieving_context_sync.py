@@ -182,38 +182,19 @@ def test_simplify_value_unknown_type_dict_flattened():
     assert s._simplify_value(999, 7) == 7
 
 
-def test_simplify_value_user_attachment_group_join_names():
-    """人员(11)/附件(17)/群组(23)/创建人(1003)/修改人(1004) → [{id,name}] 名字列表。
-    官方文档结构：可读名在 name；旧兜底取 text 会静默丢名字，现显式提取。"""
-    user_val = [{"id": "ou_x", "name": "黄泡泡", "en_name": "Amanda", "email": "a@b.com"}]
-    assert s._simplify_value(_F_USER, user_val) == ["黄泡泡"]
-    assert s._simplify_value(_F_CREATED_USER, user_val) == ["黄泡泡"]
-    assert s._simplify_value(_F_MODIFIED_USER, user_val) == ["黄泡泡"]
-    attach = [{"file_token": "ft1", "name": "report.png", "size": 108, "type": "image/png"}]
-    assert s._simplify_value(_F_ATTACHMENT, attach) == ["report.png"]
-    group = [{"id": "oc_x", "name": "测试部门"}]
-    assert s._simplify_value(_F_GROUP_CHAT, group) == ["测试部门"]
-    # 多人 → 多元素；空 → None
-    assert s._simplify_value(_F_USER, [{"name": "甲"}, {"name": "乙"}]) == ["甲", "乙"]
-    assert s._simplify_value(_F_USER, []) is None
+def test_simplify_value_unsupported_types_return_hint():
+    """人员/附件/群组/位置/系统时间/关联 等暂不支持的类型 → 返回简短提示，不做清洗。"""
+    assert s._simplify_value(_F_USER, [{"id": "ou_x", "name": "黄泡泡"}]) == "（人员字段，暂不支持取值）"
+    assert s._simplify_value(_F_ATTACHMENT, [{"name": "r.png"}]) == "（附件字段，暂不支持取值）"
+    assert s._simplify_value(_F_LOCATION, {"full_address": "北京"}) == "（地理位置字段，暂不支持取值）"
+    assert s._simplify_value(_F_CREATED_TIME, 1774317600000) == "（创建时间字段，暂不支持取值）"
+    assert s._simplify_value(_F_SINGLE_LINK, {"link_record_ids": ["r1"]}) == "（单向关联字段，暂不支持取值）"
 
 
-def test_simplify_value_location_and_phone_and_timestamps():
-    """地理位置(22)→full_address；电话(13)→串；创建/更新时间(1001/1002)→日期。"""
-    loc = {"full_address": "北京市海淀区学清路", "name": "字节", "location": "116.35,40.01"}
-    assert s._simplify_value(_F_LOCATION, loc) == "北京市海淀区学清路"
-    # 缺 full_address 时降级到 name/address
-    assert s._simplify_value(_F_LOCATION, {"name": "仅地名"}) == "仅地名"
+def test_simplify_value_phone_autonumber_fallthrough_str():
+    """电话(13)/自动编号(1005) 本身是串，走通用 str 分支（无需专门处理）。"""
     assert s._simplify_value(_F_PHONE, "13800000000") == "13800000000"
-    ts = s._simplify_value(_F_CREATED_TIME, 1774317600000)
-    assert ts is not None and ts.startswith("2026-") and len(ts) == 19
-    assert s._simplify_value(_F_MODIFIED_TIME, 1774317600000) == ts
-
-
-def test_simplify_value_record_links_dropped():
-    """单向(18)/双向(21)关联 → {link_record_ids:[...]}，record_id 不可读，作图属性丢弃。"""
-    assert s._simplify_value(_F_SINGLE_LINK, {"link_record_ids": ["rec1", "rec2"]}) is None
-    assert s._simplify_value(_F_DUPLEX_LINK, {"link_record_ids": ["rec1"]}) is None
+    assert s._simplify_value(_F_AUTO_NUMBER, "NO.001") == "NO.001"
 
 
 def test_fetch_records_single_page_no_extra_call(monkeypatch):

@@ -14,8 +14,8 @@ from typing import Any
 from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import FeishuClient
-from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_NUMBER, _F_SINGLE_SELECT,
-                            _F_MULTI_SELECT, _F_DATE, _F_CHECKBOX, _F_USER, _F_PHONE,
+from sda_mcp.feishu import (_F_TEXT, _F_NUMBER, _F_SINGLE_SELECT,
+                            _F_MULTI_SELECT, _F_DATE, _F_CHECKBOX, _F_USER,
                             _F_URL, _F_ATTACHMENT, _F_SINGLE_LINK, _F_LOOKUP, _F_FORMULA,
                             _F_DUPLEX_LINK, _F_LOCATION, _F_GROUP_CHAT,
                             _F_CREATED_TIME, _F_MODIFIED_TIME, _F_CREATED_USER,
@@ -110,35 +110,14 @@ def _resolve_opt(oid: Any, opt_map: dict[str, str] | None) -> str | None:
     return None
 
 
-def _join_named(items: Any) -> list[str] | None:
-    """人员/附件/群组/创建人/修改人 [{id,name,...}] → 名字列表；空→None。
-
-    官方文档：这类字段值是对象数组，可读名在 name（人员另有 en_name）。
-    单值 dict 也兼容。返回 list[str] 便于图属性统一处理。
-    """
-    if isinstance(items, dict):
-        items = [items]
-    if not isinstance(items, list):
-        return None
-    names: list[str] = []
-    for it in items:
-        if isinstance(it, dict):
-            nm = (it.get("name") or it.get("en_name") or "").strip()
-            if nm:
-                names.append(nm)
-        elif isinstance(it, str) and it.strip():
-            names.append(it.strip())
-    return names or None
-
-
-def _location_text(value: Any) -> str | None:
-    """地理位置 {full_address, name, address, ...} → full_address 串；空→None。"""
-    if isinstance(value, dict):
-        return (value.get("full_address") or value.get("name")
-                or value.get("address") or "").strip() or None
-    if isinstance(value, str):
-        return value.strip() or None
-    return None
+# 暂不支持的字段类型（值结构复杂、语义层用不到）：返回简短提示给 agent，不做清洗。
+# 见官方《多维表格记录数据结构》：人员/附件/群组/位置/系统时间/关联 等。
+_UNSUPPORTED: dict[int, str] = {
+    _F_USER: "人员", _F_CREATED_USER: "创建人", _F_MODIFIED_USER: "修改人",
+    _F_ATTACHMENT: "附件", _F_LOCATION: "地理位置", _F_GROUP_CHAT: "群组",
+    _F_CREATED_TIME: "创建时间", _F_MODIFIED_TIME: "更新时间",
+    _F_SINGLE_LINK: "单向关联", _F_DUPLEX_LINK: "双向关联",
+}
 
 
 def _to_number(value: Any) -> Any:
@@ -216,8 +195,9 @@ def _simplify_value(field_type: int, value: Any, *,
                     opt_map: dict[str, str] | None = None) -> Any:
     """开放平台记录值 → graph 用的简化形式（Neo4j 原生类型：str/int/float/bool/list[str]）。
 
-    存储字段按 type 分派（官方记录数据结构文档全类型覆盖）；公式/lookup 由
-    _simplify_formula 按结果 data_type 路由进来复用本函数。
+    存储字段按 type 分派；公式/lookup 由 _simplify_formula 按结果 data_type 路由进来复用本函数。
+    语义层用不到的复杂类型（人员/附件/群组/位置/系统时间/关联，见 _UNSUPPORTED）
+    不做清洗，返回 "（X字段，暂不支持取值）" 提示给 agent。
     """
     if value is None:
         return None
@@ -241,24 +221,10 @@ def _simplify_value(field_type: int, value: Any, *,
         return value  # bool 原样（Neo4j 原生支持）
     if field_type == _F_URL:
         return _join_text(value)
-    if field_type in (_F_USER, _F_CREATED_USER, _F_MODIFIED_USER):
-        return _join_named(value)  # [{id,name}] → 名字列表
-    if field_type == _F_GROUP_CHAT:
-        return _join_named(value)
-    if field_type == _F_ATTACHMENT:
-        return _join_named(value)  # [{file_token,name}] → 文件名列表
-    if field_type == _F_LOCATION:
-        return _location_text(value)
-    if field_type in (_F_CREATED_TIME, _F_MODIFIED_TIME):
-        return _format_date_value(value)  # ms 时间戳
-    if field_type == _F_PHONE:
-        return value.strip() if isinstance(value, str) else value
-    if field_type == _F_AUTO_NUMBER:
-        return value.strip() if isinstance(value, str) else value
-    if field_type in (_F_SINGLE_LINK, _F_DUPLEX_LINK):
-        return None  # {link_record_ids:[...]} → record_id 不可读，作图属性无意义，丢弃
+    if field_type in _UNSUPPORTED:
+        return f"（{_UNSUPPORTED[field_type]}字段，暂不支持取值）"
     if isinstance(value, str):
-        return value.strip() or None
+        return value.strip() or None  # 电话(13)/自动编号(1005) 等本身就是串，走这里
     # 兜底：未识别类型若返回结构化 dict/片段数组，也拍平成可读串，避免写坏 Neo4j（Map 类型错）。
     if isinstance(value, dict):
         return _join_text(value)
