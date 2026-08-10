@@ -183,12 +183,17 @@ _TIMEOUT = httpx.Timeout(30.0)
 _TOKEN_REFRESH_MARGIN = 300  # 过期前 5 分钟刷新
 
 # bitable 字段类型（开放平台用 int；lark-cli 用字符串名）
+# 已用真实 base（BHINbLiOKa4rXDsLTlQcRwuSn9c）逐字段验证值结构（2026-08-10）：
+#   Text(1)/SingleSelect(3) → 裸字符串；MultiSelect(4) → 字符串列表；
+#   Formula(20)/Lookup(19) 文本结果 → [{text,type}] 片段数组（官方：查找引用本质=公式，value 同构）。
 _F_TEXT = 1
 _F_NUMBER = 2
 _F_SINGLE_SELECT = 3
 _F_MULTI_SELECT = 4
 _F_DATE = 5
 _F_CHECKBOX = 7
+_F_LOOKUP = 19
+_F_FORMULA = 20
 _F_AUTO_NUMBER = 1005
 
 # 模块级 token 缓存：FastMCP stateless 每次调用新建 client 实例，
@@ -760,7 +765,8 @@ git commit -m "refactor(mcp): retrieving_context.doc 改用 FeishuClient（去 l
 替换 `mcp/tests/test_retrieving_context_sync.py` 里 Phase 1 的两个 fetch 测试为：
 ```python
 import sda_mcp.skills.retrieving_context_sync as s
-from sda_mcp.feishu import _F_TEXT, _F_SINGLE_SELECT, _F_MULTI_SELECT, _F_AUTO_NUMBER
+from sda_mcp.feishu import (_F_TEXT, _F_SINGLE_SELECT, _F_MULTI_SELECT,
+                            _F_AUTO_NUMBER, _F_FORMULA, _F_LOOKUP)
 
 
 def test_fetch_fields_maps_and_filters_auto_number(monkeypatch):
@@ -802,6 +808,32 @@ def test_fetch_records_simplifies_values(monkeypatch):
     assert recs[1]["标签"] == ["z"]
 
 
+def test_fetch_records_formula_and_lookup_join_text(monkeypatch):
+    """公式(20)/查找引用(19) 文本结果 [{text,type}] → 拼成纯字符串（对齐 lark-cli）。
+    关键：维度ID(公式) 是维度 key_field，必须拼成 'order.order_id'。"""
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
+                        lambda self, app, tbl: [
+                            {"field_id": "f1", "field_name": "维度ID", "type": _F_FORMULA},
+                            {"field_id": "f2", "field_name": "起始表别名", "type": _F_LOOKUP},
+                        ])
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_records",
+                        lambda self, app, tbl: [
+                            {"record_id": "r1", "fields": {
+                                "维度ID": [{"text": "order.order_id", "type": "text"}],
+                                "起始表别名": [{"text": "link", "type": "text"}]}}])
+    recs = s.fetch_table_records("APP", "tbl1")
+    assert recs[0]["维度ID"] == "order.order_id"
+    assert recs[0]["起始表别名"] == "link"
+
+
+def test_simplify_value_passthrough_number_and_url(monkeypatch):
+    """number(2) 原样、Url(15) 等非匹配字段原样透传（仅作属性，不参与关系匹配）。"""
+    assert s._simplify_value(_F_TEXT, [{"text": "x"}]) == "x"
+    assert s._simplify_value(_F_FORMULA, 42) == 42           # 非文本公式结果原样
+    assert s._simplify_value(_F_SINGLE_SELECT, "订单") == "订单"   # 裸字符串（本 base 实际形态）
+    assert s._simplify_value(_F_MULTI_SELECT, ["a", "b"]) == ["a", "b"]
+
+
 def test_fetch_records_single_page_no_extra_call(monkeypatch):
     """client 已翻页；fetch_table_records 只调一次 records。"""
     monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
@@ -830,7 +862,8 @@ Expected: FAIL（`FeishuClient` 未 import / 旧 `_lark_cli` 被 mock 失败）
 from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ExternalAPIError, ValidationError
 from sda_mcp.feishu import FeishuClient
-from sda_mcp.feishu import _F_AUTO_NUMBER, _F_TEXT, _F_SINGLE_SELECT, _F_MULTI_SELECT
+from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_SINGLE_SELECT,
+                            _F_MULTI_SELECT, _F_FORMULA, _F_LOOKUP)
 from sda_mcp.skills.retrieving_context import Neo4jClient
 ```
 2. 删除 `_lark_cli` 函数和 `_extract_cell` 函数（整段）。
@@ -867,7 +900,9 @@ def _simplify_value(field_type: int, value: Any) -> Any:
     """开放平台记录值 → graph 用的简化形式。对齐旧 _extract_cell 的输出契约。"""
     if value is None:
         return None
-    if field_type == _F_TEXT:
+    # 公式(20)/查找引用(19) 文本结果与 Text(1) 同构（[{text,type}] 片段数组）；
+    # 非文本结果（数字）经 _join_text 原样返回。本 base 公式/lookup 均为文本结果（已验证）。
+    if field_type in (_F_TEXT, _F_FORMULA, _F_LOOKUP):
         return _join_text(value)
     if field_type == _F_SINGLE_SELECT:
         return _opt_to_str(value)
