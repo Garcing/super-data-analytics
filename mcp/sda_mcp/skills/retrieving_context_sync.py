@@ -15,7 +15,7 @@ from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import FeishuClient
 from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_SINGLE_SELECT,
-                            _F_MULTI_SELECT, _F_FORMULA, _F_LOOKUP)
+                            _F_MULTI_SELECT, _F_FORMULA, _F_LOOKUP, _F_URL)
 from sda_mcp.skills.retrieving_context import Neo4jClient
 
 _SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
@@ -52,9 +52,14 @@ def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
 
 
 def _join_text(runs: Any) -> Any:
-    """text 字段值（[{text:..}] 或字符串）→ 拼接字符串；空→None。"""
+    """text/公式/lookup/url 值 → 拼接字符串；空→None。
+
+    支持形态：纯串、单段 dict（{text,...}，如 url 字段 {text,link}）、片段数组 [{text,...}]。
+    """
     if isinstance(runs, str):
         return runs.strip() or None
+    if isinstance(runs, dict):
+        return (runs.get("text") or "").strip() or None
     if isinstance(runs, list):
         parts = [r.get("text", "") if isinstance(r, dict) else str(r) for r in runs]
         return "".join(parts).strip() or None
@@ -74,9 +79,10 @@ def _simplify_value(field_type: int, value: Any) -> Any:
     """开放平台记录值 → graph 用的简化形式。对齐旧 _extract_cell 的输出契约。"""
     if value is None:
         return None
-    # 公式(20)/查找引用(19) 文本结果与 Text(1) 同构（[{text,type}] 片段数组）；
-    # 非文本结果（数字）经 _join_text 原样返回。本 base 公式/lookup 均为文本结果（已验证）。
-    if field_type in (_F_TEXT, _F_FORMULA, _F_LOOKUP):
+    # 公式(20)/查找引用(19)/Url(15) 文本结果与 Text(1) 同构：
+    #   Text/公式/lookup 多为 [{text,type}] 片段数组；Url 是 {text,link} 裸 dict（单值）。
+    # 非文本结果（数字）经 _join_text 原样返回。
+    if field_type in (_F_TEXT, _F_FORMULA, _F_LOOKUP, _F_URL):
         return _join_text(value)
     if field_type == _F_SINGLE_SELECT:
         return _opt_to_str(value)
@@ -87,6 +93,11 @@ def _simplify_value(field_type: int, value: Any) -> Any:
         return [v] if v is not None else None
     if isinstance(value, str):
         return value.strip() or None
+    # 兜底：未识别类型若返回结构化 dict/片段数组，也拍平成可读串，避免写坏 Neo4j（Map 类型错）。
+    if isinstance(value, dict):
+        return _join_text(value)
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return _join_text(value)
     return value
 
 

@@ -2,7 +2,7 @@
 import pytest
 from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import (_F_TEXT, _F_SINGLE_SELECT, _F_MULTI_SELECT,
-                            _F_AUTO_NUMBER, _F_FORMULA, _F_LOOKUP)
+                            _F_AUTO_NUMBER, _F_FORMULA, _F_LOOKUP, _F_URL)
 from sda_mcp.skills import retrieving_context_sync as s
 
 GC = {
@@ -74,11 +74,31 @@ def test_fetch_records_formula_and_lookup_join_text(monkeypatch):
 
 
 def test_simplify_value_passthrough_number_and_url(monkeypatch):
-    """number(2) 原样、Url(15) 等非匹配字段原样透传（仅作属性，不参与关系匹配）。"""
+    """number(2) 原样；Url(15) 拍平成 text 串（仅作属性，不参与关系匹配）。"""
     assert s._simplify_value(_F_TEXT, [{"text": "x"}]) == "x"
     assert s._simplify_value(_F_FORMULA, 42) == 42           # 非文本公式结果原样
     assert s._simplify_value(_F_SINGLE_SELECT, "订单") == "订单"   # 裸字符串（本 base 实际形态）
     assert s._simplify_value(_F_MULTI_SELECT, ["a", "b"]) == ["a", "b"]
+
+
+def test_simplify_value_url_field_flattens_to_text():
+    """Url(15) 字段开放平台返回 {text, link} 裸 dict（单值）或 [{text,link}]，
+    须拍平成可读 text 串，否则 dict 写进 Neo4j 报 Map 类型错（线上 sync 实踩）。"""
+    assert s._simplify_value(_F_URL, {"text": "link｜用户期数主链路事实表",
+                                      "link": "https://my.feishu.cn/docx/SaQ5"}) == "link｜用户期数主链路事实表"
+    # 片段数组形态同样拍平
+    assert s._simplify_value(_F_URL, [{"text": "a", "link": "u1"},
+                                      {"text": "b", "link": "u2"}]) == "ab"
+    # 空 text → None（过滤掉，不进图）
+    assert s._simplify_value(_F_URL, {"text": "", "link": "u"}) is None
+
+
+def test_simplify_value_unknown_type_dict_flattened():
+    """未识别字段类型若返回结构化 dict/[{text}]，兜底拍平成串，避免写坏 Neo4j。"""
+    assert s._simplify_value(999, {"text": "x", "extra": 1}) == "x"
+    assert s._simplify_value(999, [{"text": "a"}, {"text": "b"}]) == "ab"
+    # 数字等原始值仍原样
+    assert s._simplify_value(999, 7) == 7
 
 
 def test_fetch_records_single_page_no_extra_call(monkeypatch):
