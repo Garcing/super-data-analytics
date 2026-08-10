@@ -315,3 +315,89 @@ def test_list_folder_files_breaks_when_has_more_but_no_token(monkeypatch):
     assert len(files) == 1 and files[0]["token"] == "d1"
     assert len(calls) == 1   # 只调一次即 break，未陷入死循环
 
+
+# --- 写端点 ---
+
+def test_convert_strips_table_merge_info(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    captured = {}
+    table_block = {"block_id": "b1", "block_type": 31, "children": ["c1"],
+                   "table": {"cells": ["c1"], "property": {"row_size": 1, "column_size": 1,
+                                                            "merge_info": [{"col_span": 1, "row_span": 1}]}}}
+    def _req(method, url, json=None, **k):
+        captured["body"] = json
+        return _Resp({"code": 0, "data": {"blocks": [table_block], "first_level_block_ids": ["b1"]}})
+    monkeypatch.setattr(f.httpx, "request", _req)
+    blocks, fl = f.FeishuClient().convert_markdown_to_blocks("# x\n")
+    assert fl == ["b1"]
+    assert captured["body"] == {"content_type": "markdown", "content": "# x\n"}
+    # merge_info 已被剥
+    assert "merge_info" not in blocks[0]["table"]["property"]
+
+
+def test_create_doc_returns_document_id(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    monkeypatch.setattr(f.httpx, "request",
+                        lambda *a, **k: _Resp({"code": 0, "data": {"document": {"document_id": "DOCNEW"}}}))
+    assert f.FeishuClient().create_doc("FOLDER", "标题") == "DOCNEW"
+
+
+def test_insert_descendants_payload(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    captured = {}
+    def _req(method, url, json=None, **k):
+        captured["url"] = url
+        captured["body"] = json
+        return _Resp({"code": 0, "data": {"document_revision_id": 2}})
+    monkeypatch.setattr(f.httpx, "request", _req)
+    f.FeishuClient().insert_descendants("DOC", [{"block_type": 2}], ["b1"])
+    assert captured["url"].endswith("/blocks/DOC/descendant")
+    assert captured["body"] == {"children_id": ["b1"], "descendants": [{"block_type": 2}]}
+
+
+def test_list_blocks_returns_items(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _Resp({
+        "code": 0, "data": {"items": [{"block_id": "P", "block_type": 1, "children": ["a", "b", "c"]},
+                                      {"block_id": "a", "block_type": 2}]}}))
+    items = f.FeishuClient().list_blocks("DOC")
+    assert len(items) == 2
+    assert items[0]["block_type"] == 1
+
+
+def test_delete_all_children_uses_root_child_count(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    calls = []
+    def _req(method, url, params=None, json=None, **k):
+        calls.append((method, url, json))
+        if url.endswith("/blocks"):
+            return _Resp({"code": 0, "data": {"items": [
+                {"block_id": "DOC", "block_type": 1, "children": ["a", "b", "c"]}]}})
+        return _Resp({"code": 0})
+    monkeypatch.setattr(f.httpx, "request", _req)
+    f.FeishuClient().delete_all_children("DOC")
+    # 第二次调用应是 batch_delete，end_index=3
+    assert calls[1][0] == "DELETE"
+    assert "batch_delete" in calls[1][1]
+    assert calls[1][2] == {"start_index": 0, "end_index": 3}
+
+
+def test_delete_all_children_noop_when_empty(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    calls = []
+    def _req(method, url, params=None, json_body=None, **k):
+        calls.append(url)
+        if url.endswith("/blocks"):
+            return _Resp({"code": 0, "data": {"items": [
+                {"block_id": "DOC", "block_type": 1, "children": []}]}})
+        return _Resp({"code": 0})
+    monkeypatch.setattr(f.httpx, "request", _req)
+    f.FeishuClient().delete_all_children("DOC")
+    assert len(calls) == 1  # 根无子块 → 不调 batch_delete
+

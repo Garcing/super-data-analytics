@@ -188,3 +188,57 @@ class FeishuClient:
             if not page_token:
                 break
         return items
+
+    # --- 写路径（markdown → docx）---
+    def convert_markdown_to_blocks(self, markdown: str) -> tuple[list[dict[str, Any]], list[str]]:
+        """markdown → (blocks, first_level_block_ids)。已剥表格 table.property.merge_info（只读）。
+        POST /open-apis/docx/v1/documents/blocks/convert。"""
+        path = "/open-apis/docx/v1/documents/blocks/convert"
+        data = self._request("POST", path, json_body={
+            "content_type": "markdown", "content": markdown})
+        self._check(data, path)
+        payload = data.get("data") or {}
+        blocks = payload.get("blocks") or []
+        for b in blocks:
+            if b.get("block_type") == 31:  # table
+                (b.get("table", {}).get("property", {}) or {}).pop("merge_info", None)
+        first_level = payload.get("first_level_block_ids") or []
+        return blocks, first_level
+
+    def create_doc(self, folder_token: str, title: str) -> str:
+        """建空 docx 文档，返回 document_id。POST /open-apis/docx/v1/documents。"""
+        path = "/open-apis/docx/v1/documents"
+        data = self._request("POST", path, json_body={"folder_token": folder_token, "title": title})
+        self._check(data, path)
+        doc_id = (data.get("data") or {}).get("document", {}).get("document_id")
+        if not doc_id:
+            raise ExternalAPIError(f"创建文档失败：响应缺 document_id: {str(data)[:200]}")
+        return doc_id
+
+    def insert_descendants(self, doc_id: str, blocks: list[dict[str, Any]],
+                           children_id: list[str]) -> None:
+        """批量插入嵌套块（表格+内容一次到位）。POST .../blocks/{doc_id}/descendant。
+        blocks 为 convert 返回的扁平块（带临时 ID），children_id 为顶层块 ID 列表。"""
+        path = f"/open-apis/docx/v1/documents/{doc_id}/blocks/{doc_id}/descendant"
+        data = self._request("POST", path, json_body={
+            "children_id": children_id, "descendants": blocks})
+        self._check(data, path)
+
+    def list_blocks(self, doc_id: str) -> list[dict[str, Any]]:
+        """列出文档全部块。GET .../blocks。"""
+        path = f"/open-apis/docx/v1/documents/{doc_id}/blocks"
+        data = self._request("GET", path)
+        self._check(data, path)
+        return (data.get("data") or {}).get("items") or []
+
+    def delete_all_children(self, doc_id: str) -> None:
+        """清空文档正文（删除根 page 块的所有直接子块）。
+        GET blocks 取根(block_type==1) children 数 N → batch_delete 0..N。"""
+        blocks = self.list_blocks(doc_id)
+        root = next((b for b in blocks if b.get("block_type") == 1), None)
+        n = len((root or {}).get("children") or [])
+        if n == 0:
+            return
+        path = f"/open-apis/docx/v1/documents/{doc_id}/blocks/{doc_id}/children/batch_delete"
+        data = self._request("DELETE", path, json_body={"start_index": 0, "end_index": n})
+        self._check(data, path)
