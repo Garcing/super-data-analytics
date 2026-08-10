@@ -1,35 +1,29 @@
 """飞书报告模板内核。
 
-读/删路径（list/read/delete）走飞书开放平台 REST（FeishuClient）；写路径
-（create/update）暂留 lark-cli 子进程（LarkCliClient），P2 再迁。
+全部走飞书开放平台 REST（FeishuClient）：list/read/delete/create/update 均用
+FeishuClient 的对应端点，不再依赖 lark-cli 子进程。
 
 行为对齐点：
 - list：根目录 + 每个子文件夹一层（ThreadPoolExecutor 并行），过滤 docx/doc。
 - read：FeishuClient.get_doc_markdown 直出 markdown。
 - delete：FEISHU_TEMPLATE_DELETE_PASSWORD 已配置则强制校验，否则跳过门。
-- create/update（lark-cli）：--as user 失败回退 --as bot；@文件引用须在 cwd 内 →
-  tempfile.mkdtemp 临时目录 + finally 清理；收 markdown 字符串落临时文件再 @引用。
+- create：FeishuClient.create_doc 建空文档；有 content 则 convert_markdown_to_blocks
+  → insert_descendants（表格 merge_info 已在 convert 内剥除）。
+- update（覆盖语义）：delete_all_children 清空正文 → convert_markdown_to_blocks
+  → insert_descendants。
 
-失败抛 ConfigError(凭证缺失)/ExternalAPIError(飞书 API 或 lark-cli 非 0)/ValidationError(参数)。
+失败抛 ConfigError(凭证缺失)/ValidationError(参数)；飞书 API 错误由 FeishuClient
+内部抛 ExternalAPIError。
 """
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from sda_mcp.config import get_env, load_config
-from sda_mcp.errors import ConfigError, ExternalAPIError, ValidationError
+from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import FeishuClient
-
-_LARK_BIN = "lark-cli"
-_TIMEOUT = 120
-_PAGE_SIZE = "200"
 
 
 @dataclass
@@ -48,70 +42,6 @@ class UpdateResult:
 class DeleteResult:
     deleted: bool
     document_id: str
-
-
-class LarkCliClient:
-    """lark-cli 子进程封装。身份命中后实例级缓存，避免每次重试 user/bot。"""
-
-    def __init__(self) -> None:
-        self._identity: str | None = None
-
-    # --- 子进程执行 ---
-    def _run(self, args: list[str], cwd: str | None = None, identity: str | None = None) -> str:
-        full = [_LARK_BIN, *args]
-        if identity:
-            full += ["--as", identity]
-        try:
-            proc = subprocess.run(
-                full, cwd=cwd, capture_output=True, text=True, timeout=_TIMEOUT,
-                shell=(os.name == "nt"),  # Windows 上 lark-cli 常是 .cmd 垫片，需 shell（同 Node opts.shell=true）
-            )
-        except FileNotFoundError as exc:
-            raise ConfigError(
-                "找不到 lark-cli 可执行文件，请先安装并完成 lark-cli config init / lark-cli auth login"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise ExternalAPIError(f"lark-cli 执行超时（{_TIMEOUT}s）") from exc
-        if proc.returncode != 0:
-            raise ExternalAPIError(
-                f"lark-cli 失败 ({proc.returncode}): {(proc.stderr or '').strip()[:500]}")
-        return proc.stdout
-
-    def _exec(self, args: list[str], cwd: str | None = None) -> str:
-        """带身份回退：--as user → 失败 → --as bot；命中后缓存。"""
-        if self._identity:
-            return self._run(args, cwd, self._identity)
-        try:
-            out = self._run(args, cwd, "user")
-            self._identity = "user"
-            return out
-        except ExternalAPIError:
-            out = self._run(args, cwd, "bot")
-            self._identity = "bot"
-            return out
-
-    # --- 临时目录辅助（lark-cli 要求 @引用文件在 cwd 内） ---
-    @staticmethod
-    def _temp_dir(label: str) -> str:
-        # mkdtemp 自带唯一性，无需 pid/时间戳（移植 Node newTempDir 的意图）
-        return tempfile.mkdtemp(prefix=f"templates-{label}-")
-
-    @staticmethod
-    def _cleanup(path: str) -> None:
-        try:
-            for p in Path(path).glob("*"):
-                p.unlink()
-            Path(path).rmdir()
-        except OSError:
-            pass
-
-    def _write_temp_content(self, label: str, content: str) -> tuple[str, str]:
-        """把 content 写到临时目录的 markdown 文件，返回 (dir, basename)。"""
-        d = self._temp_dir(label)
-        name = "content.md"
-        with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
-            fh.write(content)
-        return d, name
 
 
 def list_templates() -> list[dict[str, Any]]:
@@ -154,33 +84,14 @@ def create_template(title: str, content: str | None = None) -> CreateResult:
     if not title:
         raise ValidationError("title 不能为空")
     folder_token = get_env("FEISHU_TEMPLATE_FOLDER_TOKEN")["FEISHU_TEMPLATE_FOLDER_TOKEN"]
-    client = LarkCliClient()
-    # 两条路径都解析 create 输出的 document_id（同 Node 231-233）。inline 与 @file 均返回 doc_id。
-    args = ["docs", "+create", "--api-version", "v2", "--parent-token", folder_token,
-            "--doc-format", "markdown"]
-    cwd: str | None = None
-    if content is None:
-        args += ["--content", f"# {title}"]            # 无内容：直接传标题（同 Node 227）
-    else:
+    client = FeishuClient()
+    doc_id = client.create_doc(folder_token, title)
+    if content is not None:
         if not isinstance(content, str) or not content:
             raise ValidationError("content 不能为空")
-        cwd, name = client._write_temp_content("create", content)
-        args += ["--content", f"@{name}"]
-    try:
-        output = client._exec(args, cwd=cwd)
-    finally:
-        if cwd:
-            client._cleanup(cwd)
-    try:
-        data = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise ExternalAPIError(f"创建文档失败：返回非 JSON: {output[:300]}") from exc
-    doc_id = (data.get("data", {}).get("doc_id")
-              or data.get("data", {}).get("document", {}).get("document_id")
-              or data.get("data", {}).get("document_id")
-              or data.get("document_id"))
-    if not doc_id:
-        raise ExternalAPIError(f"创建文档失败：未返回 document_id。输出: {output[:300]}")
+        blocks, children_id = client.convert_markdown_to_blocks(content)
+        if blocks:
+            client.insert_descendants(doc_id, blocks, children_id)
     return CreateResult(document_id=doc_id, title=title)
 
 
@@ -189,19 +100,11 @@ def update_template(doc_id: str, content: str) -> UpdateResult:
         raise ValidationError("doc_id 不能为空")
     if not isinstance(content, str) or not content:
         raise ValidationError("content 不能为空")
-    client = LarkCliClient()
-    d, name = client._write_temp_content("update", content)
-    try:
-        client._exec([
-            "docs", "+update",
-            "--api-version", "v2",
-            "--doc", doc_id,
-            "--command", "overwrite",
-            "--content", f"@{name}",
-            "--doc-format", "markdown",
-        ], cwd=d)
-    finally:
-        client._cleanup(d)
+    client = FeishuClient()
+    client.delete_all_children(doc_id)
+    blocks, children_id = client.convert_markdown_to_blocks(content)
+    if blocks:
+        client.insert_descendants(doc_id, blocks, children_id)
     return UpdateResult(updated=True, document_id=doc_id)
 
 
