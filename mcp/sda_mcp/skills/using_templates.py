@@ -25,6 +25,7 @@ from typing import Any
 
 from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ExternalAPIError, ValidationError
+from sda_mcp.feishu import FeishuClient
 
 _LARK_BIN = "lark-cli"
 _TIMEOUT = 120
@@ -135,8 +136,8 @@ class LarkCliClient:
 def list_templates() -> list[dict[str, Any]]:
     """列出文件夹下文档：根目录（category 为空）+ 每个子文件夹一层。"""
     folder_token = get_env("FEISHU_TEMPLATE_FOLDER_TOKEN")["FEISHU_TEMPLATE_FOLDER_TOKEN"]
-    client = LarkCliClient()
-    root_files = client._list_folder(folder_token)
+    client = FeishuClient()
+    root_files = client.list_folder_files(folder_token)
 
     def _entry(f: dict[str, Any], category: str) -> dict[str, Any]:
         return {
@@ -152,7 +153,7 @@ def list_templates() -> list[dict[str, Any]]:
     sub_folders = [f for f in root_files if f.get("type") == "folder"]
 
     def _sub(folder: dict[str, Any]) -> list[dict[str, Any]]:
-        files = client._list_folder(folder.get("token") or folder.get("id"))
+        files = client.list_folder_files(folder.get("token") or folder.get("id"))
         return [_entry(f, folder.get("name", "")) for f in files if f.get("type") in ("docx", "doc")]
 
     if sub_folders:
@@ -165,22 +166,7 @@ def list_templates() -> list[dict[str, Any]]:
 def read_template(doc_id: str) -> str:
     if not doc_id:
         raise ValidationError("doc_id 不能为空")
-    client = LarkCliClient()
-    output = client._exec([
-        "docs", "+fetch",
-        "--api-version", "v2",
-        "--doc", doc_id,
-        "--doc-format", "markdown",
-        "--format", "json",
-    ])
-    try:
-        data = json.loads(output)
-    except json.JSONDecodeError:
-        return output
-    return (data.get("data", {}).get("document", {}).get("content")
-            or data.get("data", {}).get("markdown")
-            or data.get("markdown")
-            or "")
+    return FeishuClient().get_doc_markdown(doc_id)
 
 
 def create_template(title: str, content: str | None = None) -> CreateResult:
@@ -247,6 +233,5 @@ def delete_template(doc_id: str, password: str | None = None) -> DeleteResult:
             raise ValidationError("需要密码（已设置 FEISHU_TEMPLATE_DELETE_PASSWORD）")
         if password != env_password:
             raise ValidationError("密码错误")
-    client = LarkCliClient()
-    client._exec(["drive", "+delete", "--file-token", doc_id, "--type", "docx", "--yes"])
+    FeishuClient().delete_file(doc_id, "docx")
     return DeleteResult(deleted=True, document_id=doc_id)

@@ -87,33 +87,35 @@ def test_list_flat_and_subfolder(monkeypatch):
         {"type": "folder", "token": "f1", "name": "销售"},
     ]
     sub = [{"type": "docx", "token": "d2", "name": "周报", "url": "u2", "modified_time": "2"}]
-    outputs = [json.dumps({"data": {"files": root}}), json.dumps({"data": {"files": sub}})]
-    _fake_run_factory(monkeypatch, outputs)
-    monkeypatch.setattr(t, "get_env", lambda *k: {"FEISHU_TEMPLATE_FOLDER_TOKEN": "ROOT"})
+    # 根目录 + 子目录各一次调用
+    monkeypatch.setattr(t.FeishuClient, "list_folder_files",
+                        lambda self, ft: root if ft == "ROOT" else sub)
+    monkeypatch.setattr(t, "get_env",
+                        lambda *k: {"FEISHU_TEMPLATE_FOLDER_TOKEN": "ROOT"})
     res = t.list_templates()
     assert len(res) == 2
-    assert res[0] == {"id": "d1", "name": "日报", "category": "", "type": "docx", "url": "u1", "modified_time": "1"}
+    assert res[0] == {"id": "d1", "name": "日报", "category": "", "type": "docx",
+                      "url": "u1", "modified_time": "1"}
     assert res[1]["category"] == "销售" and res[1]["id"] == "d2"
 
 
 def test_list_missing_folder_token(monkeypatch):
     import sda_mcp.config as cfg
     monkeypatch.setattr(cfg, "load_config", lambda: {"env": {}})
-    with pytest.raises(ConfigError):
+    with pytest.raises(t.ConfigError):
         t.list_templates()
 
 
 # --- read ---
 
 def test_read_parses_markdown(monkeypatch):
-    body = json.dumps({"data": {"document": {"content": "# 标题\n正文"}}})
-    _fake_run_factory(monkeypatch, [body])
-    monkeypatch.setattr(t.LarkCliClient, "_exec", lambda self, args, cwd=None: body)
+    monkeypatch.setattr(t.FeishuClient, "get_doc_markdown",
+                        lambda self, doc_id: "# 标题\n正文")
     assert t.read_template("DOC") == "# 标题\n正文"
 
 
 def test_read_empty_doc_id():
-    with pytest.raises(ValidationError):
+    with pytest.raises(t.ValidationError):
         t.read_template("")
 
 
@@ -168,22 +170,19 @@ def test_update_success(monkeypatch):
 # --- delete ---
 
 def test_delete_password_gate_enforced(monkeypatch):
-    monkeypatch.setattr(t, "load_config", lambda: {"env": {"FEISHU_TEMPLATE_DELETE_PASSWORD": "secret"}})
-    with pytest.raises(ValidationError):               # 未传密码
+    monkeypatch.setattr(t, "load_config",
+                        lambda: {"env": {"FEISHU_TEMPLATE_DELETE_PASSWORD": "secret"}})
+    with pytest.raises(t.ValidationError):
         t.delete_template("DOC")
-    with pytest.raises(ValidationError):               # 密码错
+    with pytest.raises(t.ValidationError):
         t.delete_template("DOC", password="wrong")
 
 
-def test_delete_password_correct(monkeypatch):
-    monkeypatch.setattr(t, "load_config", lambda: {"env": {"FEISHU_TEMPLATE_DELETE_PASSWORD": "secret"}})
-    monkeypatch.setattr(t.LarkCliClient, "_exec", lambda self, a, cwd=None: "")
-    r = t.delete_template("DOC", password="secret")
-    assert r.deleted is True
-
-
-def test_delete_no_password_config_skips_gate(monkeypatch):
+def test_delete_calls_feishu(monkeypatch):
     monkeypatch.setattr(t, "load_config", lambda: {"env": {}})
-    monkeypatch.setattr(t.LarkCliClient, "_exec", lambda self, a, cwd=None: "")
+    captured = {}
+    monkeypatch.setattr(t.FeishuClient, "delete_file",
+                        lambda self, tok, ft="docx": captured.update(tok=tok, ft=ft))
     r = t.delete_template("DOC")
-    assert r.deleted is True
+    assert r.deleted is True and r.document_id == "DOC"
+    assert captured == {"tok": "DOC", "ft": "docx"}
