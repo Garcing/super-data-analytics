@@ -216,14 +216,25 @@ def test_list_bitable_fields_returns_raw_items(monkeypatch):
 def test_list_bitable_records_single_page(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _Resp({
-        "code": 0, "data": {"items": [
+    captured = {}
+
+    def _req(method, url, json=None, **k):
+        captured["method"] = method
+        captured["url"] = url
+        captured["body"] = json
+        return _Resp({"code": 0, "data": {"items": [
             {"record_id": "r1", "fields": {"名称": [{"text": "A"}]}},
             {"record_id": "r2", "fields": {"名称": [{"text": "B"}]}}],
-            "has_more": False}}))
+            "has_more": False}})
+
+    monkeypatch.setattr(f.httpx, "request", _req)
     items = f.FeishuClient().list_bitable_records("APP", "tbl1")
     assert len(items) == 2
     assert items[0]["record_id"] == "r1"
+    # 走官方推荐的 POST /records/search（旧 GET /records 已废弃）
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/records/search")
+    assert captured["body"]["page_size"] == 500
 
 
 def test_list_bitable_records_paginates_via_page_token(monkeypatch):
@@ -237,8 +248,8 @@ def test_list_bitable_records_paginates_via_page_token(monkeypatch):
     ]
     calls = []
 
-    def _req(method, url, params=None, **k):
-        calls.append(params.get("page_token"))
+    def _req(method, url, json=None, **k):
+        calls.append((json or {}).get("page_token"))   # search：page_token 在 body
         return pages.pop(0)
 
     monkeypatch.setattr(f.httpx, "request", _req)

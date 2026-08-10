@@ -182,15 +182,19 @@ class FeishuClient:
 
     # --- bitable 记录（读，原始）---
     def list_bitable_records(self, app_token: str, table_id: str) -> list[dict[str, Any]]:
-        """列多维表记录（原始 items，含 record_id + fields map；值简化由调用方做）。"""
-        path = f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
+        """列多维表全部记录（原始 items，含 record_id + fields map；值简化由调用方做）。
+
+        走官方推荐的 POST /records/search（无 filter 即全量）；旧 GET /records 已被
+        飞书标记为历史接口、不推荐使用。响应仍是 data.items/has_more/page_token。
+        """
+        path = f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/search"
         items: list[dict[str, Any]] = []
         page_token: str | None = None
         while True:
-            params: dict[str, Any] = {"page_size": 500}
+            body: dict[str, Any] = {"page_size": 500}
             if page_token:
-                params["page_token"] = page_token
-            data = self._request("GET", path, params=params)
+                body["page_token"] = page_token
+            data = self._request("POST", path, json_body=body)
             self._check(data, path)
             payload = data.get("data") or {}
             items.extend(payload.get("items") or [])
