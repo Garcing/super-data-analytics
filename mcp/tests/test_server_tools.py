@@ -7,9 +7,25 @@ zero-arg 工具传空 dict {}。
 """
 import asyncio
 
+from sda_mcp import server
 from sda_mcp.tools import (
     query_tools, retrieve_tools, analyze_tools, viz_tools, report_tools, template_tools,
 )
+
+
+def test_server_uses_stateless_json_http(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: calls.append(kwargs))
+
+    server.main()
+
+    assert calls == [{
+        "transport": "streamable-http",
+        "host": "0.0.0.0",
+        "port": 3100,
+        "stateless_http": True,
+        "json_response": True,
+    }]
 
 
 def _call(name, args):

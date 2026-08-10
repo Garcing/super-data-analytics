@@ -2,7 +2,7 @@
 
 把整套数据分析技能的确定性执行能力收敛进**一个 Docker 容器**，作为 MCP（Model Context Protocol）服务对外提供。hermes（接飞书/企微）和笔记本只配置一个 URL，不再每台机器调 Python/Node 依赖。
 
-- **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless），24 个工具。
+- **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless + JSON response），24 个工具。
 - **语言**：全部 Python（8 个技能内核 + sync pipeline），in-process 调用。
 - **监听**：容器 `0.0.0.0:3100/mcp`，静态 Bearer token 鉴权。
 - **对外**：Caddy 反向代理 + 自动 HTTPS，公网入口 `https://mcp.super-data-analytics.online/mcp`。
@@ -19,7 +19,7 @@
 │   Caddy :443 ──TLS────► Docker(网络:host)                  │
 │   (mcp.super-data-       ┌────────────────────────────┐    │
 │    analytics.online)     │ FastMCP streamable HTTP     │    │
-│                          │ stateless, :3100            │    │
+│                          │ stateless JSON, :3100       │    │
 │                          │ 24 工具, Bearer 校验        │    │
 │                          │ in-process 调用 Python 内核 │    │
 │                          │ + 飞书开放平台 REST         │    │
