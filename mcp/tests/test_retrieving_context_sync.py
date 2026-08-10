@@ -2,8 +2,11 @@
 import pytest
 from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import (_F_TEXT, _F_NUMBER, _F_SINGLE_SELECT, _F_MULTI_SELECT,
-                            _F_DATE, _F_CHECKBOX, _F_AUTO_NUMBER, _F_FORMULA,
-                            _F_LOOKUP, _F_URL)
+                            _F_DATE, _F_CHECKBOX, _F_USER, _F_PHONE, _F_URL,
+                            _F_ATTACHMENT, _F_SINGLE_LINK, _F_LOOKUP, _F_FORMULA,
+                            _F_DUPLEX_LINK, _F_LOCATION, _F_GROUP_CHAT,
+                            _F_CREATED_TIME, _F_MODIFIED_TIME, _F_CREATED_USER,
+                            _F_MODIFIED_USER, _F_AUTO_NUMBER)
 from sda_mcp.skills import retrieving_context_sync as s
 
 GC = {
@@ -18,7 +21,7 @@ GC = {
 # ---------- Phase 1: fetch 解析（开放平台 FeishuClient）----------
 
 def test_fetch_fields_descriptor_shape_keeps_auto_number(monkeypatch):
-    """开放平台 raw fields → 描述符；auto_number 不再过滤；提取 options 与公式结果 ui_type。"""
+    """开放平台 raw fields → 描述符；auto_number 不再过滤；提取 options 与公式结果 data_type。"""
     monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
                         lambda self, app, tbl: [
                             {"field_id": "fid1", "field_name": "名称", "type": _F_TEXT, "ui_type": "Text"},
@@ -28,13 +31,13 @@ def test_fetch_fields_descriptor_shape_keeps_auto_number(monkeypatch):
                              "property": {"options": [{"id": "o1", "name": "待处理"}]}},
                             {"field_id": "fid4", "field_name": "公式_日期", "type": _F_FORMULA,
                              "ui_type": "Formula",
-                             "property": {"type": {"ui_type": "DateTime"}}},
+                             "property": {"type": {"data_type": _F_DATE, "ui_type": "DateTime"}}},
                         ])
     fields = s.fetch_table_fields("APP", "tbl1")
     assert [f["name"] for f in fields] == ["名称", "自增", "状态", "公式_日期"]   # auto_number 保留
     assert fields[1]["type"] == _F_AUTO_NUMBER
     assert fields[2]["options"] == [{"id": "o1", "name": "待处理"}]
-    assert fields[3]["formula_ui_type"] == "DateTime"
+    assert fields[3]["formula_data_type"] == _F_DATE
 
 
 def test_fetch_records_simplifies_values(monkeypatch):
@@ -122,12 +125,11 @@ def test_simplify_value_auto_number_string():
 
 
 def test_simplify_formula_text_and_number():
-    """公式结果 text → 拼串；number → 数字规整。按 formula_ui_type 分派。"""
-    assert s._simplify_value(_F_FORMULA, [{"text": "订单分析-X", "type": "text"}],
-                             ui_type="Text") == "订单分析-X"
-    assert s._simplify_value(_F_FORMULA, 125, ui_type="Number") == 125
+    """公式结果 text → 拼串；number → 数字规整。按结果 data_type 分派。"""
+    assert s._simplify_formula([{"text": "订单分析-X", "type": "text"}], _F_TEXT, None) == "订单分析-X"
+    assert s._simplify_formula(125, _F_NUMBER, None) == 125
     # 公式数字也可能以字符串回来（部分场景）
-    assert s._simplify_value(_F_FORMULA, "125", ui_type="Number") == 125
+    assert s._simplify_formula("125", _F_NUMBER, None) == 125
 
 
 def test_simplify_formula_date_ms_and_dayserial():
@@ -135,24 +137,29 @@ def test_simplify_formula_date_ms_and_dayserial():
     - 直接引用日期：返回 [ms] 列表 → 'YYYY-MM-DD HH:MM:SS'
     - TODAY()/EDATE()：返回 Excel 日序号 → 'YYYY-MM-DD'
     46245 = 2026-08-11（TODAY 实测），1774317600000 = 2026 年 ms。"""
-    ms = s._simplify_value(_F_FORMULA, [1774317600000], ui_type="DateTime")
+    ms = s._simplify_formula([1774317600000], _F_DATE, None)
     assert ms is not None and len(ms) == 19 and ms[4:5] == "-"  # YYYY-MM-DD HH:MM:SS
-    serial = s._simplify_value(_F_FORMULA, 46245, ui_type="DateTime")
+    serial = s._simplify_formula(46245, _F_DATE, None)
     assert serial == "2026-08-11"                               # 日序号 → 纯日期
-    assert s._simplify_value(_F_FORMULA, None, ui_type="DateTime") is None
+    assert s._simplify_formula(None, _F_DATE, None) is None
 
 
 def test_simplify_formula_select_resolves_option_id():
     """公式单选返回选项 ID（如 ['opt4x1aCdv']），用表级 opt_map 反查为选项名。
     单选→串、多选→list；未知 ID 返回的名字原样（fallback）。"""
     opt_map = {"opt4x1aCdv": "进行中", "optA": "标签A", "optB": "标签B"}
-    assert s._simplify_value(_F_FORMULA, ["opt4x1aCdv"], ui_type="SingleSelect",
-                             opt_map=opt_map) == "进行中"
-    assert s._simplify_value(_F_FORMULA, ["optA", "optB"], ui_type="MultiSelect",
-                             opt_map=opt_map) == ["标签A", "标签B"]
+    assert s._simplify_formula(["opt4x1aCdv"], _F_SINGLE_SELECT, opt_map) == "进行中"
+    assert s._simplify_formula(["optA", "optB"], _F_MULTI_SELECT, opt_map) == ["标签A", "标签B"]
     # 未知 ID：opt_map 无则原样返回该串
-    assert s._simplify_value(_F_FORMULA, ["optZZZ"], ui_type="SingleSelect",
-                             opt_map=opt_map) == "optZZZ"
+    assert s._simplify_formula(["optZZZ"], _F_SINGLE_SELECT, opt_map) == "optZZZ"
+
+
+def test_simplify_formula_wrapper_form_defensive():
+    """官方文档示例公式值是 {type, value} 包装（实测为裸值），防御性兼容：包装内 type 优先。"""
+    # 包装形式：type=5(日期) + value=[ms]
+    assert s._simplify_formula({"type": _F_DATE, "value": [1774317600000]}, None, None) is not None
+    # 裸值 + 无 data_type → 文本降级
+    assert s._simplify_formula([{"text": "x"}], None, None) == "x"
 
 
 def test_simplify_value_url_field_flattens_to_text():
@@ -173,6 +180,40 @@ def test_simplify_value_unknown_type_dict_flattened():
     assert s._simplify_value(999, [{"text": "a"}, {"text": "b"}]) == "ab"
     # 数字等原始值仍原样
     assert s._simplify_value(999, 7) == 7
+
+
+def test_simplify_value_user_attachment_group_join_names():
+    """人员(11)/附件(17)/群组(23)/创建人(1003)/修改人(1004) → [{id,name}] 名字列表。
+    官方文档结构：可读名在 name；旧兜底取 text 会静默丢名字，现显式提取。"""
+    user_val = [{"id": "ou_x", "name": "黄泡泡", "en_name": "Amanda", "email": "a@b.com"}]
+    assert s._simplify_value(_F_USER, user_val) == ["黄泡泡"]
+    assert s._simplify_value(_F_CREATED_USER, user_val) == ["黄泡泡"]
+    assert s._simplify_value(_F_MODIFIED_USER, user_val) == ["黄泡泡"]
+    attach = [{"file_token": "ft1", "name": "report.png", "size": 108, "type": "image/png"}]
+    assert s._simplify_value(_F_ATTACHMENT, attach) == ["report.png"]
+    group = [{"id": "oc_x", "name": "测试部门"}]
+    assert s._simplify_value(_F_GROUP_CHAT, group) == ["测试部门"]
+    # 多人 → 多元素；空 → None
+    assert s._simplify_value(_F_USER, [{"name": "甲"}, {"name": "乙"}]) == ["甲", "乙"]
+    assert s._simplify_value(_F_USER, []) is None
+
+
+def test_simplify_value_location_and_phone_and_timestamps():
+    """地理位置(22)→full_address；电话(13)→串；创建/更新时间(1001/1002)→日期。"""
+    loc = {"full_address": "北京市海淀区学清路", "name": "字节", "location": "116.35,40.01"}
+    assert s._simplify_value(_F_LOCATION, loc) == "北京市海淀区学清路"
+    # 缺 full_address 时降级到 name/address
+    assert s._simplify_value(_F_LOCATION, {"name": "仅地名"}) == "仅地名"
+    assert s._simplify_value(_F_PHONE, "13800000000") == "13800000000"
+    ts = s._simplify_value(_F_CREATED_TIME, 1774317600000)
+    assert ts is not None and ts.startswith("2026-") and len(ts) == 19
+    assert s._simplify_value(_F_MODIFIED_TIME, 1774317600000) == ts
+
+
+def test_simplify_value_record_links_dropped():
+    """单向(18)/双向(21)关联 → {link_record_ids:[...]}，record_id 不可读，作图属性丢弃。"""
+    assert s._simplify_value(_F_SINGLE_LINK, {"link_record_ids": ["rec1", "rec2"]}) is None
+    assert s._simplify_value(_F_DUPLEX_LINK, {"link_record_ids": ["rec1"]}) is None
 
 
 def test_fetch_records_single_page_no_extra_call(monkeypatch):

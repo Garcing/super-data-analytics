@@ -15,8 +15,11 @@ from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import FeishuClient
 from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_NUMBER, _F_SINGLE_SELECT,
-                            _F_MULTI_SELECT, _F_DATE, _F_CHECKBOX, _F_URL,
-                            _F_FORMULA, _F_LOOKUP)
+                            _F_MULTI_SELECT, _F_DATE, _F_CHECKBOX, _F_USER, _F_PHONE,
+                            _F_URL, _F_ATTACHMENT, _F_SINGLE_LINK, _F_LOOKUP, _F_FORMULA,
+                            _F_DUPLEX_LINK, _F_LOCATION, _F_GROUP_CHAT,
+                            _F_CREATED_TIME, _F_MODIFIED_TIME, _F_CREATED_USER,
+                            _F_MODIFIED_USER)
 from sda_mcp.skills.retrieving_context import Neo4jClient
 
 _SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
@@ -48,14 +51,14 @@ def _format_value(value) -> str:
 def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
     """开放平台字段 → 描述符列表。不再过滤 auto_number（已纳入支持）。
 
-    每项含：name/type/id（基本）、ui_type、options(Select 选项 [{id,name}])、
-    formula_ui_type（公式/lookup 的【结果】类型 ui_type，分派用）。
+    每项含：name/type/id、ui_type、options(Select 选项 [{id,name}])、
+    formula_data_type（公式/lookup【结果】data_type int，分派用，见下）。
     """
     raw = FeishuClient().list_bitable_fields(app_token, table_id)
     out: list[dict] = []
     for f in raw:
         prop = f.get("property") or {}
-        result_type = ((prop.get("type") or {}) if isinstance(prop, dict) else {}).get("ui_type")
+        result = (prop.get("type") or {}) if isinstance(prop, dict) else {}
         out.append({
             "name": f.get("field_name"),
             "type": f.get("type"),
@@ -63,7 +66,9 @@ def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
             "ui_type": f.get("ui_type"),
             "options": [{"id": o.get("id"), "name": o.get("name")}
                         for o in (prop.get("options") or [])],
-            "formula_ui_type": result_type,
+            # 公式结果 data_type（int）：与字段类型常量同构（1=Text/2=Number/3=Single/5=Date…），
+            # 比 ui_type 字符串更稳——真实 base 里设过格式后 ui_type 可能缺失，data_type 始终在。
+            "formula_data_type": result.get("data_type"),
         })
     return out
 
@@ -71,7 +76,8 @@ def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
 def _join_text(runs: Any) -> Any:
     """text/公式(文本)/lookup(文本)/url 值 → 拼接字符串；空→None。
 
-    支持形态：纯串、单段 dict（{text,...}，如 url 字段 {text,link}）、片段数组 [{text,...}]。
+    支持形态：纯串（含 \\n 多行）、单段 dict（{text,...}，如 url {text,link}）、
+    片段数组 [{text,...}]（多段/多行，逐段拼接，内嵌 \\n 保留）。
     """
     if isinstance(runs, str):
         return runs.strip() or None
@@ -101,6 +107,37 @@ def _resolve_opt(oid: Any, opt_map: dict[str, str] | None) -> str | None:
         if not oid:
             return None
         return (opt_map or {}).get(oid) or oid  # optId→name；若 opt_map 无则原样（已是名字）
+    return None
+
+
+def _join_named(items: Any) -> list[str] | None:
+    """人员/附件/群组/创建人/修改人 [{id,name,...}] → 名字列表；空→None。
+
+    官方文档：这类字段值是对象数组，可读名在 name（人员另有 en_name）。
+    单值 dict 也兼容。返回 list[str] 便于图属性统一处理。
+    """
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list):
+        return None
+    names: list[str] = []
+    for it in items:
+        if isinstance(it, dict):
+            nm = (it.get("name") or it.get("en_name") or "").strip()
+            if nm:
+                names.append(nm)
+        elif isinstance(it, str) and it.strip():
+            names.append(it.strip())
+    return names or None
+
+
+def _location_text(value: Any) -> str | None:
+    """地理位置 {full_address, name, address, ...} → full_address 串；空→None。"""
+    if isinstance(value, dict):
+        return (value.get("full_address") or value.get("name")
+                or value.get("address") or "").strip() or None
+    if isinstance(value, str):
+        return value.strip() or None
     return None
 
 
@@ -144,42 +181,48 @@ def _format_date_value(value: Any) -> str | None:
     return (_DATE_EPOCH + timedelta(days=int(v))).strftime("%Y-%m-%d")  # 日序号
 
 
-def _simplify_formula(value: Any, result_ui_type: str | None,
+def _simplify_formula(value: Any, data_type: int | None,
                       opt_map: dict[str, str] | None) -> Any:
-    """公式(20)/查找引用(19) → 按【结果】ui_type 分派（真实 base 五种结果验证）。"""
+    """公式(20)/查找引用(19) → 按【结果】data_type(int) 分派。
+
+    data_type 与字段类型常量同构（官方文档明确：1=Text/2=Number/3=Single/4=Multi/
+    5=DateTime/7=Checkbox/11=User/13=Phone/15=Url/17=Attachment/22=Location/23=Group/
+    1001=CreatedTime/1002=ModifiedTime/1003=CreatedUser/1004=ModifiedUser/1005=AutoNumber）。
+    实测记录接口返回【裸值】（非文档示例的 {type,value} 包装），但这里仍防御性兼容包装形式。
+    公式 select 返回选项 ID 列表（存储 select 是名字串，形态不同）→ opt_map 反查。
+    """
+    # 防御：兼容官方文档示例的 {"type": int, "value": list} 包装（实测为裸值）
+    if isinstance(value, dict) and isinstance(value.get("type"), int) and "value" in value:
+        data_type = value.get("type") or data_type
+        value = value.get("value")
     if value is None:
         return None
-    ui = (result_ui_type or "").lower()
-    if ui == "text":
+    dt = data_type or 0
+    if dt in (_F_FORMULA, _F_LOOKUP, 19, 20):
+        # 结果类型又是公式/lookup（罕见嵌套）→ 文本降级，避免无限递归
         return _join_text(value)
-    if ui == "number":
-        return _to_number(value)
-    if ui == "datetime":
-        return _format_date_value(value)
-    if ui in ("singleselect", "multiselect"):
+    # 公式 select/multi 返回选项 ID 列表，与存储 select（名字串）形态不同 → 反查
+    if dt in (_F_SINGLE_SELECT, _F_MULTI_SELECT):
         ids = value if isinstance(value, list) else [value]
         names = [n for n in (_resolve_opt(i, opt_map) for i in ids) if n]
         if not names:
             return None
-        return names[0] if ui == "singleselect" else names
-    if ui == "checkbox":
-        return value
-    # 未知结果类型：尽力降级。文本片段拼串，否则原样（如裸数字）。
-    return _join_text(value) if isinstance(value, (list, dict, str)) else value
+        return names[0] if dt == _F_SINGLE_SELECT else names
+    # 其余结果类型与存储字段值同构 → 复用存储分派
+    return _simplify_value(dt, value, opt_map=opt_map)
 
 
 def _simplify_value(field_type: int, value: Any, *,
-                    ui_type: str | None = None,
                     opt_map: dict[str, str] | None = None) -> Any:
-    """开放平台记录值 → graph 用的简化形式。
+    """开放平台记录值 → graph 用的简化形式（Neo4j 原生类型：str/int/float/bool/list[str]）。
 
-    存储字段按 type 分派；公式/查找引用(19/20)按【结果】ui_type 分派（见 _simplify_formula）。
-    ui_type 仅对 19/20 生效（传公式结果 ui_type）。
+    存储字段按 type 分派（官方记录数据结构文档全类型覆盖）；公式/lookup 由
+    _simplify_formula 按结果 data_type 路由进来复用本函数。
     """
     if value is None:
         return None
     if field_type in (_F_FORMULA, _F_LOOKUP):
-        return _simplify_formula(value, ui_type, opt_map)
+        return _simplify_formula(value, None, opt_map)  # storage 不会到这；防御
     if field_type == _F_TEXT:
         return _join_text(value)
     if field_type == _F_NUMBER:
@@ -198,8 +241,22 @@ def _simplify_value(field_type: int, value: Any, *,
         return value  # bool 原样（Neo4j 原生支持）
     if field_type == _F_URL:
         return _join_text(value)
+    if field_type in (_F_USER, _F_CREATED_USER, _F_MODIFIED_USER):
+        return _join_named(value)  # [{id,name}] → 名字列表
+    if field_type == _F_GROUP_CHAT:
+        return _join_named(value)
+    if field_type == _F_ATTACHMENT:
+        return _join_named(value)  # [{file_token,name}] → 文件名列表
+    if field_type == _F_LOCATION:
+        return _location_text(value)
+    if field_type in (_F_CREATED_TIME, _F_MODIFIED_TIME):
+        return _format_date_value(value)  # ms 时间戳
+    if field_type == _F_PHONE:
+        return value.strip() if isinstance(value, str) else value
     if field_type == _F_AUTO_NUMBER:
         return value.strip() if isinstance(value, str) else value
+    if field_type in (_F_SINGLE_LINK, _F_DUPLEX_LINK):
+        return None  # {link_record_ids:[...]} → record_id 不可读，作图属性无意义，丢弃
     if isinstance(value, str):
         return value.strip() or None
     # 兜底：未识别类型若返回结构化 dict/片段数组，也拍平成可读串，避免写坏 Neo4j（Map 类型错）。
@@ -229,8 +286,11 @@ def fetch_table_records(app_token: str, table_id: str, fields: list[dict] | None
             name = f["name"]
             if name in raw_fields:
                 ftype = f["type"]
-                uit = f.get("formula_ui_type") if ftype in (_F_FORMULA, _F_LOOKUP) else None
-                val = _simplify_value(ftype, raw_fields[name], ui_type=uit, opt_map=opt_map)
+                if ftype in (_F_FORMULA, _F_LOOKUP):
+                    # 公式/lookup：按结果 data_type 分派（_simplify_formula 内自行处理）
+                    val = _simplify_formula(raw_fields[name], f.get("formula_data_type"), opt_map)
+                else:
+                    val = _simplify_value(ftype, raw_fields[name], opt_map=opt_map)
                 if val is not None and val != "" and val != []:
                     rec[name] = val
         records.append(rec)
