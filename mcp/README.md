@@ -125,6 +125,40 @@ volumes:
 ```
 > 飞书走开放平台 REST：凭证（`FEISHU_APP_ID`/`FEISHU_APP_SECRET`）在 config.json 的 `env` 块，无需挂 lark-cli 密钥链。
 
+### 3.6 重新部署（改代码后更新服务器）
+
+服务器 `~/sda-mcp/` 已就绪、`.env`/config.json 已配，日常更新代码只需**覆盖代码层 + 重建容器**：
+
+```bash
+# 1) 本机：打包 mcp/（分支 spec/mcp-server-design）
+git archive --format=tar.gz spec/mcp-server-design -o mcp.tgz -- mcp/
+scp mcp.tgz hermes:~/
+
+# 2) 服务器：解压覆盖（--strip-components=1 去掉 mcp/ 前缀）
+ssh hermes
+cd ~/sda-mcp && tar -xzf ~/mcp.tgz -C . --strip-components=1
+
+# 3) 重建容器（代码层在 Dockerfile 靠后，分层缓存命中 → 远快于首次）
+docker compose build && docker compose up -d --force-recreate
+
+# 4) 冒烟（见 3.4）；若语义层多维表有改动再跑一次 sync（见 §6）
+```
+
+**只改了一两个 `.py` 的快路径**（省去 archive 全量传输）：
+```bash
+scp mcp/sda_mcp/<file>.py hermes:~/sda-mcp/sda_mcp/<file>.py
+# 子目录文件记得对齐路径，如 skills/、tools/
+ssh hermes 'cd ~/sda-mcp && docker compose build && docker compose up -d --force-recreate'
+```
+
+重新部署**要注意**：
+- **config.json 新增 key 时**：本机 `~/.super-data-analytics/config.json` 改完后，**同步到服务器宿主**的同名文件（卷挂载的是宿主那份；容器 `:ro` 只读）。改完无需重建容器——下次工具调用即生效，但 sync 等长任务建议重建清掉进程内缓存。
+- **`.env`（`SDA_MCP_TOKEN`）改动**：compose 读 `.env`，需 `docker compose up -d --force-recreate` 重建才生效。
+- **`Dockerfile`/`docker-compose.yml`/`pyproject.toml` 改动**：必须走 `git archive` 全量覆盖 + `build`（scp 单文件不够）。
+- **重建不影响 hermes**：同一 URL + 同一 token，容器名不变，hermes 无需 `gateway restart`。
+- **改了飞书多维表结构（加字段/改类型）后**：跑一次 `sync`（全量）刷新 Neo4j + 向量；sync 会先清空图再重建，幂等。
+- **回退**：`git checkout <旧commit> -- mcp/` → 重新 archive/覆盖 → 重建。Neo4j 数据不丢（除非 sync 重灌）。
+
 ---
 
 ## 4. hermes 接入（飞书/企微）
@@ -201,6 +235,7 @@ mcp.super-data-analytics.online {
 | **HuggingFace 不通** | 服务器直连 HF 超时。Dockerfile 固化 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（否则 fastembed 拉模型/Xet 401 失败）。 |
 | **中国镜像** | Dockerfile 用 tuna apt/PyPI；否则构建从中国极慢/超时。 |
 | **飞书自建应用授权** | 模板文件夹、graph 多维表、retrieve_doc 目标文档须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
+| **sync 字段类型拍平** | 开放平台多维表记录里，超链接(type=15) 返回 `{text,link}` 裸 dict、公式(20)/查找引用(19) 返回 `[{text,type}]` 片段数组。`_simplify_value` 必须全部拍平成可读串再写 Neo4j，否则 `SET n += $props` 报 Map 类型错。旧 lark-cli 把单元格格式化成串，故旧流水线无此问题。 |
 | **Hologres** | 走 VPN(tun0)；`connect_timeout=20s`（VPN 偶发握手慢）。空字段名 psycopg 返回空串，内核已 `name or col_N` 兜底。 |
 | **Neo4j `Record.keys()`** | 是方法不是属性，`run_cypher` 必须 `rec.keys()`。 |
 | **Vercel Blob 索引** | head API 不返回 etag；索引用 `uploaded_at` cache-buster 绕 CDN 60s 陈旧，取 fetch 响应 etag 给写时 ifMatch。 |
