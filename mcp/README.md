@@ -260,6 +260,6 @@ mcp.super-data-analytics.online {
 ## 9. 开发
 
 - **铁律**：原 skill 目录树（`building-reports/`、`querying-data/` 等）**零改动**，作对照基准。所有新代码只在 `mcp/`。
-- 测试：`cd mcp && python -m pytest -q`（110 通过 + 6 集成 skip）。mock 单元测试 + 可选集成对照（`SDA_INTEGRATION=1`）。
+- 测试：`cd mcp && python -m pytest -q`（144 通过 + 7 集成 skip）。mock 单元测试 + 可选集成对照（`SDA_INTEGRATION=1`）。
 - 计划/设计文档：`docs/superpowers/specs/2026-08-09-mcp-server-design.md`、`docs/superpowers/plans/2026-08-09-subproject-*.md`。
 - MCP 设计参考：`/mcp-builder` 技能（Anthropic 权威 MCP 手册）。
