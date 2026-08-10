@@ -197,6 +197,27 @@ def test_delete_file_error_raises(monkeypatch):
 
 # --- list_bitable_fields ---
 
+def test_list_tables_returns_items(monkeypatch):
+    """GET /apps/{app}/tables → [{table_id, name}]，自动翻页。"""
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    captured = {}
+
+    def _req(method, url, params=None, **k):
+        captured["url"] = url
+        captured["method"] = method
+        return _Resp({"code": 0, "data": {"items": [
+            {"table_id": "tbl1", "name": "指标", "revision": 1},
+            {"table_id": "tbl2", "name": "维度", "revision": 2}],
+            "has_more": False}})
+
+    monkeypatch.setattr(f.httpx, "request", _req)
+    tables = f.FeishuClient().list_tables("APP")
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/open-apis/bitable/v1/apps/APP/tables")
+    assert [t["table_id"] for t in tables] == ["tbl1", "tbl2"]
+
+
 def test_list_bitable_fields_returns_raw_items(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")

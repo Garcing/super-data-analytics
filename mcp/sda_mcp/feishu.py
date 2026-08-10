@@ -159,6 +159,31 @@ class FeishuClient:
         data = self._request("DELETE", path, params={"type": file_type})
         self._check(data, path)
 
+    # --- bitable 数据表（读）---
+    def list_tables(self, app_token: str) -> list[dict[str, Any]]:
+        """列出多维表下的全部数据表。GET /open-apis/bitable/v1/apps/{app_token}/tables。
+
+        返回 [{table_id, name, revision}, ...]，自动翻页。给 app_token 即可发现表，
+        无需事先知道 table_id。
+        """
+        path = f"/open-apis/bitable/v1/apps/{app_token}/tables"
+        items: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            data = self._request("GET", path, params=params)
+            self._check(data, path)
+            payload = data.get("data") or {}
+            items.extend(payload.get("items") or [])
+            if not payload.get("has_more"):
+                break
+            page_token = _next_token(data)
+            if not page_token:
+                break
+        return items
+
     # --- bitable 字段（读，原始）---
     def list_bitable_fields(self, app_token: str, table_id: str) -> list[dict[str, Any]]:
         """列出多维表字段（原始，含 auto_number；domain 过滤由调用方做）。"""
