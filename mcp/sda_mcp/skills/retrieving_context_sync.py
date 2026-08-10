@@ -8,14 +8,14 @@
 """
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
 from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ExternalAPIError, ValidationError
+from sda_mcp.feishu import FeishuClient
+from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_SINGLE_SELECT,
+                            _F_MULTI_SELECT, _F_FORMULA, _F_LOOKUP)
 from sda_mcp.skills.retrieving_context import Neo4jClient
 
 _SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
@@ -42,73 +42,68 @@ def _format_value(value) -> str:
     return str(value)
 
 
-# ---------- Phase 1: feishu fetch（移植 feishu_reader.py）----------
-
-def _lark_cli(*args: str) -> dict:
-    """lark-cli base 子命令，--as bot，返回解析后 JSON。移植 feishu_reader._run_lark_cli。"""
-    lark = shutil.which("lark-cli") or "lark-cli"
-    try:
-        proc = subprocess.run([lark, *args, "--as", "bot"],
-                              capture_output=True, text=True, timeout=120)
-    except FileNotFoundError as exc:
-        raise ConfigError("未找到 lark-cli") from exc
-    if proc.returncode != 0:
-        raise ExternalAPIError(f"lark-cli 失败: {(proc.stderr or '').strip()[:300]}")
-    lines = proc.stdout.strip().split("\n")
-    start = next((i for i, ln in enumerate(lines) if ln.strip().startswith("{")), None)
-    if start is None:
-        raise ExternalAPIError(f"lark-cli 无 JSON 输出: {proc.stdout[:300]}")
-    try:
-        return json.loads("\n".join(lines[start:]))
-    except json.JSONDecodeError as exc:
-        raise ExternalAPIError("lark-cli 返回非 JSON") from exc
-
+# ---------- Phase 1: feishu fetch（开放平台 FeishuClient + 值简化器）----------
 
 def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
-    """移植 feishu_reader.fetch_table_fields（过滤 auto_number）。"""
-    data = _lark_cli("base", "+field-list", "--base-token", app_token, "--table-id", table_id)
-    return [{"name": f["name"], "type": f["type"], "id": f["id"]}
-            for f in data.get("data", {}).get("fields", []) if f["type"] != "auto_number"]
+    """开放平台字段 → {name,type,id}，过滤 auto_number。"""
+    raw = FeishuClient().list_bitable_fields(app_token, table_id)
+    return [{"name": f.get("field_name"), "type": f.get("type"), "id": f.get("field_id")}
+            for f in raw if f.get("type") != _F_AUTO_NUMBER]
 
 
-def _extract_cell(field_type: str, cell: Any) -> Any:
-    """移植 feishu_reader._extract_cell_value。"""
-    if cell is None:
+def _join_text(runs: Any) -> Any:
+    """text 字段值（[{text:..}] 或字符串）→ 拼接字符串；空→None。"""
+    if isinstance(runs, str):
+        return runs.strip() or None
+    if isinstance(runs, list):
+        parts = [r.get("text", "") if isinstance(r, dict) else str(r) for r in runs]
+        return "".join(parts).strip() or None
+    return runs
+
+
+def _opt_to_str(v: Any) -> Any:
+    """单选项（字符串 或 {text:'x'}）→ 字符串；空→None。"""
+    if isinstance(v, dict):
+        return (v.get("text") or v.get("name") or "").strip() or None
+    if isinstance(v, str):
+        return v.strip() or None
+    return v
+
+
+def _simplify_value(field_type: int, value: Any) -> Any:
+    """开放平台记录值 → graph 用的简化形式。对齐旧 _extract_cell 的输出契约。"""
+    if value is None:
         return None
-    if field_type in ("select", "multi_select") and isinstance(cell, list):
-        return cell[0] if field_type == "select" and len(cell) == 1 else cell
-    if isinstance(cell, str):
-        return cell.strip() or None
-    return cell
+    # 公式(20)/查找引用(19) 文本结果与 Text(1) 同构（[{text,type}] 片段数组）；
+    # 非文本结果（数字）经 _join_text 原样返回。本 base 公式/lookup 均为文本结果（已验证）。
+    if field_type in (_F_TEXT, _F_FORMULA, _F_LOOKUP):
+        return _join_text(value)
+    if field_type == _F_SINGLE_SELECT:
+        return _opt_to_str(value)
+    if field_type == _F_MULTI_SELECT:
+        if isinstance(value, list):
+            return [_opt_to_str(v) for v in value if _opt_to_str(v) is not None]
+        v = _opt_to_str(value)
+        return [v] if v is not None else None
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
 
 
 def fetch_table_records(app_token: str, table_id: str, fields: list[dict] | None = None) -> list[dict]:
-    """移植 feishu_reader.fetch_table_records（分页 200，列对齐，过滤 None）。"""
+    """开放平台记录 → [{字段名: 简化值}, ...]，过滤 None/空字符串。"""
     if fields is None:
         fields = fetch_table_fields(app_token, table_id)
-    field_map = {f["name"]: f["type"] for f in fields}
-    field_names = {f["name"] for f in fields}
-    all_rows: list[list] = []
-    offset = 0
-    page_size = 200
-    while True:
-        resp = _lark_cli("base", "+record-list", "--base-token", app_token, "--table-id", table_id,
-                         "--format", "json", "--limit", str(page_size), "--offset", str(offset))
-        payload = resp.get("data", {})
-        rows = payload.get("data", [])
-        col_names = payload.get("fields", [])
-        col_index = {n: i for i, n in enumerate(col_names)}
-        all_rows.extend(rows)
-        if not payload.get("has_more", False) or len(rows) < page_size:
-            break
-        offset += len(rows)
-    records = []
-    for row in all_rows:
-        rec = {}
-        for name in field_names:
-            if name in col_index:
-                val = _extract_cell(field_map[name], row[col_index[name]])
-                if val is not None:
+    field_types = {f["name"]: f["type"] for f in fields}
+    items = FeishuClient().list_bitable_records(app_token, table_id)
+    records: list[dict] = []
+    for item in items:
+        raw_fields = item.get("fields") or {}
+        rec: dict = {}
+        for name, ftype in field_types.items():
+            if name in raw_fields:
+                val = _simplify_value(ftype, raw_fields[name])
+                if val is not None and val != "":
                     rec[name] = val
         records.append(rec)
     return records

@@ -1,7 +1,8 @@
-"""retrieving_context_sync mock 单元测试（离线，不依赖真实 lark-cli/Neo4j/fastembed 模型）。"""
-import json
+"""retrieving_context_sync mock 单元测试（离线，不依赖真实飞书/Neo4j/fastembed 模型）。"""
 import pytest
 from sda_mcp.errors import ConfigError, ValidationError
+from sda_mcp.feishu import (_F_TEXT, _F_SINGLE_SELECT, _F_MULTI_SELECT,
+                            _F_AUTO_NUMBER, _F_FORMULA, _F_LOOKUP)
 from sda_mcp.skills import retrieving_context_sync as s
 
 GC = {
@@ -13,44 +14,85 @@ GC = {
 }
 
 
-# ---------- Phase 1: fetch 解析 ----------
+# ---------- Phase 1: fetch 解析（开放平台 FeishuClient）----------
 
-def test_fetch_extracts_records(monkeypatch):
-    """mock _lark_cli 返回 field-list + record-list → 解析正确（select 取值、分页停止）。"""
-    field_payload = {"data": {"fields": [
-        {"name": "名称", "type": "text", "id": "f1"},
-        {"name": "状态", "type": "select", "id": "f2"},
-        {"name": "自增", "type": "auto_number", "id": "f3"},  # 应被过滤
-    ]}}
-    # 单页 has_more=False → 停止分页
-    page1 = {"data": {"data": [["A", ["active"]], ["B", ["pending"]]],
-                      "fields": ["名称", "状态"], "has_more": False}}
-    outputs = [field_payload, page1]
-    monkeypatch.setattr(s, "_lark_cli", lambda *a: outputs.pop(0))
+def test_fetch_fields_maps_and_filters_auto_number(monkeypatch):
+    """开放平台 raw fields → {name,type,id}，过滤 auto_number(1005)。"""
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
+                        lambda self, app, tbl: [
+                            {"field_id": "fid1", "field_name": "名称", "type": _F_TEXT},
+                            {"field_id": "fid2", "field_name": "自增", "type": _F_AUTO_NUMBER},
+                        ])
+    fields = s.fetch_table_fields("APP", "tbl1")
+    assert fields == [{"name": "名称", "type": _F_TEXT, "id": "fid1"}]
 
+
+def test_fetch_records_simplifies_values(monkeypatch):
+    """text→拼字符串、单选→字符串、多选→list；空/None 过滤。"""
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
+                        lambda self, app, tbl: [
+                            {"field_id": "f1", "field_name": "名称", "type": _F_TEXT},
+                            {"field_id": "f2", "field_name": "状态", "type": _F_SINGLE_SELECT},
+                            {"field_id": "f3", "field_name": "标签", "type": _F_MULTI_SELECT},
+                        ])
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_records",
+                        lambda self, app, tbl: [
+                            {"record_id": "r1", "fields": {
+                                "名称": [{"text": "A"}],
+                                "状态": "active",                       # 字符串形式
+                                "标签": ["x", "y"]}},                   # 多选 list
+                            {"record_id": "r2", "fields": {
+                                "名称": [{"text": "B"}],
+                                "状态": {"text": "pending"},            # 对象形式
+                                "标签": [{"text": "z"}]}},              # 多选对象 list
+                        ])
     recs = s.fetch_table_records("APP", "tbl1")
     assert len(recs) == 2
     assert recs[0]["名称"] == "A"
-    # select 单值取 cell[0]
     assert recs[0]["状态"] == "active"
-    assert recs[1]["状态"] == "pending"
-    # auto_number 字段不在结果里
-    assert "自增" not in recs[0]
+    assert recs[0]["标签"] == ["x", "y"]
+    assert recs[1]["状态"] == "pending"          # 对象 → 取 text
+    assert recs[1]["标签"] == ["z"]
 
 
-def test_fetch_paginates_until_has_more_false(monkeypatch):
-    """满页(200) + has_more=True → 继续翻页；下一页短 → 停止。"""
-    field_payload = {"data": {"fields": [{"name": "名称", "type": "text", "id": "f1"}]}}
-    page1_rows = [["r%d" % i] for i in range(200)]  # 满页 → 触发翻页
-    page1 = {"data": {"data": page1_rows, "fields": ["名称"], "has_more": True}}
-    page2 = {"data": {"data": [["last"]], "fields": ["名称"], "has_more": False}}
-    outputs = [field_payload, page1, page2]
-    calls = []
-    monkeypatch.setattr(s, "_lark_cli", lambda *a: (calls.append(a) or outputs.pop(0)))
+def test_fetch_records_formula_and_lookup_join_text(monkeypatch):
+    """公式(20)/查找引用(19) 文本结果 [{text,type}] → 拼成纯字符串（对齐 lark-cli）。
+    关键：维度ID(公式) 是维度 key_field，必须拼成 'order.order_id'。"""
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
+                        lambda self, app, tbl: [
+                            {"field_id": "f1", "field_name": "维度ID", "type": _F_FORMULA},
+                            {"field_id": "f2", "field_name": "起始表别名", "type": _F_LOOKUP},
+                        ])
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_records",
+                        lambda self, app, tbl: [
+                            {"record_id": "r1", "fields": {
+                                "维度ID": [{"text": "order.order_id", "type": "text"}],
+                                "起始表别名": [{"text": "link", "type": "text"}]}}])
     recs = s.fetch_table_records("APP", "tbl1")
-    assert len(recs) == 201
-    assert recs[-1]["名称"] == "last"
-    assert len(calls) == 3  # field-list + 2 页 record-list
+    assert recs[0]["维度ID"] == "order.order_id"
+    assert recs[0]["起始表别名"] == "link"
+
+
+def test_simplify_value_passthrough_number_and_url(monkeypatch):
+    """number(2) 原样、Url(15) 等非匹配字段原样透传（仅作属性，不参与关系匹配）。"""
+    assert s._simplify_value(_F_TEXT, [{"text": "x"}]) == "x"
+    assert s._simplify_value(_F_FORMULA, 42) == 42           # 非文本公式结果原样
+    assert s._simplify_value(_F_SINGLE_SELECT, "订单") == "订单"   # 裸字符串（本 base 实际形态）
+    assert s._simplify_value(_F_MULTI_SELECT, ["a", "b"]) == ["a", "b"]
+
+
+def test_fetch_records_single_page_no_extra_call(monkeypatch):
+    """client 已翻页；fetch_table_records 只调一次 records。"""
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
+                        lambda self, app, tbl: [{"field_id": "f1", "field_name": "名称",
+                                                 "type": _F_TEXT}])
+    calls = []
+    monkeypatch.setattr(s.FeishuClient, "list_bitable_records",
+                        lambda self, app, tbl: calls.append(1) or [
+                            {"record_id": "r1", "fields": {"名称": [{"text": "A"}]}}])
+    recs = s.fetch_table_records("APP", "tbl1")
+    assert len(recs) == 1 and recs[0]["名称"] == "A"
+    assert len(calls) == 1
 
 
 # ---------- 编排 ----------
