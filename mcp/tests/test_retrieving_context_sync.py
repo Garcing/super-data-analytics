@@ -1,8 +1,9 @@
 """retrieving_context_sync mock 单元测试（离线，不依赖真实飞书/Neo4j/fastembed 模型）。"""
 import pytest
 from sda_mcp.errors import ConfigError, ValidationError
-from sda_mcp.feishu import (_F_TEXT, _F_SINGLE_SELECT, _F_MULTI_SELECT,
-                            _F_AUTO_NUMBER, _F_FORMULA, _F_LOOKUP, _F_URL)
+from sda_mcp.feishu import (_F_TEXT, _F_NUMBER, _F_SINGLE_SELECT, _F_MULTI_SELECT,
+                            _F_DATE, _F_CHECKBOX, _F_AUTO_NUMBER, _F_FORMULA,
+                            _F_LOOKUP, _F_URL)
 from sda_mcp.skills import retrieving_context_sync as s
 
 GC = {
@@ -16,15 +17,24 @@ GC = {
 
 # ---------- Phase 1: fetch 解析（开放平台 FeishuClient）----------
 
-def test_fetch_fields_maps_and_filters_auto_number(monkeypatch):
-    """开放平台 raw fields → {name,type,id}，过滤 auto_number(1005)。"""
+def test_fetch_fields_descriptor_shape_keeps_auto_number(monkeypatch):
+    """开放平台 raw fields → 描述符；auto_number 不再过滤；提取 options 与公式结果 ui_type。"""
     monkeypatch.setattr(s.FeishuClient, "list_bitable_fields",
                         lambda self, app, tbl: [
-                            {"field_id": "fid1", "field_name": "名称", "type": _F_TEXT},
-                            {"field_id": "fid2", "field_name": "自增", "type": _F_AUTO_NUMBER},
+                            {"field_id": "fid1", "field_name": "名称", "type": _F_TEXT, "ui_type": "Text"},
+                            {"field_id": "fid2", "field_name": "自增", "type": _F_AUTO_NUMBER, "ui_type": "AutoNumber"},
+                            {"field_id": "fid3", "field_name": "状态", "type": _F_SINGLE_SELECT,
+                             "ui_type": "SingleSelect",
+                             "property": {"options": [{"id": "o1", "name": "待处理"}]}},
+                            {"field_id": "fid4", "field_name": "公式_日期", "type": _F_FORMULA,
+                             "ui_type": "Formula",
+                             "property": {"type": {"ui_type": "DateTime"}}},
                         ])
     fields = s.fetch_table_fields("APP", "tbl1")
-    assert fields == [{"name": "名称", "type": _F_TEXT, "id": "fid1"}]
+    assert [f["name"] for f in fields] == ["名称", "自增", "状态", "公式_日期"]   # auto_number 保留
+    assert fields[1]["type"] == _F_AUTO_NUMBER
+    assert fields[2]["options"] == [{"id": "o1", "name": "待处理"}]
+    assert fields[3]["formula_ui_type"] == "DateTime"
 
 
 def test_fetch_records_simplifies_values(monkeypatch):
@@ -73,12 +83,76 @@ def test_fetch_records_formula_and_lookup_join_text(monkeypatch):
     assert recs[0]["起始表别名"] == "link"
 
 
-def test_simplify_value_passthrough_number_and_url(monkeypatch):
-    """number(2) 原样；Url(15) 拍平成 text 串（仅作属性，不参与关系匹配）。"""
+def test_simplify_value_storage_basics():
+    """存储字段基本形态：text 拼串、single→串、multi→list。"""
     assert s._simplify_value(_F_TEXT, [{"text": "x"}]) == "x"
-    assert s._simplify_value(_F_FORMULA, 42) == 42           # 非文本公式结果原样
     assert s._simplify_value(_F_SINGLE_SELECT, "订单") == "订单"   # 裸字符串（本 base 实际形态）
     assert s._simplify_value(_F_MULTI_SELECT, ["a", "b"]) == ["a", "b"]
+    assert s._simplify_value(_F_FORMULA, 42) == 42           # 公式无 ui_type 时裸数字原样降级
+
+
+def test_simplify_value_number_field_string_to_numeric():
+    """Number(2) 字段开放平台返回【字符串】，须规整为 int/float；非数字串原样。"""
+    assert s._simplify_value(_F_NUMBER, "12.5") == 12.5
+    assert s._simplify_value(_F_NUMBER, "8") == 8            # 整数字符串 → int
+    assert s._simplify_value(_F_NUMBER, 125) == 125          # 已是数字原样
+    assert s._simplify_value(_F_NUMBER, "abc") == "abc"      # 非数字串原样保留
+    assert s._simplify_value(_F_NUMBER, "") is None
+    assert s._simplify_value(_F_NUMBER, None) is None
+
+
+def test_simplify_value_datetime_field_ms_epoch():
+    """DateTime(5) 字段返回 ms 毫秒时间戳 → 'YYYY-MM-DD HH:MM:SS'（+8 时区）。"""
+    # 1774317600000ms = 2026-03-21 02:00 UTC = 10:00 +8（用户写入 '2026-03-24'? 飞书实际值）
+    out = s._simplify_value(_F_DATE, 1774317600000)
+    assert isinstance(out, str) and out.endswith(":00") and out.startswith("2026-")
+    assert s._simplify_value(_F_DATE, None) is None
+
+
+def test_simplify_value_checkbox_passthrough_bool():
+    """Checkbox(7) → bool 原样（Neo4j 原生支持）。"""
+    assert s._simplify_value(_F_CHECKBOX, True) is True
+    assert s._simplify_value(_F_CHECKBOX, False) is False
+
+
+def test_simplify_value_auto_number_string():
+    """AutoNumber(1005) 已纳入支持（不再过滤）→ 'NO.001' 串原样。"""
+    assert s._simplify_value(_F_AUTO_NUMBER, "NO.001") == "NO.001"
+    assert s._simplify_value(_F_AUTO_NUMBER, "NO.002") == "NO.002"
+
+
+def test_simplify_formula_text_and_number():
+    """公式结果 text → 拼串；number → 数字规整。按 formula_ui_type 分派。"""
+    assert s._simplify_value(_F_FORMULA, [{"text": "订单分析-X", "type": "text"}],
+                             ui_type="Text") == "订单分析-X"
+    assert s._simplify_value(_F_FORMULA, 125, ui_type="Number") == 125
+    # 公式数字也可能以字符串回来（部分场景）
+    assert s._simplify_value(_F_FORMULA, "125", ui_type="Number") == 125
+
+
+def test_simplify_formula_date_ms_and_dayserial():
+    """公式日期两种形态（真实 base 验证）：
+    - 直接引用日期：返回 [ms] 列表 → 'YYYY-MM-DD HH:MM:SS'
+    - TODAY()/EDATE()：返回 Excel 日序号 → 'YYYY-MM-DD'
+    46245 = 2026-08-11（TODAY 实测），1774317600000 = 2026 年 ms。"""
+    ms = s._simplify_value(_F_FORMULA, [1774317600000], ui_type="DateTime")
+    assert ms is not None and len(ms) == 19 and ms[4:5] == "-"  # YYYY-MM-DD HH:MM:SS
+    serial = s._simplify_value(_F_FORMULA, 46245, ui_type="DateTime")
+    assert serial == "2026-08-11"                               # 日序号 → 纯日期
+    assert s._simplify_value(_F_FORMULA, None, ui_type="DateTime") is None
+
+
+def test_simplify_formula_select_resolves_option_id():
+    """公式单选返回选项 ID（如 ['opt4x1aCdv']），用表级 opt_map 反查为选项名。
+    单选→串、多选→list；未知 ID 返回的名字原样（fallback）。"""
+    opt_map = {"opt4x1aCdv": "进行中", "optA": "标签A", "optB": "标签B"}
+    assert s._simplify_value(_F_FORMULA, ["opt4x1aCdv"], ui_type="SingleSelect",
+                             opt_map=opt_map) == "进行中"
+    assert s._simplify_value(_F_FORMULA, ["optA", "optB"], ui_type="MultiSelect",
+                             opt_map=opt_map) == ["标签A", "标签B"]
+    # 未知 ID：opt_map 无则原样返回该串
+    assert s._simplify_value(_F_FORMULA, ["optZZZ"], ui_type="SingleSelect",
+                             opt_map=opt_map) == "optZZZ"
 
 
 def test_simplify_value_url_field_flattens_to_text():

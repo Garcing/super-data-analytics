@@ -8,14 +8,15 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sda_mcp.config import get_env, load_config
 from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import FeishuClient
-from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_SINGLE_SELECT,
-                            _F_MULTI_SELECT, _F_FORMULA, _F_LOOKUP, _F_URL)
+from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_NUMBER, _F_SINGLE_SELECT,
+                            _F_MULTI_SELECT, _F_DATE, _F_CHECKBOX, _F_URL,
+                            _F_FORMULA, _F_LOOKUP)
 from sda_mcp.skills.retrieving_context import Neo4jClient
 
 _SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
@@ -45,14 +46,30 @@ def _format_value(value) -> str:
 # ---------- Phase 1: feishu fetch（开放平台 FeishuClient + 值简化器）----------
 
 def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
-    """开放平台字段 → {name,type,id}，过滤 auto_number。"""
+    """开放平台字段 → 描述符列表。不再过滤 auto_number（已纳入支持）。
+
+    每项含：name/type/id（基本）、ui_type、options(Select 选项 [{id,name}])、
+    formula_ui_type（公式/lookup 的【结果】类型 ui_type，分派用）。
+    """
     raw = FeishuClient().list_bitable_fields(app_token, table_id)
-    return [{"name": f.get("field_name"), "type": f.get("type"), "id": f.get("field_id")}
-            for f in raw if f.get("type") != _F_AUTO_NUMBER]
+    out: list[dict] = []
+    for f in raw:
+        prop = f.get("property") or {}
+        result_type = ((prop.get("type") or {}) if isinstance(prop, dict) else {}).get("ui_type")
+        out.append({
+            "name": f.get("field_name"),
+            "type": f.get("type"),
+            "id": f.get("field_id"),
+            "ui_type": f.get("ui_type"),
+            "options": [{"id": o.get("id"), "name": o.get("name")}
+                        for o in (prop.get("options") or [])],
+            "formula_ui_type": result_type,
+        })
+    return out
 
 
 def _join_text(runs: Any) -> Any:
-    """text/公式/lookup/url 值 → 拼接字符串；空→None。
+    """text/公式(文本)/lookup(文本)/url 值 → 拼接字符串；空→None。
 
     支持形态：纯串、单段 dict（{text,...}，如 url 字段 {text,link}）、片段数组 [{text,...}]。
     """
@@ -75,22 +92,114 @@ def _opt_to_str(v: Any) -> Any:
     return v
 
 
-def _simplify_value(field_type: int, value: Any) -> Any:
-    """开放平台记录值 → graph 用的简化形式。对齐旧 _extract_cell 的输出契约。"""
+def _resolve_opt(oid: Any, opt_map: dict[str, str] | None) -> str | None:
+    """选项 ID → 选项名。oid 已是名字串则原样返回；dict 取 text/name；未知 ID 返回 None。"""
+    if isinstance(oid, dict):
+        return _opt_to_str(oid)
+    if isinstance(oid, str):
+        oid = oid.strip()
+        if not oid:
+            return None
+        return (opt_map or {}).get(oid) or oid  # optId→name；若 opt_map 无则原样（已是名字）
+    return None
+
+
+def _to_number(value: Any) -> Any:
+    """Number 字段开放平台返回【字符串】（"12.5"/"8"），公式数字返回真 int/float。
+    统一规整：整数→int，小数→float，非数字串→原样。bool 不当数字。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            f = float(s)
+        except ValueError:
+            return s  # 非数字串原样保留
+        return int(f) if f.is_integer() else f
+    return value
+
+
+_CN_TZ = timezone(timedelta(hours=8))  # 业务数据均中国时区；ms 时间戳按 +8 显示
+_DATE_EPOCH = date(1899, 12, 30)        # Excel/飞书日序号 epoch
+_MS_THRESHOLD = 10 ** 10                # ≥此值视为 ms 毫秒；否则日序号（两者量级永不重叠）
+
+
+def _format_date_value(value: Any) -> str | None:
+    """日期值 → 'YYYY-MM-DD HH:MM:SS'（ms）或 'YYYY-MM-DD'（日序号）。
+
+    飞书两种形态（真实 base 验证）：
+    - ms 毫秒时间戳：datetime 字段、公式直接引用日期（返回 [ms] 列表）
+    - Excel 日序号：公式 TODAY()/EDATE() 等（返回裸 int，如 46245=2026-08-11）
+    按数值量级区分（ms≥1e10，日序号~1e5）。
+    """
+    v = value[0] if isinstance(value, list) and value else value
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if abs(v) >= _MS_THRESHOLD:  # ms 毫秒
+        return datetime.fromtimestamp(v / 1000, tz=_CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return (_DATE_EPOCH + timedelta(days=int(v))).strftime("%Y-%m-%d")  # 日序号
+
+
+def _simplify_formula(value: Any, result_ui_type: str | None,
+                      opt_map: dict[str, str] | None) -> Any:
+    """公式(20)/查找引用(19) → 按【结果】ui_type 分派（真实 base 五种结果验证）。"""
     if value is None:
         return None
-    # 公式(20)/查找引用(19)/Url(15) 文本结果与 Text(1) 同构：
-    #   Text/公式/lookup 多为 [{text,type}] 片段数组；Url 是 {text,link} 裸 dict（单值）。
-    # 非文本结果（数字）经 _join_text 原样返回。
-    if field_type in (_F_TEXT, _F_FORMULA, _F_LOOKUP, _F_URL):
+    ui = (result_ui_type or "").lower()
+    if ui == "text":
         return _join_text(value)
+    if ui == "number":
+        return _to_number(value)
+    if ui == "datetime":
+        return _format_date_value(value)
+    if ui in ("singleselect", "multiselect"):
+        ids = value if isinstance(value, list) else [value]
+        names = [n for n in (_resolve_opt(i, opt_map) for i in ids) if n]
+        if not names:
+            return None
+        return names[0] if ui == "singleselect" else names
+    if ui == "checkbox":
+        return value
+    # 未知结果类型：尽力降级。文本片段拼串，否则原样（如裸数字）。
+    return _join_text(value) if isinstance(value, (list, dict, str)) else value
+
+
+def _simplify_value(field_type: int, value: Any, *,
+                    ui_type: str | None = None,
+                    opt_map: dict[str, str] | None = None) -> Any:
+    """开放平台记录值 → graph 用的简化形式。
+
+    存储字段按 type 分派；公式/查找引用(19/20)按【结果】ui_type 分派（见 _simplify_formula）。
+    ui_type 仅对 19/20 生效（传公式结果 ui_type）。
+    """
+    if value is None:
+        return None
+    if field_type in (_F_FORMULA, _F_LOOKUP):
+        return _simplify_formula(value, ui_type, opt_map)
+    if field_type == _F_TEXT:
+        return _join_text(value)
+    if field_type == _F_NUMBER:
+        return _to_number(value)
     if field_type == _F_SINGLE_SELECT:
         return _opt_to_str(value)
     if field_type == _F_MULTI_SELECT:
         if isinstance(value, list):
-            return [_opt_to_str(v) for v in value if _opt_to_str(v) is not None]
+            out = [n for n in (_opt_to_str(v) for v in value) if n is not None]
+            return out or None
         v = _opt_to_str(value)
         return [v] if v is not None else None
+    if field_type == _F_DATE:
+        return _format_date_value(value)
+    if field_type == _F_CHECKBOX:
+        return value  # bool 原样（Neo4j 原生支持）
+    if field_type == _F_URL:
+        return _join_text(value)
+    if field_type == _F_AUTO_NUMBER:
+        return value.strip() if isinstance(value, str) else value
     if isinstance(value, str):
         return value.strip() or None
     # 兜底：未识别类型若返回结构化 dict/片段数组，也拍平成可读串，避免写坏 Neo4j（Map 类型错）。
@@ -102,19 +211,27 @@ def _simplify_value(field_type: int, value: Any) -> Any:
 
 
 def fetch_table_records(app_token: str, table_id: str, fields: list[dict] | None = None) -> list[dict]:
-    """开放平台记录 → [{字段名: 简化值}, ...]，过滤 None/空字符串。"""
+    """开放平台记录 → [{字段名: 简化值}, ...]，过滤 None/空串/空列表。"""
     if fields is None:
         fields = fetch_table_fields(app_token, table_id)
-    field_types = {f["name"]: f["type"] for f in fields}
+    # 表级 optId→name 映射：覆盖所有 select 字段的选项，供公式返回选项 ID 时反查。
+    opt_map: dict[str, str] = {}
+    for f in fields:
+        for o in f.get("options") or []:
+            if o.get("id") and o.get("name"):
+                opt_map[o["id"]] = o["name"]
     items = FeishuClient().list_bitable_records(app_token, table_id)
     records: list[dict] = []
     for item in items:
         raw_fields = item.get("fields") or {}
         rec: dict = {}
-        for name, ftype in field_types.items():
+        for f in fields:
+            name = f["name"]
             if name in raw_fields:
-                val = _simplify_value(ftype, raw_fields[name])
-                if val is not None and val != "":
+                ftype = f["type"]
+                uit = f.get("formula_ui_type") if ftype in (_F_FORMULA, _F_LOOKUP) else None
+                val = _simplify_value(ftype, raw_fields[name], ui_type=uit, opt_map=opt_map)
+                if val is not None and val != "" and val != []:
                     rec[name] = val
         records.append(rec)
     return records
