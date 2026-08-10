@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sda_mcp.config import get_env, load_config
-from sda_mcp.errors import ConfigError, ExternalAPIError, ValidationError
+from sda_mcp.errors import ConfigError, ValidationError
 from sda_mcp.feishu import FeishuClient
 from sda_mcp.feishu import (_F_AUTO_NUMBER, _F_TEXT, _F_SINGLE_SELECT,
                             _F_MULTI_SELECT, _F_FORMULA, _F_LOOKUP)

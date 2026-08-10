@@ -1,16 +1,16 @@
-"""飞书报告模板内核：封装 lark-cli 子进程管理飞书文档模板。
+"""飞书报告模板内核。
 
-移植 using-templates/scripts/templates.js。lark-cli 是独立外部二进制，本内核以子进程
-调用它（不重写），只把 Node 壳换成 Python，去 CLI/三态/scratch 文件/{ok}。
+读/删路径（list/read/delete）走飞书开放平台 REST（FeishuClient）；写路径
+（create/update）暂留 lark-cli 子进程（LarkCliClient），P2 再迁。
 
 行为对齐点：
-- 身份：--as user 失败回退 --as bot，命中后实例级缓存（同 Node resolvedIdentity）。
-- @文件引用必须是 cwd 内相对路径 → tempfile.mkdtemp 临时目录 + finally 清理。
 - list：根目录 + 每个子文件夹一层（ThreadPoolExecutor 并行），过滤 docx/doc。
-- create/update：收 markdown 字符串（不是文件路径），落临时文件再 @引用。
+- read：FeishuClient.get_doc_markdown 直出 markdown。
 - delete：FEISHU_TEMPLATE_DELETE_PASSWORD 已配置则强制校验，否则跳过门。
+- create/update（lark-cli）：--as user 失败回退 --as bot；@文件引用须在 cwd 内 →
+  tempfile.mkdtemp 临时目录 + finally 清理；收 markdown 字符串落临时文件再 @引用。
 
-失败抛 ConfigError(凭证/lark-cli 缺失)/ExternalAPIError(lark-cli 非 0)/ValidationError(参数)。
+失败抛 ConfigError(凭证缺失)/ExternalAPIError(飞书 API 或 lark-cli 非 0)/ValidationError(参数)。
 """
 from __future__ import annotations
 
@@ -104,25 +104,6 @@ class LarkCliClient:
             Path(path).rmdir()
         except OSError:
             pass
-
-    def _list_folder(self, folder_token: str) -> list[dict[str, Any]]:
-        d = self._temp_dir("list")
-        params_path = os.path.join(d, "params.json")
-        try:
-            with open(params_path, "w", encoding="utf-8") as fh:
-                json.dump({"folder_token": folder_token, "page_size": _PAGE_SIZE}, fh)
-            output = self._exec([
-                "drive", "files", "list",
-                "--params", "@params.json",
-                "--format", "json",
-                "--page-all",
-            ], cwd=d)
-            data = json.loads(output)
-            return data.get("data", {}).get("files") or data.get("files") or []
-        except json.JSONDecodeError as exc:
-            raise ExternalAPIError(f"lark-cli list 返回非 JSON: {output[:300]}") from exc
-        finally:
-            self._cleanup(d)
 
     def _write_temp_content(self, label: str, content: str) -> tuple[str, str]:
         """把 content 写到临时目录的 markdown 文件，返回 (dir, basename)。"""
