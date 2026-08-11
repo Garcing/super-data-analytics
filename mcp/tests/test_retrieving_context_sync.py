@@ -162,6 +162,13 @@ def test_simplify_formula_wrapper_form_defensive():
     assert s._simplify_formula([{"text": "x"}], None, None) == "x"
 
 
+def test_simplify_formula_wrapper_number_unwraps_single_list():
+    """search 接口公式值以 {type, value:[n]} 包装：数字/复选框解包后是单元素列表，
+    须拆成标量（否则 [125] 列表写进图，语义错）。真实 base 实测形态。"""
+    assert s._simplify_formula({"type": _F_NUMBER, "value": [125]}, None, None) == 125
+    assert s._simplify_formula({"type": _F_NUMBER, "value": [12.5]}, None, None) == 12.5
+
+
 def test_simplify_value_url_field_flattens_to_text():
     """Url(15) 字段开放平台返回 {text, link} 裸 dict（单值）或 [{text,link}]，
     须拍平成可读 text 串，否则 dict 写进 Neo4j 报 Map 类型错（线上 sync 实踩）。"""

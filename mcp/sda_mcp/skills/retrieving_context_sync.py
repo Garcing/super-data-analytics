@@ -122,9 +122,12 @@ _UNSUPPORTED: dict[int, str] = {
 
 def _to_number(value: Any) -> Any:
     """Number 字段开放平台返回【字符串】（"12.5"/"8"），公式数字返回真 int/float。
-    统一规整：整数→int，小数→float，非数字串→原样。bool 不当数字。"""
+    统一规整：整数→int，小数→float，非数字串→原样。bool 不当数字。
+    公式经 search 接口以 {type,value} 包装返回时，value 是单元素列表 [n]，这里解开。"""
     if isinstance(value, bool):
         return value
+    if isinstance(value, list) and len(value) == 1:  # 包装形态 [n]
+        value = value[0]
     if isinstance(value, (int, float)):
         return value
     if isinstance(value, str):
@@ -218,6 +221,8 @@ def _simplify_value(field_type: int, value: Any, *,
     if field_type == _F_DATE:
         return _format_date_value(value)
     if field_type == _F_CHECKBOX:
+        if isinstance(value, list) and len(value) == 1:  # 公式包装形态 [bool]
+            value = value[0]
         return value  # bool 原样（Neo4j 原生支持）
     if field_type == _F_URL:
         return _join_text(value)
