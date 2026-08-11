@@ -16,7 +16,7 @@ import httpx
 import msal
 import psycopg
 
-from sda_mcp.config import get_env, get_powerbi_models
+from sda_mcp.config import get_env
 from sda_mcp.errors import ConfigError, DataSourceError, SkillTimeoutError, ValidationError
 
 _MCP_URL = "https://api.fabric.microsoft.com/v1/mcp/powerbi"
@@ -234,10 +234,6 @@ class PowerBIClient:
             raise ValidationError("批量查询最多支持 4 条 DAX 语句")
         return self._mcp_call("tools/call", {"name": "ExecuteQuery",
                             "arguments": {"artifactId": artifact_id, "maxRows": max_rows, "daxQueries": dax_queries}})
-
-
-def powerbi_list_models() -> list[Any]:
-    return get_powerbi_models()
 
 
 def powerbi_list_tools() -> list[dict[str, Any]]:
