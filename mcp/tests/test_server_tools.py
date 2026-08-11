@@ -9,7 +9,7 @@ import asyncio
 
 from sda_mcp import server
 from sda_mcp.tools import (
-    query_tools, retrieve_tools, analyze_tools, viz_tools, report_tools, template_tools,
+    query_tools, retrieve_tools, analyze_tools, visualize_tools, report_tools, template_tools,
 )
 
 
@@ -84,7 +84,7 @@ def test_contribute(monkeypatch):
 
 def test_chart_returns_image_block(monkeypatch):
     from sda_mcp.skills.visualizing import ChartResult
-    monkeypatch.setattr(viz_tools, "_render",
+    monkeypatch.setattr(visualize_tools, "_render",
                         lambda spec, format="png", dpi=144: ChartResult(
                             format="png", dpi=144, width=10, height=20,
                             data=b"\x89PNG\r\n\x1a\n", warnings=[]))

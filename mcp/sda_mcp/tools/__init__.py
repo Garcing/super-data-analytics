@@ -8,7 +8,7 @@ mcp 实例（有 token → StaticTokenVerifier + AuthSettings，未授权请求 
 from sda_mcp.tools import query_tools      # noqa: F401
 from sda_mcp.tools import retrieve_tools   # noqa: F401
 from sda_mcp.tools import analyze_tools    # noqa: F401
-from sda_mcp.tools import viz_tools        # noqa: F401
+from sda_mcp.tools import visualize_tools  # noqa: F401
 from sda_mcp.tools import report_tools     # noqa: F401
 from sda_mcp.tools import template_tools   # noqa: F401
 
