@@ -132,15 +132,13 @@ def test_simplify_formula_text_and_number():
     assert s._simplify_formula("125", _F_NUMBER, None) == 125
 
 
-def test_simplify_formula_date_ms_and_dayserial():
-    """公式日期两种形态（真实 base 验证）：
-    - 直接引用日期：返回 [ms] 列表 → 'YYYY-MM-DD HH:MM:SS'
-    - TODAY()/EDATE()：返回 Excel 日序号 → 'YYYY-MM-DD'
-    46245 = 2026-08-11（TODAY 实测），1774317600000 = 2026 年 ms。"""
-    ms = s._simplify_formula([1774317600000], _F_DATE, None)
-    assert ms is not None and len(ms) == 19 and ms[4:5] == "-"  # YYYY-MM-DD HH:MM:SS
-    serial = s._simplify_formula(46245, _F_DATE, None)
-    assert serial == "2026-08-11"                               # 日序号 → 纯日期
+def test_simplify_formula_date_ms():
+    """公式日期：search 接口统一返回 ms（裸 int 或 [ms] 列表）→ 'YYYY-MM-DD HH:MM:SS'。
+    旧 GET /records 的 Excel 日序号形态已不再兼容（接口下架）。"""
+    ms_bare = s._simplify_formula(1774317600000, _F_DATE, None)
+    assert ms_bare is not None and len(ms_bare) == 19 and ms_bare[4:5] == "-"
+    ms_list = s._simplify_formula([1774317600000], _F_DATE, None)   # 包装解包后的 [ms]
+    assert ms_list == ms_bare
     assert s._simplify_formula(None, _F_DATE, None) is None
 
 

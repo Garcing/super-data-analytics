@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sda_mcp.config import get_env, load_config
@@ -143,30 +143,19 @@ def _to_number(value: Any) -> Any:
 
 
 _CN_TZ = timezone(timedelta(hours=8))  # 业务数据均中国时区；ms 时间戳按 +8 显示
-_DATE_EPOCH = date(1899, 12, 30)        # Excel/飞书日序号 epoch
-_MS_THRESHOLD = 10 ** 10                # ≥此值视为 ms 毫秒；否则日序号（两者量级永不重叠）
 
 
 def _format_date_value(value: Any) -> str | None:
-    """日期值 → 'YYYY-MM-DD HH:MM:SS'（ms）或 'YYYY-MM-DD'（Excel 日序号）。
+    """日期值（ms 毫秒时间戳）→ 'YYYY-MM-DD HH:MM:SS'（+8 时区）。
 
-    【ms 毫秒时间戳 = 当前标准形态】datetime 字段、以及 POST /records/search 接口下的
-    所有公式日期（含 EDATE/TODAY）都返回 ms。这是现在唯一会真实触发的分支。
-
-    【Excel 日序号 = 旧 GET /records 接口的遗留形态】旧接口对 TODAY()/EDATE() 等
-    日期运算函数返回 Excel 日序号（自 1899-12-30 起算的天数，如 46245=2026-08-11），
-    而直接引用日期字段当时也是 ms。已切 search 接口后日序号基本不再出现，此分支仅作
-    兜底——飞书接口行为多次变动，留着防万一（webhook/单条 get/未来再变）把裸日序号
-    当数字写进图。
-
-    按数值量级区分：ms≥1e10，日序号~1e5，两者永不重叠，故无歧义。
+    POST /records/search 接口下，datetime 字段与所有公式日期（含 EDATE/TODAY）统一返回
+    ms 毫秒时间戳。值可能是裸 int，或单元素列表 [ms]（公式 {type,value} 包装解包后）。
+    旧 GET /records 接口对 TODAY()/EDATE() 曾返回 Excel 日序号，该接口已下架，不再兼容。
     """
     v = value[0] if isinstance(value, list) and value else value
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    if abs(v) >= _MS_THRESHOLD:  # ms 毫秒（当前标准形态）
-        return datetime.fromtimestamp(v / 1000, tz=_CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    return (_DATE_EPOCH + timedelta(days=int(v))).strftime("%Y-%m-%d")  # 旧接口日序号兜底
+    return datetime.fromtimestamp(v / 1000, tz=_CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _simplify_formula(value: Any, data_type: int | None,
