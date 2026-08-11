@@ -2,7 +2,7 @@
 
 把整套数据分析技能的确定性执行能力收敛进**一个 Docker 容器**，作为 MCP（Model Context Protocol）服务对外提供。hermes（接飞书/企微）和笔记本只配置一个 URL，不再每台机器调 Python/Node 依赖。
 
-- **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless + JSON response），24 个工具。
+- **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless + JSON response），22 个工具。
 - **语言**：全部 Python（8 个技能内核 + sync pipeline），in-process 调用。
 - **监听**：容器 `0.0.0.0:3100/mcp`，静态 Bearer token 鉴权。
 - **对外**：Caddy 反向代理 + 自动 HTTPS，公网入口 `https://mcp.super-data-analytics.online/mcp`。
@@ -20,7 +20,7 @@
 │   (mcp.super-data-       ┌────────────────────────────┐    │
 │    analytics.online)     │ FastMCP streamable HTTP     │    │
 │                          │ stateless JSON, :3100       │    │
-│                          │ 24 工具, Bearer 校验        │    │
+│                          │ 22 工具, Bearer 校验        │    │
 │                          │ in-process 调用 Python 内核 │    │
 │                          │ + 飞书开放平台 REST         │    │
 │                          └───────────┬────────────────┘    │
@@ -46,7 +46,7 @@
 |---|---|---|
 | **服务入口** | `sda_mcp/server.py` | 建 `MCPServer("sda")`、按 `SDA_MCP_TOKEN` 挂 Bearer 鉴权、`run(transport="streamable-http")` |
 | **鉴权** | `sda_mcp/auth.py` | `StaticTokenVerifier`（校验 `Authorization: Bearer`，无/错 → 401）|
-| **工具注册** | `sda_mcp/tools/` | 6 个分组文件，`@mcp.tool` 把内核包成 24 个工具；`_common.py` 持有唯一 `mcp` 实例 + dataclass→dict |
+| **工具注册** | `sda_mcp/tools/` | 6 个分组文件，`@mcp.tool` 把内核包成 22 个工具；`_common.py` 持有唯一 `mcp` 实例 + dataclass→dict |
 | **技能内核** | `sda_mcp/skills/` | 8 个干净 Python 内核（纯函数：类型入参 → dataclass → 失败抛 `SkillError`）|
 | **配置/错误** | `config.py` / `errors.py` | 读 `~/.super-data-analytics/config.json`；`SkillError` 体系 |
 
@@ -54,16 +54,16 @@
 
 ---
 
-## 2. 24 个工具
+## 2. 22 个工具
 
 hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工具名>`。
 
 | 分组 | 工具 | 说明 |
 |---|---|---|
 | **取数** | `sql_query` / `sql_schema` | Hologres SQL（psycopg）|
-| | `powerbi_list_models` / `powerbi_schema` / `powerbi_query` | Power BI Fabric MCP（msal + 202 轮询）|
+| | `powerbi_schema` / `powerbi_query` | Power BI Fabric MCP（msal + 202 轮询）；模型列表见 config.json，不另开工具 |
 | **语义检索** | `retrieve_search` | 向量检索（fastembed ONNX）+ 图扩展上下文 |
-| | `retrieve_cypher` / `retrieve_schema` / `retrieve_doc` | Cypher / 图 schema / 飞书文档 |
+| | `retrieve_cypher` / `retrieve_doc` | Cypher / 飞书文档（图 schema 见 graph-config，不另开工具）|
 | | `sync` | 飞书多维表 → Neo4j → ONNX 向量（首次或刷新）|
 | **分析** | `contribute` / `forecast` / `impact` | 贡献度归因 / 时序预测 / 效果评估（AB/DID/ROI）|
 | **可视化** | `chart` | matplotlib 渲染 → ImageContent + Blob URL |
@@ -172,7 +172,7 @@ mcp_servers:
       Authorization: "Bearer <SDA_MCP_TOKEN>"
 ```
 重启：`~/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway restart`
-验证：`... mcp test sda` → `✓ Connected` + `✓ Tools discovered: 24`。
+验证：`... mcp test sda` → `✓ Connected` + `✓ Tools discovered: 22`。
 
 ---
 

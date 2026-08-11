@@ -62,12 +62,6 @@ def test_skill_error_becomes_is_error(monkeypatch):
     assert "Hologres" in joined or "VPN" in joined
 
 
-def test_powerbi_list_models(monkeypatch):
-    monkeypatch.setattr(query_tools, "_powerbi_list_models", lambda: [{"id": "m1"}])
-    sc, err, _ = _call("powerbi_list_models", {})
-    assert sc["models"] == [{"id": "m1"}]
-
-
 def test_retrieve_search(monkeypatch):
     monkeypatch.setattr(retrieve_tools, "_search",
                         lambda question, top_k=5, targets=None: {"question": question, "results": []})

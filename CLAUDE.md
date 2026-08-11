@@ -12,7 +12,7 @@
 - 用户是数据分析师，**只读 Python**；Node 技能已重写为 Python。
 
 ## MCP 服务现状（分支 `spec/mcp-server-design`）
-- **24 个工具**（`sda_mcp/sql_query`、`retrieve_search`、`sync`、`chart`、`report_html_*`、`template_*` 等），FastMCP（MCP SDK v2 `MCPServer`）streamable HTTP。
+- **22 个工具**（`sda_mcp/sql_query`、`retrieve_search`、`sync`、`chart`、`report_html_*`、`template_*` 等），FastMCP（MCP SDK v2 `MCPServer`）streamable HTTP。
 - **已部署**在腾讯云服务器：容器 `sda-mcp`（host 网络 :3100），hermes 已接（飞书/企微可用），公网入口 `https://mcp.super-data-analytics.online/mcp`（Caddy 自动 HTTPS，静态 Bearer）。
 - **8 个 Python 内核** + sync pipeline 在 `mcp/sda_mcp/skills/`；测试 144 通过 + 7 集成 skip。
 - **唯一未启用**：`report_image_generate`（apimart，服务器无代理；本机走代理可用）。

@@ -5,8 +5,7 @@ from pydantic import BaseModel, Field
 
 from sda_mcp.skills.querying_data import (
     sql_query as _sql_query, sql_schema as _sql_schema,
-    powerbi_list_models as _powerbi_list_models, powerbi_schema as _powerbi_schema,
-    powerbi_query as _powerbi_query,
+    powerbi_schema as _powerbi_schema, powerbi_query as _powerbi_query,
 )
 from sda_mcp.tools._common import mcp, to_dict
 
@@ -40,12 +39,6 @@ def sql_query(params: SqlQueryIn) -> dict[str, Any]:
 def sql_schema(params: SqlSchemaIn) -> dict[str, Any]:
     """查多张表的列定义。readOnly。"""
     return {"tables": to_dict(_sql_schema(params.tables))}
-
-
-@mcp.tool(name="powerbi_list_models")
-def powerbi_list_models() -> dict[str, Any]:
-    """列出 config.json 配置的 Power BI 语义模型。readOnly。"""
-    return {"models": _powerbi_list_models()}
 
 
 @mcp.tool(name="powerbi_schema")
