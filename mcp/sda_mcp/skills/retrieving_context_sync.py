@@ -148,32 +148,43 @@ _MS_THRESHOLD = 10 ** 10                # ≥此值视为 ms 毫秒；否则日�
 
 
 def _format_date_value(value: Any) -> str | None:
-    """日期值 → 'YYYY-MM-DD HH:MM:SS'（ms）或 'YYYY-MM-DD'（日序号）。
+    """日期值 → 'YYYY-MM-DD HH:MM:SS'（ms）或 'YYYY-MM-DD'（Excel 日序号）。
 
-    飞书两种形态（真实 base 验证）：
-    - ms 毫秒时间戳：datetime 字段、公式直接引用日期（返回 [ms] 列表）
-    - Excel 日序号：公式 TODAY()/EDATE() 等（返回裸 int，如 46245=2026-08-11）
-    按数值量级区分（ms≥1e10，日序号~1e5）。
+    【ms 毫秒时间戳 = 当前标准形态】datetime 字段、以及 POST /records/search 接口下的
+    所有公式日期（含 EDATE/TODAY）都返回 ms。这是现在唯一会真实触发的分支。
+
+    【Excel 日序号 = 旧 GET /records 接口的遗留形态】旧接口对 TODAY()/EDATE() 等
+    日期运算函数返回 Excel 日序号（自 1899-12-30 起算的天数，如 46245=2026-08-11），
+    而直接引用日期字段当时也是 ms。已切 search 接口后日序号基本不再出现，此分支仅作
+    兜底——飞书接口行为多次变动，留着防万一（webhook/单条 get/未来再变）把裸日序号
+    当数字写进图。
+
+    按数值量级区分：ms≥1e10，日序号~1e5，两者永不重叠，故无歧义。
     """
     v = value[0] if isinstance(value, list) and value else value
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    if abs(v) >= _MS_THRESHOLD:  # ms 毫秒
+    if abs(v) >= _MS_THRESHOLD:  # ms 毫秒（当前标准形态）
         return datetime.fromtimestamp(v / 1000, tz=_CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    return (_DATE_EPOCH + timedelta(days=int(v))).strftime("%Y-%m-%d")  # 日序号
+    return (_DATE_EPOCH + timedelta(days=int(v))).strftime("%Y-%m-%d")  # 旧接口日序号兜底
 
 
 def _simplify_formula(value: Any, data_type: int | None,
                       opt_map: dict[str, str] | None) -> Any:
     """公式(20)/查找引用(19) → 按【结果】data_type(int) 分派。
 
-    data_type 与字段类型常量同构（官方文档明确：1=Text/2=Number/3=Single/4=Multi/
-    5=DateTime/7=Checkbox/11=User/13=Phone/15=Url/17=Attachment/22=Location/23=Group/
-    1001=CreatedTime/1002=ModifiedTime/1003=CreatedUser/1004=ModifiedUser/1005=AutoNumber）。
-    实测记录接口返回【裸值】（非文档示例的 {type,value} 包装），但这里仍防御性兼容包装形式。
-    公式 select 返回选项 ID 列表（存储 select 是名字串，形态不同）→ opt_map 反查。
+    data_type 与字段类型常量同构（官方文档：1=Text/2=Number/3=Single/4=Multi/
+    5=DateTime/7=Checkbox/...）。公式 select 返回选项 ID/名字，与存储 select 形态不同，
+    用 opt_map 反查。
+
+    【值形态】当前 POST /records/search 接口返回 {type, value:[...]} 包装（官方文档示例
+    即此形态），下方先解包再分派——这是主路径。同时容忍【裸值】（旧 GET /records 接口的
+    返回形态）：裸值不触发解包 if，直接进下方分派。保留裸值分支作防御，因飞书接口形态多次
+    变动，webhook/单条 get/未来接口仍可能返回裸值。两种形态在此汇流到同一分派逻辑。
     """
-    # 防御：兼容官方文档示例的 {"type": int, "value": list} 包装（实测为裸值）
+    # 解包 {type:int, value:list}：search 接口的标准形态（主路径）。
+    # 裸值（旧 GET /records）不是 dict 或无 int 型 type → 不触发，原样进下方分派。
+    # 三个条件缺一不可，避免误拆 url 的 {text,link}、location 的 {full_address} 等 dict。
     if isinstance(value, dict) and isinstance(value.get("type"), int) and "value" in value:
         data_type = value.get("type") or data_type
         value = value.get("value")
