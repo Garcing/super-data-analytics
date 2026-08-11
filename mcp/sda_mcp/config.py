@@ -29,7 +29,3 @@ def get_env(*keys: str) -> dict[str, str]:
     if missing:
         raise ConfigError(f"配置缺少: {', '.join(missing)}（请在 config.json 的 env 块补全）")
     return {k: str(env[k]) for k in keys}
-
-
-def get_powerbi_models() -> list[Any]:
-    return load_config().get("powerbi-semantic-models", [])

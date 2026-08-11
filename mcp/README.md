@@ -251,7 +251,6 @@ mcp.super-data-analytics.online {
 |---|---|
 | `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`/`APIMART_BASE_URL`、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（自建应用，tenant token 鉴权）、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`FEISHU_TEMPLATE_FOLDER_TOKEN`、`FEISHU_TEMPLATE_DELETE_PASSWORD` |
 | `graph-config` | `embedding.model`（`BAAI/bge-small-zh-v1.5`）、`entities`、`relationships` |
-| `powerbi-semantic-models` | Power BI 语义模型列表 |
 
 缺必填 key → `ConfigError`（可操作提示）；可选 key（如 `APIMART_BASE_URL`）走 `load_config()` 不报错。
 

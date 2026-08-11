@@ -41,13 +41,11 @@ def test_powerbi_list_tools_parity():
 
 
 def test_powerbi_query_parity():
-    """用 config 里第一个语义模型的 artifactId 跑一条简单 DAX，对照 Node 与 Python。"""
+    """跑一条简单 DAX 对照 Node 与 Python。artifactId 走环境变量（语义模型已移出 config.json）。"""
+    artifact_id = os.environ.get("SDA_POWERBI_ARTIFACT_ID")
+    if not artifact_id:
+        pytest.skip("设 SDA_POWERBI_ARTIFACT_ID 为某语义模型 GUID 以跑此对照")
     from sda_mcp.skills.querying_data import powerbi_query
-    import sda_mcp.config as cfg
-    models = cfg.get_powerbi_models()
-    if not models:
-        pytest.skip("config.json 无 powerbi-semantic-models 候选")
-    artifact_id = models[0]["artifactId"] if isinstance(models[0], dict) else models[0]
     payload = {"artifactId": artifact_id, "daxQueries": ["EVALUATE ROW(1)"], "maxRows": 10}
     cli = _node(["powerbi", "query", "--payload", json.dumps(payload)])
     core = powerbi_query(artifact_id, payload["daxQueries"], 10)
