@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from sda_mcp.skills.retrieving_context import (
-    search as _search, cypher as _cypher, schema as _schema, doc as _doc,
+    search as _search, cypher as _cypher, schema as _schema, doc as _doc, update_doc as _update_doc,
 )
 from sda_mcp.tools._common import mcp
 
@@ -21,6 +21,11 @@ class CypherIn(BaseModel):
 
 class DocIn(BaseModel):
     doc: str = Field(..., min_length=1, description="飞书文档 URL 或 token")
+
+
+class DocUpdateIn(BaseModel):
+    doc: str = Field(..., min_length=1, description="飞书文档 token（URL 链接字段里的 docx token）")
+    content: str = Field(..., min_length=1, description="覆盖写入的 markdown 正文")
 
 
 @mcp.tool(name="retrieve_search")
@@ -41,10 +46,16 @@ def retrieve_schema() -> dict[str, Any]:
     return _schema()
 
 
-@mcp.tool(name="retrieve_doc")
-def retrieve_doc(params: DocIn) -> dict[str, Any]:
+@mcp.tool(name="retrieve_doc_read")
+def retrieve_doc_read(params: DocIn) -> dict[str, Any]:
     """读取飞书文档为 markdown。readOnly。"""
     return _doc(params.doc)
+
+
+@mcp.tool(name="retrieve_doc_update")
+def retrieve_doc_update(params: DocUpdateIn) -> dict[str, Any]:
+    """覆盖更新飞书文档正文为 markdown（如修正报告模板内容）。"""
+    return _update_doc(params.doc, params.content)
 
 
 class SyncIn(BaseModel):

@@ -2,7 +2,7 @@
 
 把整套数据分析技能的确定性执行能力收敛进**一个 Docker 容器**，作为 MCP（Model Context Protocol）服务对外提供。hermes（接飞书/企微）和笔记本只配置一个 URL，不再每台机器调 Python/Node 依赖。
 
-- **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless + JSON response），23 个工具。
+- **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless + JSON response），19 个工具。
 - **语言**：全部 Python（8 个技能内核 + sync pipeline），in-process 调用。
 - **监听**：容器 `0.0.0.0:3100/mcp`，静态 Bearer token 鉴权。
 - **对外**：Caddy 反向代理 + 自动 HTTPS，公网入口 `https://mcp.super-data-analytics.online/mcp`。
@@ -20,7 +20,7 @@
 │   (mcp.super-data-       ┌────────────────────────────┐    │
 │    analytics.online)     │ FastMCP streamable HTTP     │    │
 │                          │ stateless JSON, :3100       │    │
-│                          │ 23 工具, Bearer 校验        │    │
+│                          │ 19 工具, Bearer 校验        │    │
 │                          │ in-process 调用 Python 内核 │    │
 │                          │ + 飞书开放平台 REST         │    │
 │                          └───────────┬────────────────┘    │
@@ -46,7 +46,7 @@
 |---|---|---|
 | **服务入口** | `sda_mcp/server.py` | 建 `MCPServer("sda")`、按 `SDA_MCP_TOKEN` 挂 Bearer 鉴权、`run(transport="streamable-http")` |
 | **鉴权** | `sda_mcp/auth.py` | `StaticTokenVerifier`（校验 `Authorization: Bearer`，无/错 → 401）|
-| **工具注册** | `sda_mcp/tools/` | 6 个分组文件，`@mcp.tool` 把内核包成 23 个工具；`_common.py` 持有唯一 `mcp` 实例 + dataclass→dict |
+| **工具注册** | `sda_mcp/tools/` | 5 个分组文件，`@mcp.tool` 把内核包成 19 个工具；`_common.py` 持有唯一 `mcp` 实例 + dataclass→dict |
 | **技能内核** | `sda_mcp/skills/` | 8 个干净 Python 内核（纯函数：类型入参 → dataclass → 失败抛 `SkillError`）|
 | **配置/错误** | `config.py` / `errors.py` | 读 `~/.super-data-analytics/config.json`；`SkillError` 体系 |
 
@@ -54,7 +54,7 @@
 
 ---
 
-## 2. 23 个工具
+## 2. 19 个工具
 
 hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工具名>`。
 
@@ -63,13 +63,15 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 | **取数** | `sql_query` / `sql_schema` | Hologres SQL（psycopg）|
 | | `powerbi_schema` / `powerbi_query` | Power BI Fabric MCP（msal + 202 轮询）；模型列表见 config.json，不另开工具 |
 | **语义检索** | `retrieve_search` | 向量检索（fastembed ONNX）+ 图扩展上下文 |
-| | `retrieve_cypher` / `retrieve_schema` / `retrieve_doc` | Cypher / 图 schema / 飞书文档 |
+| | `retrieve_cypher` / `retrieve_schema` | Cypher / 图 schema |
+| | `retrieve_doc_read` / `retrieve_doc_update` | 飞书文档读 / 覆盖写正文（模板正文在 docx）|
 | | `sync` | 飞书多维表 → Neo4j → ONNX 向量（首次或刷新）|
 | **分析** | `contribute` / `forecast` / `impact` | 贡献度归因 / 时序预测 / 效果评估（AB/DID/ROI）|
 | **可视化** | `chart` | matplotlib 渲染 → ImageContent + Blob URL |
 | **报告** | `report_html_publish` / `_list` / `_get` / `_delete` | HTML 报告（Vercel Blob，索引乐观锁）|
 | | `report_image_generate` | apimart gpt-image-2 异步生图（最长 180s）|
-| **模板** | `template_list` / `_read` / `_create` / `_update` / `_delete` | 飞书模板文档（开放平台 REST）|
+
+> 报告模板已并入语义层：模板是「报告模板」多维表里的行（`retrieve_search`/`retrieve_cypher` 发现），正文在链接的 docx（`retrieve_doc_read` 读、`retrieve_doc_update` 改）。不再单列模板工具组。
 
 > `report_image_generate` 在**服务器无代理时不可用**（apimart 不通）；本机走代理可用。其余 23 个服务器全可用。
 
@@ -172,7 +174,7 @@ mcp_servers:
       Authorization: "Bearer <SDA_MCP_TOKEN>"
 ```
 重启：`~/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main gateway restart`
-验证：`... mcp test sda` → `✓ Connected` + `✓ Tools discovered: 23`。
+验证：`... mcp test sda` → `✓ Connected` + `✓ Tools discovered: 19`。
 
 ---
 
@@ -234,7 +236,7 @@ mcp.super-data-analytics.online {
 | **apimart 生图** | 服务器直连 `api.apimart.ai` 超时（无代理）。`report_image_generate` 仅本机走代理可用。给容器加 `HTTPS_PROXY` 即可服务器启用。 |
 | **HuggingFace 不通** | 服务器直连 HF 超时。Dockerfile 固化 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（否则 fastembed 拉模型/Xet 401 失败）。 |
 | **中国镜像** | Dockerfile 用 tuna apt/PyPI；否则构建从中国极慢/超时。 |
-| **飞书自建应用授权** | 模板文件夹、graph 多维表、retrieve_doc 目标文档须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
+| **飞书自建应用授权** | graph 多维表、`retrieve_doc_read` 目标文档、报告模板 docx（`retrieve_doc_update` 要写）须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
 | **sync 字段类型清洗** | 开放平台多维表各类型值结构差异大，`_simplify_value` 逐类型拍平成 Neo4j 原生类型（str/int/float/bool/list[str]），否则 `SET n += $props` 报 Map 类型错。**支持**：Text/URL `[{text}]`/`{text,link}`→拼串（换行保留\n）；Number(2) 返回**字符串**→转数字；DateTime(5) ms→格式化；Checkbox bool；单选/多选。**公式/lookup 按结果 `data_type`(int) 分派**（不用 ui_type——设过格式后可能缺失）：文本/数字/日期（ms 毫秒 vs Excel 日序号按量级区分）/单选多选（返回**选项 ID** 用表级 optId→name 映射反查）；防御性兼容文档示例的 `{type,value}` 包装。**不支持**（语义层用不到、值结构复杂）：人员/附件/群组/位置/系统时间/关联 → 返回 `（X字段，暂不支持取值）` 提示给 agent，不做清洗（降低维护成本）。 |
 | **Hologres** | 走 VPN(tun0)；`connect_timeout=20s`（VPN 偶发握手慢）。空字段名 psycopg 返回空串，内核已 `name or col_N` 兜底。 |
 | **Neo4j `Record.keys()`** | 是方法不是属性，`run_cypher` 必须 `rec.keys()`。 |
@@ -249,7 +251,7 @@ mcp.super-data-analytics.online {
 
 | 块 | key |
 |---|---|
-| `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`/`APIMART_BASE_URL`、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（自建应用，tenant token 鉴权）、`FEISHU_GRAPH_BITABLE_APP_TOKEN`、`FEISHU_TEMPLATE_FOLDER_TOKEN`、`FEISHU_TEMPLATE_DELETE_PASSWORD` |
+| `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`/`APIMART_BASE_URL`、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（自建应用，tenant token 鉴权）、`FEISHU_GRAPH_BITABLE_APP_TOKEN` |
 | `graph-config` | `embedding.model`（`BAAI/bge-small-zh-v1.5`）、`entities`、`relationships` |
 
 缺必填 key → `ConfigError`（可操作提示）；可选 key（如 `APIMART_BASE_URL`）走 `load_config()` 不报错。

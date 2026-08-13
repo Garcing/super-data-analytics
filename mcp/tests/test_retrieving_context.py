@@ -68,6 +68,26 @@ def test_doc_empty_id_raises():
         r.doc("")
 
 
+def test_update_doc_overwrite_calls_feishu(monkeypatch):
+    """update_doc：清空正文 → convert → insert，返回 updated 标记。"""
+    calls = []
+    monkeypatch.setattr(r.FeishuClient, "delete_all_children",
+                        lambda self, did: calls.append(("del", did)))
+    monkeypatch.setattr(r.FeishuClient, "convert_markdown_to_blocks",
+                        lambda self, md: ([{"block_type": 2}], ["b1"]))
+    monkeypatch.setattr(r.FeishuClient, "insert_descendants",
+                        lambda self, did, bl, cid: calls.append(("insert", did)))
+    out = r.update_doc("DOC", "新内容")
+    assert out == {"updated": True, "document_id": "DOC"}
+    assert calls[0] == ("del", "DOC")
+    assert calls[1] == ("insert", "DOC")
+
+
+def test_update_doc_empty_content_raises():
+    with pytest.raises(ValidationError):
+        r.update_doc("DOC", "")
+
+
 class _FakeSession:
     """记录传给 .run() 的 Cypher 与参数；返回空记录列表。"""
 

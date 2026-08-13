@@ -12,7 +12,7 @@
 - 用户是数据分析师，**只读 Python**；Node 技能已重写为 Python。
 
 ## MCP 服务现状（分支 `spec/mcp-server-design`）
-- **23 个工具**（`sda_mcp/sql_query`、`retrieve_search`、`sync`、`chart`、`report_html_*`、`template_*` 等），FastMCP（MCP SDK v2 `MCPServer`）streamable HTTP。
+- **19 个工具**（`sda_mcp/sql_query`、`retrieve_search`、`retrieve_doc_read`/`_update`、`sync`、`chart`、`report_html_*` 等），FastMCP（MCP SDK v2 `MCPServer`）streamable HTTP。报告模板已并入语义层（多维表行 + docx 正文），不再单列 template_* 工具。
 - **已部署**在腾讯云服务器：容器 `sda-mcp`（host 网络 :3100），hermes 已接（飞书/企微可用），公网入口 `https://mcp.super-data-analytics.online/mcp`（Caddy 自动 HTTPS，静态 Bearer）。
 - **8 个 Python 内核** + sync pipeline 在 `mcp/sda_mcp/skills/`；测试 144 通过 + 7 集成 skip。
 - **唯一未启用**：`report_image_generate`（apimart，服务器无代理；本机走代理可用）。
@@ -43,7 +43,7 @@ cd ~/sda-mcp && docker compose up -d --force-recreate  # 改代码后重建
 ```
 
 ## 踩过的坑（别重蹈）
-- 飞书自建应用（`tenant_access_token`）须把模板文件夹 / graph 多维表 / retrieve_doc 目标文档**共享给应用**，否则权限报错；凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。
+- 飞书自建应用（`tenant_access_token`）须把 graph 多维表 / retrieve_doc 目标文档 / 报告模板 docx（update 要写）**共享给应用**，否则权限报错；凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。
 - Neo4j `Record.keys()` 是方法（要加 `()`）。
 - Vercel Blob head API 不返回 etag → 索引用 `uploaded_at` cache-buster。
 - HuggingFace 中国不通 → hf-mirror + 关 Xet。

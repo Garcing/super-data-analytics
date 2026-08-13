@@ -277,3 +277,21 @@ def doc(doc_id: str) -> dict[str, Any]:
         raise ValidationError("doc 不能为空")
     content = FeishuClient().get_doc_markdown(doc_id)
     return {"content": content, "document_id": doc_id}
+
+
+def update_doc(doc_id: str, content: str) -> dict[str, Any]:
+    """覆盖写入飞书 docx 正文为 markdown（先清空正文块再重灌）。
+
+    用于更新语义层「报告模板」实体链接的模板文档正文——模板元数据在多维表，
+    正文在 docx，本函数只改正文，不碰多维表 / graph-config。
+    """
+    if not isinstance(doc_id, str) or not doc_id.strip():
+        raise ValidationError("doc 不能为空")
+    if not isinstance(content, str) or not content:
+        raise ValidationError("content 不能为空")
+    client = FeishuClient()
+    client.delete_all_children(doc_id)
+    blocks, children_id = client.convert_markdown_to_blocks(content)
+    if blocks:
+        client.insert_descendants(doc_id, blocks, children_id)
+    return {"updated": True, "document_id": doc_id}

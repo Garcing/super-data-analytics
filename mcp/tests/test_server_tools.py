@@ -9,7 +9,7 @@ import asyncio
 
 from sda_mcp import server
 from sda_mcp.tools import (
-    query_tools, retrieve_tools, analyze_tools, visualize_tools, report_tools, template_tools,
+    query_tools, retrieve_tools, analyze_tools, visualize_tools, report_tools,
 )
 
 
@@ -98,10 +98,12 @@ def test_report_publish(monkeypatch):
     assert sc["url"].endswith("/report/r1")
 
 
-def test_template_list(monkeypatch):
-    monkeypatch.setattr(template_tools, "_list", lambda: [{"id": "d1", "name": "日报"}])
-    sc, err, _ = _call("template_list", {})
-    assert sc["templates"][0]["id"] == "d1"
+def test_retrieve_doc_update(monkeypatch):
+    monkeypatch.setattr(retrieve_tools, "_update_doc",
+                        lambda doc, content: {"updated": True, "document_id": doc})
+    sc, err, _ = _call("retrieve_doc_update", {"params": {"doc": "DOC1", "content": "# 新"}})
+    assert not err
+    assert sc == {"updated": True, "document_id": "DOC1"}
 
 
 def test_validation_error_is_error():
