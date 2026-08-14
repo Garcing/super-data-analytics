@@ -117,28 +117,6 @@ class Neo4jClient:
         except Exception:
             return []
 
-    def fetch_table_relationship_chain(self, relationship_id) -> list[dict]:
-        cyp = (
-            "MATCH (current:`表关系` {`表关系ID`: $relationshipId}) "
-            "MATCH path = (current)-[:`基于`*0..10]->(step:`表关系`) "
-            "OPTIONAL MATCH (step)-[tableRel]->(table:`表`) "
-            "WHERE type(tableRel) IN ['起始于', '加入'] "
-            "RETURN length(path) AS depth, properties(step) AS relationship, "
-            "collect(DISTINCT {role: type(tableRel), properties: properties(table)}) AS tables "
-            "ORDER BY depth DESC"
-        )
-        with self._session() as s:
-            rows = []
-            for rec in s.run(cyp, relationshipId=relationship_id):
-                tables = [
-                    {"role": t["role"], "properties": _clean_properties(dict(t["properties"]))}
-                    for t in (rec["tables"] or []) if t and t.get("role") and t.get("properties")
-                ]
-                rows.append({"depth": rec["depth"],
-                             "relationship": _clean_properties(dict(rec["relationship"])),
-                             "tables": tables})
-            return rows
-
     def fetch_graph_context(self, label: str, node_id: str, relationships: list[dict]) -> dict:
         """Port of retrieve.js fetchGraphContext (402-485). 沿库里已有边扩展，
         不再读 match / source_field。失败按 per-rel continue。"""
@@ -184,28 +162,10 @@ class Neo4jClient:
                 context.setdefault(other_label, [])
                 for rec in records:
                     props = _clean_properties(dict(rec["props"]))
-                    if other_label == "表关系" and props.get("表关系ID"):
-                        props["关系链"] = self.fetch_table_relationship_chain(props["表关系ID"])
                     context[other_label].append(props)
             except Exception:
                 # 对齐 retrieve.js：单条关系失败不影响其余扩展
                 continue
-
-        if label == "表关系":
-            try:
-                with self._session() as s:
-                    cur = list(s.run(
-                        "MATCH (n:`表关系`) "
-                        "WHERE elementId(n) = $nodeId "
-                        "RETURN n.`表关系ID` AS relationshipId",
-                        nodeId=node_id,
-                    ))
-                if cur:
-                    rid = cur[0].get("relationshipId")
-                    if rid is not None:
-                        context["关系链"] = self.fetch_table_relationship_chain(rid)
-            except Exception:
-                pass
 
         return context
 
