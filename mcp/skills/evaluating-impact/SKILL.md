@@ -51,10 +51,10 @@ metadata:
 | analysis_type | payload 字段 | 返回关键字段与解读 |
 |---|---|---|
 | `ab_rate` | `control: {n>0, success: 0..n}` 必填、`treatment` 同构必填、`alpha?`（默认 0.05，双尾） | `control_rate`/`treatment_rate`、`absolute_lift`/`relative_lift`（control_rate 为 0 时 relative_lift 为 null）、`p_value`（双样本比例 z 检验）、`significant`（p<alpha）、`confidence_interval`（绝对提升的近似 CI，**区间不含 0 且量级够业务门槛才建议全量**）、`control_rate_ci`/`treatment_rate_ci`（Wilson CI，小样本/率值近 0/1 时比正态近似稳） |
-| `ab_mean` | `control: {n>1, mean, stddev>=0}` 必填、`treatment` 同构必填、`alpha?` | `control_mean`/`treatment_mean`、`mean_difference`/`relative_difference`、`cohens_d`（标准化效果量，判"显著但够不够大"）、`p_value`、`significant`、`confidence_interval`；warnings 必含"正态近似，小样本/重尾建议专项检验"——两组聚合口径必须一致（都按用户/都按订单） |
+| `ab_mean` | `control: {n>1, mean, stddev>=0}` 必填、`treatment` 同构必填、`alpha?` | `control_mean`/`treatment_mean`、`mean_difference`/`relative_difference`（control_mean 为 0 时 relative_difference 为 null）、`cohens_d`（标准化效果量，判"显著但够不够大"）、`p_value`、`significant`、`confidence_interval`；warnings 必含"正态近似，小样本/重尾建议专项检验"——两组聚合口径必须一致（都按用户/都按订单） |
 | `did` | `treatment_before`/`treatment_after`/`control_before`/`control_after` 四数必填，同口径同可比窗口 | `treatment_change`/`control_change`、`did_effect`（双重差分增量）、`relative_did_effect`（除以 treatment_before，为 0 时 null）；warnings 必含"不自动证明平行趋势"——**平行趋势不成立则结果不可信**，需先用事件研究/多期前置数据检查干预前两组走势 |
 | `roi` | `benefit`、`cost>0` 必填；`gross_margin_rate?`（0..1）；`incremental_margin?`（已估好的增量毛利） | `net_benefit`、`roi`（=净收益/成本）、`profitable`；传 gross_margin_rate 另出 `margin_adjusted_*` 毛利口径三件套；传 incremental_margin 另出 `incremental_margin_roi`/`incremental_margin_profitable`。**benefit 必须说清是总收入还是因果增量**——收入口径 ROI 常高估 |
-| `sample_size_rate` | `baseline_rate`（0..1）、`minimum_detectable_effect`（>0 且 baseline+MDE<1）必填；`alpha?`、`power?`（默认 0.8） | `sample_size_per_group`（每组建议样本量，近似估算）；实际实验还要考虑分流、触达率、周期性 |
+| `sample_size_rate` | `baseline_rate`（开区间 0<x<1，取 0 或 1 会校验拒绝）、`minimum_detectable_effect`（>0 且 baseline+MDE<1）必填；`alpha?`、`power?`（默认 0.8） | `sample_size_per_group`（每组建议样本量，近似估算）；实际实验还要考虑分流、触达率、周期性 |
 
 ## 调用示例
 
