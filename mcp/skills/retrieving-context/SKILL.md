@@ -1,6 +1,6 @@
 ---
 name: retrieving-context
-description: 检索业务知识语义层（指标定义、口径、表归属、业务层级、报告模板），供下数前查口径、写 SQL 前找表。触发词：指标定义、口径、哪张表、数据来源、业务上下文、业务板块、模板
+description: 检索业务知识语义层（指标定义、口径、表归属、业务层级、报告模板），供下数前查口径、写 SQL 前找表。适用于指标定义与口径、哪张表、数据来源、业务上下文、业务板块、模板等问题。
 metadata:
   skill-series: super-data-analytics
   chinese-name: 检索业务知识
@@ -49,13 +49,15 @@ metadata:
 | `retrieve_search` | `question: str` 必填（自然语言）；`top_k: int=5`（1-20；hybrid 为融合后**全局** top_k，vector 为每索引 top_k）；`targets?: list[str]` 限定实体标签（如 `["指标","表"]`，不传=全搜）；`strategy: "vector"\|"hybrid"` 默认 `hybrid` | `{question, strategy, results[]}`；每条含 `label`、`score`（向后兼容=vector cosine，仅全文召回时为 0）、`properties`（业务属性，内部属性已滤）、`context`（图邻居，按关联标签分组）。hybrid 额外有 `retrieval` evidence：`fusion_score`（WRRF 融合分，仅排序用、非概率）、`vector_score`/`fulltext_score`（量纲不同，**禁止直接比较**）、`exact_match`（受治理名称/ID/别名精确命中，未命中 null）、`vector_rank`/`lexical_rank`/`exact_rank`。下一步：读 properties 回答定义类问题，或顺 context 继续遍历 |
 | `retrieve_cypher` | `statement: str` 必填（**可写库**，非 readOnly） | `{cypher, rows[]}`；节点自动剥内部属性。写库前先 `retrieve_schema` 确认结构；优先只读 MATCH |
 | `retrieve_schema` | 无参 | `{nodes: {label: {properties: {名: 类型}, unique: [字段]}}, relationships: ["(:\`A\`)-[:\`R\`]->(:\`B\`)"]}`，全部来自 Neo4j 实时内省。图为空时返回可操作错误 → 先跑 `sync` |
-| `retrieve_doc_read` | `doc: str`（飞书文档 URL 或 token） | `{content, document_id}`，content 为 markdown。文档须已共享给飞书自建应用，权限报错按提示处理 |
-| `retrieve_doc_update` | `doc: str`（文档 token）+ `content: str`（markdown） | `{updated, document_id}`。**覆盖写**非追加（先清空正文块再重灌）；须给应用写权限。只改正文，不碰多维表 |
+| `retrieve_doc_read` | `doc: str`（**只收 docx token**——代码不做 URL 解析，从链接里剥出 docx token 再传） | `{content, document_id}`，content 为 markdown。文档须已共享给飞书自建应用，权限报错按提示处理 |
+| `retrieve_doc_update` | `doc: str`（**只收 docx token**——代码不做 URL 解析，从链接里剥出 docx token 再传）+ `content: str`（markdown） | `{updated, document_id}`。**覆盖写**非追加（先清空正文块再重灌）；须给应用写权限。只改正文，不碰多维表 |
 | `sync` | `dry_run: bool=false`（true=只预检不写库） | 全量重建 飞书多维表 → Neo4j 图 → 向量。何时用：语义层多维表结构变更后、检索/schema 报图为空时。详细契约见 [references/sync-and-maintenance.md](references/sync-and-maintenance.md) |
 
 ## 调用示例
 
 **例 1：查指标口径**
+
+调 `retrieve_search`：
 
 ```json
 {"question": "复购人数是什么口径", "targets": ["指标", "表", "表关系", "维度"]}
@@ -65,7 +67,13 @@ metadata:
 
 **例 2：读报告模板正文**
 
-先 `retrieve_search` `{"question": "周报 模板"}`，从「报告模板」行的属性里拿 docx 链接 token；再：
+先调 `retrieve_search`（targets 限定「报告模板」标签；该标签以 graph-config 实际配置为准，若未配置则去掉 targets 全搜）：
+
+```json
+{"question": "周报 模板", "targets": ["报告模板"]}
+```
+
+从「报告模板」行的属性里拿 docx 链接，剥出 docx token；再调 `retrieve_doc_read`：
 
 ```json
 {"doc": "docxcnXXXXXXXXXXXX"}
