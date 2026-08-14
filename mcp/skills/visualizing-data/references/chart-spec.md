@@ -21,7 +21,7 @@
 |---|---|---|---|
 | `width` | 正整数 | 1200 | 逻辑像素宽（figsize = width/dpi） |
 | `height` | 正整数 | 720 | 逻辑像素高 |
-| `data_labels` | `true`/`false`/`"auto"` | `"auto"` | 数值标签。`auto`：点/柱数 ≤20 时显示。**不支持 `value_labels`**（用了会报错）。传 `"on"/"off"/"yes"/"no"` 等字符串也按真假解析 |
+| `data_labels` | `true`/`false`/`"auto"` | `"auto"` | 数值标签。`auto`：点/柱数 ≤20 时显示（且仅对 auto 生效的图型，见各图型明细）。**不支持 `value_labels`**（用了会报错）；传 `true`/`false`/`"auto"` 以外的值也会校验报错 |
 | `axis_labels` | dict（角色 → 非空字符串） | 无 | 自定义轴/图例文字，键为 encoding 角色名（`x`/`y`/`value`/`stage`/`bar`/`line`/`cumulative` 等），值替换默认字段名 |
 
 主题（不可配）：统一白底白格主题、8 色调色板（#4C78A8 起）、标题左上、CJK 字体内置、无顶/右边框。
@@ -57,9 +57,9 @@
 ### bar / horizontal_bar（柱状 / 条形）
 
 - **必填 encoding**：`x`、`y`（y 数值）。`type: "horizontal_bar"` 横向条形（适合长类目名），坐标轴标签 x/y 互换。
-- **可选 encoding**：`series`（多系列）。
+- **可选 encoding**：`series`（多系列，**仅 `type: "bar"` 生效**——horizontal_bar 分支优先，传了 series 会被静默忽略）。
 - **options**：
-  - `series_mode: "grouped"（默认）|"stacked"|"percent_stacked"`——非 grouped 必须有 `encoding.series`；`percent_stacked` 要求所有 y 值非负，y 轴固定 0–100%。
+  - `series_mode: "grouped"（默认）|"stacked"|"percent_stacked"`——非 grouped 必须有 `encoding.series`；`percent_stacked` 要求所有 y 值非负，y 轴固定 0–100%。**仅 `type: "bar"` 校验此选项**（horizontal_bar 传了不生效）。
   - `sort: "asc"|"desc"`（识别 `ascending`/`descending`）——按 y 排序；缺省保持 data 顺序。
   - 公共 options（单系列与 grouped `auto` 时 ≤20 柱自动标数值）。
 - 多系列按 x×series 透视 `sum` 聚合，缺失补 0。

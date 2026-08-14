@@ -48,7 +48,7 @@ metadata:
 2. **选 format**：默认 `png`（飞书/企微兼容，自动上传 Vercel Blob 得公网 URL）；要无损缩放或后续矢量编辑 → `svg`（不上传 Blob）。
 3. **构造 spec**：`type` + 必填 `title`/`subtitle`（两者都必须是非空字符串；subtitle 写一句口径/单位说明）+ `data`（行数组）+ `encoding`（字段名映射）+ `options`（可选）。每种图型的必填通道和 options **逐字段见 [references/chart-spec.md](references/chart-spec.md)**。
 4. **调 `chart`**，返回图片块 + 文本块「图表已生成（WxH）。URL: …」。给用户交付时**优先转述 URL**；上传失败时文本块提示"未上传 Blob，仅返回图片字节"，此时不是错误，图片块仍然有效。
-5. 大表（几十行以上）先聚合/取 TopN 再画；`data_labels` 默认 `auto`（≤20 个标数值），点太密会自动省略，需要强开就显式传 `true`。
+5. 大表（几十行以上）先聚合/取 TopN 再画；`data_labels` 默认 `auto`（≤20 个标数值；仅部分图型 auto 生效，见 reference），点太密会自动省略，需要强开就显式传 `true`。
 
 ## 工具契约
 
