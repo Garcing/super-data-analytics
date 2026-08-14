@@ -128,3 +128,40 @@ def test_fetch_graph_context_outgoing_is_directed(monkeypatch):
     rels = [{"type": "属于", "from": "指标", "to": "表"}]
     client.fetch_graph_context("指标", "node-1", rels)
     assert any("-[:`属于`]->" in c for c in session.captured_cyphers), session.captured_cyphers
+
+
+class _SearchSession(_FakeSession):
+    def run(self, cypher, **kwargs):
+        self.captured_cyphers.append(cypher)
+        self.kwargs = kwargs
+        return iter([])
+
+
+def test_vector_search_uses_search_clause_on_neo4j_2026(monkeypatch):
+    client = r.Neo4jClient.__new__(r.Neo4jClient)
+    session = _SearchSession()
+    monkeypatch.setattr(client, "_session", lambda: session)
+    monkeypatch.setattr(client, "_supports_vector_search_clause", lambda: True)
+
+    client.search_vector_index("指标`索引", "指标", [0.1, 0.2], 3)
+
+    query = session.captured_cyphers[0]
+    assert query.startswith("CYPHER 25 MATCH")
+    assert "SEARCH node IN" in query
+    assert "VECTOR INDEX `指标``索引`" in query
+    assert "db.index.vector.queryNodes" not in query
+    assert session.kwargs == {"topK": 3, "embedding": [0.1, 0.2]}
+
+
+def test_vector_search_falls_back_for_older_neo4j(monkeypatch):
+    client = r.Neo4jClient.__new__(r.Neo4jClient)
+    session = _SearchSession()
+    monkeypatch.setattr(client, "_session", lambda: session)
+    monkeypatch.setattr(client, "_supports_vector_search_clause", lambda: False)
+
+    client.search_vector_index("metric_index", "指标", [0.1], 5)
+
+    query = session.captured_cyphers[0]
+    assert "db.index.vector.queryNodes" in query
+    assert "SEARCH node IN" not in query
+    assert session.kwargs == {"indexName": "metric_index", "topK": 5, "embedding": [0.1]}

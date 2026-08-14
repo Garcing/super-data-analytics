@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import re
 from typing import Any
 
 from neo4j import GraphDatabase
@@ -38,13 +39,6 @@ def _build_schema(gc: dict[str, Any]) -> dict[str, Any]:
             out["match"] = {
                 "source_field": rel["match"].get("source_field"),
                 "target_field": rel["match"].get("target_field"),
-            }
-        if rel.get("via"):
-            out["via"] = {
-                "table_id": rel["via"].get("table_id"),
-                "from_field": rel["via"].get("from_field"),
-                "to_field": rel["via"].get("to_field"),
-                "properties": rel["via"].get("properties", []),
             }
         relationships.append(out)
     return {"embedding": gc.get("embedding", {}), "entities": entities, "relationships": relationships}
@@ -90,6 +84,22 @@ class Neo4jClient:
     def _session(self):
         return self._driver.session(database=self._database)
 
+    @lru_cache(maxsize=1)
+    def _supports_vector_search_clause(self) -> bool:
+        """Return whether the connected server supports Cypher 25 ``SEARCH``.
+
+        ``db.index.vector.queryNodes`` is deprecated from Neo4j 2026.04.  The
+        replacement was introduced in 2026.01 and is Cypher-25-only.  Keep the
+        procedure fallback for Neo4j 5.x / 2025.x deployments so the MCP image
+        remains backwards compatible.
+        """
+        try:
+            info = self._driver.get_server_info()
+            match = re.search(r"(?:Neo4j/)?(\d{4})\.(\d{1,2})", info.agent or "")
+            return bool(match and (int(match.group(1)), int(match.group(2))) >= (2026, 1))
+        except Exception:
+            return False
+
     def find_vector_index_name(self, label: str) -> str | None:
         with self._session() as s:
             try:
@@ -103,17 +113,33 @@ class Neo4jClient:
 
     def search_vector_index(self, index_name: str, label: str, embedding: list[float], top_k: int) -> list[dict]:
         esc = label.replace("`", "``")
-        cypher = (
-            "CALL db.index.vector.queryNodes($indexName, $topK, $embedding) "
-            "YIELD node, score "
-            f"WHERE node:`{esc}` "
-            "RETURN elementId(node) AS id, score, properties(node) AS properties "
-            "ORDER BY score DESC"
-        )
+        if self._supports_vector_search_clause():
+            # SEARCH requires the index name to be an identifier, not a
+            # parameter.  It comes from SHOW VECTOR INDEXES; still escape it as
+            # a Cypher identifier before interpolation.
+            esc_index = index_name.replace("`", "``")
+            cypher = (
+                f"CYPHER 25 MATCH (node:`{esc}`) "
+                "SEARCH node IN ("
+                f"VECTOR INDEX `{esc_index}` FOR $embedding LIMIT $topK"
+                ") SCORE AS score "
+                "RETURN elementId(node) AS id, score, properties(node) AS properties "
+                "ORDER BY score DESC"
+            )
+            params = {"topK": top_k, "embedding": embedding}
+        else:
+            cypher = (
+                "CALL db.index.vector.queryNodes($indexName, $topK, $embedding) "
+                "YIELD node, score "
+                f"WHERE node:`{esc}` "
+                "RETURN elementId(node) AS id, score, properties(node) AS properties "
+                "ORDER BY score DESC"
+            )
+            params = {"indexName": index_name, "topK": top_k, "embedding": embedding}
         try:
             with self._session() as s:
                 return [{"id": r["id"], "score": r["score"], "properties": dict(r["properties"])}
-                        for r in s.run(cypher, indexName=index_name, topK=top_k, embedding=embedding)]
+                        for r in s.run(cypher, **params)]
         except Exception:
             return []
 

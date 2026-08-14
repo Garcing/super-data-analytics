@@ -269,21 +269,13 @@ def fetch_table_records(app_token: str, table_id: str, fields: list[dict] | None
 
 
 def _fetch_all_feishu(gc: dict) -> dict[str, list[dict]]:
-    """移植 sync.fetch_all_feishu_data：拉所有 entity + via 中间表。"""
+    """拉所有 entity 多维表记录。"""
     app_token = get_env("FEISHU_GRAPH_BITABLE_APP_TOKEN")["FEISHU_GRAPH_BITABLE_APP_TOKEN"]
     data: dict[str, list[dict]] = {}
     for label, cfg in (gc.get("entities") or {}).items():
         tid = cfg["table_id"]
         fields = fetch_table_fields(app_token, tid)
         data[label] = fetch_table_records(app_token, tid, fields)
-    seen = set()
-    for rel in (gc.get("relationships") or []):
-        via = rel.get("via")
-        if via and via.get("table_id") not in seen:
-            seen.add(via["table_id"])
-            tid = via["table_id"]
-            fields = fetch_table_fields(app_token, tid)
-            data[f"via_{tid}"] = fetch_table_records(app_token, tid, fields)
     return data
 
 
@@ -322,7 +314,8 @@ def _build_nodes(client: Neo4jClient, entities: dict, feishu_data: dict) -> dict
 
 def _build_relationships(client: Neo4jClient, relationships: list, entities: dict,
                          feishu_data: dict) -> dict[str, int]:
-    """移植 graph_builder.build_relationships：direct match + via 中间表两种模式。"""
+    """按 match 字段直连建边：from 实体的 source_field 值（含列表）匹配 to 实体的
+    target_field 值。via 中间表模式已删（语义层不再使用）。"""
     counts: dict[str, int] = {}
     for rel_cfg in relationships:
         rel_type = rel_cfg["type"]
@@ -339,63 +332,40 @@ def _build_relationships(client: Neo4jClient, relationships: list, entities: dic
         esc_from_key = _escape(from_key)
         esc_to_key = _escape(to_key)
 
-        if "via" in rel_cfg:
-            via_cfg = rel_cfg["via"]
-            via_table_id = via_cfg["table_id"]
-            via_from_field = via_cfg["from_field"]
-            via_to_field = via_cfg["to_field"]
-            via_props_fields = via_cfg.get("properties", [])
-            via_records = feishu_data.get(f"via_{via_table_id}", [])
-            for via_rec in via_records:
-                from_val = via_rec.get(via_from_field)
-                to_val = via_rec.get(via_to_field)
-                if from_val is None or to_val is None:
+        match_cfg = rel_cfg["match"]
+        source_field = match_cfg["source_field"]
+        target_field = match_cfg["target_field"]
+        from_records = feishu_data.get(from_label, [])
+        to_records = feishu_data.get(to_label, [])
+        to_lookup: dict[str, list] = {}
+        for rec in to_records:
+            target_val = rec.get(target_field)
+            key_val = rec.get(to_key)
+            if target_val is None or key_val is None:
+                continue
+            vals = [target_val] if not isinstance(target_val, list) else target_val
+            for v in vals:
+                to_lookup.setdefault(v, []).append(key_val)
+        for from_rec in from_records:
+            from_key_val = from_rec.get(from_key)
+            if from_key_val is None:
+                continue
+            source_value = from_rec.get(source_field)
+            if source_value is None:
+                continue
+            source_values = source_value if isinstance(source_value, list) else [source_value]
+            for source_val in source_values:
+                matched_to_keys = to_lookup.get(source_val)
+                if not matched_to_keys:
                     continue
-                props = {k: via_rec[k] for k in via_props_fields
-                         if k in via_rec and via_rec[k] is not None}
-                cypher = (
-                    f"MATCH (a:`{esc_from}` {{`{esc_from_key}`: $from_val}}) "
-                    f"MATCH (b:`{esc_to}` {{`{esc_to_key}`: $to_val}}) "
-                    f"MERGE (a)-[r:`{esc_rel}`]->(b) "
-                    f"SET r += $props"
-                )
-                client.execute(cypher, from_val=from_val, to_val=to_val, props=props)
-                count += 1
-        else:
-            match_cfg = rel_cfg["match"]
-            source_field = match_cfg["source_field"]
-            target_field = match_cfg["target_field"]
-            from_records = feishu_data.get(from_label, [])
-            to_records = feishu_data.get(to_label, [])
-            to_lookup: dict[str, list] = {}
-            for rec in to_records:
-                target_val = rec.get(target_field)
-                key_val = rec.get(to_key)
-                if target_val is None or key_val is None:
-                    continue
-                vals = [target_val] if not isinstance(target_val, list) else target_val
-                for v in vals:
-                    to_lookup.setdefault(v, []).append(key_val)
-            for from_rec in from_records:
-                from_key_val = from_rec.get(from_key)
-                if from_key_val is None:
-                    continue
-                source_value = from_rec.get(source_field)
-                if source_value is None:
-                    continue
-                source_values = source_value if isinstance(source_value, list) else [source_value]
-                for source_val in source_values:
-                    matched_to_keys = to_lookup.get(source_val)
-                    if not matched_to_keys:
-                        continue
-                    for to_key_val in matched_to_keys:
-                        cypher = (
-                            f"MATCH (a:`{esc_from}` {{`{esc_from_key}`: $from_key_val}}) "
-                            f"MATCH (b:`{esc_to}` {{`{esc_to_key}`: $to_key_val}}) "
-                            f"MERGE (a)-[:`{esc_rel}`]->(b)"
-                        )
-                        client.execute(cypher, from_key_val=from_key_val, to_key_val=to_key_val)
-                        count += 1
+                for to_key_val in matched_to_keys:
+                    cypher = (
+                        f"MATCH (a:`{esc_from}` {{`{esc_from_key}`: $from_key_val}}) "
+                        f"MATCH (b:`{esc_to}` {{`{esc_to_key}`: $to_key_val}}) "
+                        f"MERGE (a)-[:`{esc_rel}`]->(b)"
+                    )
+                    client.execute(cypher, from_key_val=from_key_val, to_key_val=to_key_val)
+                    count += 1
         counts[tag] = count
     return counts
 
