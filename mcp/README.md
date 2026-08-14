@@ -412,6 +412,7 @@ python -m pytest -q -s tests/test_retrieval_quality.py
 ## 9. 开发
 
 - **铁律**：原 skill 目录树（`building-reports/`、`querying-data/` 等）**零改动**，作对照基准。所有新代码只在 `mcp/`。
+- **agent 技能文档**：`mcp/skills/`（入口 `mcp/skills/README.md`，9 个技能的 SKILL.md + references，指导 agent 使用 19 个工具），与 Python 执行内核 `sda_mcp/skills/` 分层——一个给 LLM 读，一个是代码。
 - 测试：`cd mcp && python -m pytest -q`（当前 157 通过 + 7 集成 skip）。mock 单元测试 + 可选集成对照（`SDA_INTEGRATION=1`）。
 - 计划/设计文档：`docs/superpowers/specs/2026-08-09-mcp-server-design.md`、`docs/superpowers/plans/2026-08-09-subproject-*.md`。
 - MCP 设计参考：`/mcp-builder` 技能（Anthropic 权威 MCP 手册）。
