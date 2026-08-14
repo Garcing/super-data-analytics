@@ -15,7 +15,7 @@ MCP 客户端会自动给工具名加前缀：本机 Claude Code 中为 `mcp__sd
   → orchestrating-analytics 分流
      ├─ 直连：querying-data（先 retrieving-context 解析受治理口径）
      └─ 编排：retrieving-context → querying-data → 分析三选一
-        （diagnosing / predicting / evaluating）→ visualizing-data
+        （diagnosing-anomalies / predicting-trends / evaluating-impact）→ visualizing-data
         → building-reports → validating-analyses 质检 → 交付
 任何环节卡住：orchestrating 中途补编排；检索为空 → sync
 ```
