@@ -1,6 +1,6 @@
 """retrieving_context_sync mock 单元测试（离线，不依赖真实飞书/Neo4j/fastembed 模型）。"""
 import pytest
-from sda_mcp.errors import ConfigError, ValidationError
+from sda_mcp.errors import ConfigError, DataSourceError
 from sda_mcp.feishu import (_F_TEXT, _F_NUMBER, _F_SINGLE_SELECT, _F_MULTI_SELECT,
                             _F_DATE, _F_CHECKBOX, _F_USER, _F_PHONE, _F_URL,
                             _F_ATTACHMENT, _F_SINGLE_LINK, _F_LOOKUP, _F_FORMULA,
@@ -222,52 +222,58 @@ class _FakeClient:
     """绕过 Neo4j __init__（避免真实 driver）。"""
     def __init__(self, *a, **k):
         self.closed = False
+    def run_cypher(self, statement):
+        return [{"ok": 1}]
     def close(self):
         self.closed = True
 
 
 def _stub_phases(monkeypatch, calls):
-    """把六个内部阶段替换成记录调用的计数 stub。"""
-    monkeypatch.setattr(s, "_fetch_all_feishu", lambda gc: (calls.append("fetch") or {"指标": [{"a": 1}]}))
+    """把同步阶段替换成记录调用的计数 stub。"""
+    monkeypatch.setattr(s, "_fetch_all_feishu", lambda gc: (
+        calls.append("fetch") or {"指标": [{"指标ID": "m1"}], "表": []}
+    ))
+    monkeypatch.setattr(s, "_prepare_embedder", lambda dimensions: (
+        calls.append("model") or object()
+    ))
     monkeypatch.setattr(s, "_clear_graph", lambda c: calls.append("clear"))
+    monkeypatch.setattr(s, "_clear_database_schema", lambda c: (
+        calls.append("clear_schema") or {"constraints": 2, "indexes": 3}
+    ))
+    monkeypatch.setattr(s, "_create_unique_constraints", lambda c, e: (
+        calls.append("constraints") or ["c0", "c1"]
+    ))
     monkeypatch.setattr(s, "_build_nodes", lambda c, e, d: (calls.append("nodes") or {"指标": 1}))
     monkeypatch.setattr(s, "_build_relationships", lambda c, r, e, d: (calls.append("rels") or {"x": 2}))
     monkeypatch.setattr(s, "_generate_search_text", lambda c, e: (calls.append("st") or {"指标": 1}))
     monkeypatch.setattr(s, "_create_vector_indexes", lambda c, e, dim: (calls.append("idx") or ["i0"]))
     monkeypatch.setattr(s, "_create_fulltext_indexes", lambda c, e: (calls.append("ftidx") or ["f0"]))
-    monkeypatch.setattr(s, "_embed_nodes", lambda c, e, dim, f: (calls.append("embed") or {"指标": 1}))
+    monkeypatch.setattr(s, "_embed_nodes", lambda c, e, dim, embedder, model: (
+        calls.append("embed") or {"指标": 1}
+    ))
 
 
 def test_sync_graph_orchestration(monkeypatch):
-    """全跑：fetch→clear→nodes→rels→st→idx→embed 都执行，返回各阶段计数。"""
+    """预检成功后清空数据和 schema，再完整重建。"""
     monkeypatch.setattr(s, "load_config", lambda: {"graph-config": GC})
     calls = []
     _stub_phases(monkeypatch, calls)
     monkeypatch.setattr(s, "Neo4jClient", _FakeClient)
     out = s.sync_graph()
-    assert out["fetch"] == {"指标": 1}
+    assert out["fetch"] == {"指标": 1, "表": 0}
+    assert out["validated"] is True
+    assert out["removed_schema"] == {"constraints": 2, "indexes": 3}
+    assert out["constraints"] == 2
     assert out["nodes"] == {"指标": 1}
     assert out["relationships"] == {"x": 2}
     assert out["search_text"] == {"指标": 1}
     assert out["indexes"] == 1
     assert out["fulltext_indexes"] == 1
     assert out["embed"] == {"指标": 1}
-    assert calls == ["fetch", "clear", "nodes", "rels", "st", "idx", "ftidx", "embed"]
-
-
-def test_sync_graph_only_embed_skips_build(monkeypatch):
-    """only='embed'：不 fetch、不 build，只跑 embed 三步。"""
-    monkeypatch.setattr(s, "load_config", lambda: {"graph-config": GC})
-    calls = []
-    _stub_phases(monkeypatch, calls)
-    monkeypatch.setattr(s, "Neo4jClient", _FakeClient)
-    out = s.sync_graph(only="embed")
-    assert "fetch" not in out
-    assert "nodes" not in out
-    assert "relationships" not in out
-    assert out["search_text"] == {"指标": 1}
-    assert out["embed"] == {"指标": 1}
-    assert calls == ["st", "idx", "ftidx", "embed"]
+    assert calls == [
+        "fetch", "model", "clear", "clear_schema", "constraints",
+        "nodes", "rels", "st", "idx", "ftidx", "embed",
+    ]
 
 
 def test_create_fulltext_indexes_uses_cjk_and_skips_disabled_entities():
@@ -288,25 +294,98 @@ def test_create_fulltext_indexes_uses_cjk_and_skips_disabled_entities():
 
 
 def test_sync_dry_run_no_write(monkeypatch):
-    """dry_run=True：只 fetch 预览，不构造 Neo4jClient、不写库。"""
+    """dry_run=True 完成飞书、模型和 Neo4j 预检，但不执行写阶段。"""
     monkeypatch.setattr(s, "load_config", lambda: {"graph-config": GC})
-    constructed = []
-    monkeypatch.setattr(s, "Neo4jClient", lambda *a, **k: constructed.append(1) or _FakeClient())
-    monkeypatch.setattr(s, "_fetch_all_feishu", lambda gc: {"指标": [{"a": 1}], "表": []})
+    calls = []
+    _stub_phases(monkeypatch, calls)
+    client = _FakeClient()
+    monkeypatch.setattr(s, "Neo4jClient", lambda: client)
     out = s.sync_graph(dry_run=True)
-    assert out == {"fetch": {"指标": 1, "表": 0}}
-    assert constructed == []  # 没构造 client
-
-
-def test_sync_bad_only_raises():
-    with pytest.raises(ValidationError):
-        s.sync_graph(only="bogus")
+    assert out["dry_run"] is True
+    assert out["validated"] is True
+    assert out["planned"]["rebuild_constraints"] == 2
+    assert out["planned"]["rebuild_vector_indexes"] == 1
+    assert calls == ["fetch", "model"]
+    assert client.closed is True
 
 
 def test_sync_missing_entities_raises(monkeypatch):
     monkeypatch.setattr(s, "load_config", lambda: {"graph-config": {}})
     with pytest.raises(ConfigError):
         s.sync_graph()
+
+
+def test_validate_feishu_data_warns_for_missing_keys():
+    warnings = s._validate_feishu_data(GC, {
+        "指标": [{"指标名称": "GMV"}, {"指标ID": "m1"}], "表": [],
+    })
+    assert warnings == ["飞书实体 指标 有 1 条记录缺主键字段 指标ID，同步时将跳过"]
+
+
+def test_validate_feishu_data_rejects_duplicate_keys():
+    with pytest.raises(DataSourceError, match="存在重复值"):
+        s._validate_feishu_data(GC, {
+            "指标": [{"指标ID": "m1"}, {"指标ID": "m1"}], "表": [],
+        })
+
+
+def test_clear_database_schema_keeps_lookup_indexes():
+    class Client:
+        def __init__(self):
+            self.executed = []
+
+        def run_cypher(self, statement):
+            if statement.startswith("SHOW CONSTRAINTS"):
+                return [{"name": "old_constraint"}]
+            return [
+                {"name": "node_label_lookup", "type": "LOOKUP"},
+                {"name": "old_vector", "type": "VECTOR"},
+                {"name": "old_fulltext", "type": "FULLTEXT"},
+            ]
+
+        def execute(self, statement, **params):
+            self.executed.append(statement)
+
+    client = Client()
+    out = s._clear_database_schema(client)
+
+    assert out == {"constraints": 1, "indexes": 2}
+    assert "DROP CONSTRAINT `old_constraint` IF EXISTS" in client.executed
+    assert "DROP INDEX `old_vector` IF EXISTS" in client.executed
+    assert "DROP INDEX `old_fulltext` IF EXISTS" in client.executed
+    assert not any("node_label_lookup" in statement for statement in client.executed)
+
+
+def test_create_unique_constraints_uses_entity_key_fields():
+    class Client:
+        def __init__(self):
+            self.executed = []
+
+        def execute(self, statement, **params):
+            self.executed.append(statement)
+
+    client = Client()
+    names = s._create_unique_constraints(client, GC["entities"])
+
+    assert names == ["sda_指标_指标ID_unique", "sda_表_表ID_unique"]
+    assert "FOR (n:`指标`)" in client.executed[0]
+    assert "REQUIRE n.`指标ID` IS UNIQUE" in client.executed[0]
+
+
+def test_prepare_embedder_rejects_dimension_mismatch(monkeypatch):
+    class CachedEmbedder:
+        def cache_clear(self):
+            pass
+
+        def __call__(self):
+            return self
+
+        def embed(self, texts):
+            return iter([[0.1, 0.2, 0.3]])
+
+    monkeypatch.setattr(s, "_query_embedder", CachedEmbedder())
+    with pytest.raises(ConfigError, match="模型实际输出 3"):
+        s._prepare_embedder(512)
 
 
 # ---------- Phase 3: embed 用 fastembed 批量 + 写回字段齐全 ----------
@@ -326,22 +405,22 @@ class _EmbedFakeClient:
 
 
 def test_embed_uses_fastembed_batch(monkeypatch):
-    """mock TextEmbedding → 断言批量 embed 被调用、写回字段齐（embedding/model/dims/updated_at）。"""
-    monkeypatch.setattr(s, "load_config", lambda: {"graph-config": GC})
+    """批量生成向量并写回 embedding/model/dims/updated_at。"""
     embed_calls = []
 
     class _FE:
-        def __init__(self, model_name=None):
-            self.model_name = model_name
         def embed(self, texts):
             embed_calls.append(list(texts))
             return [[0.1, 0.2, 0.3] for _ in texts]
 
-    import fastembed
-    monkeypatch.setattr(fastembed, "TextEmbedding", _FE)
-
     client = _EmbedFakeClient()
-    counts = s._embed_nodes(client, GC["entities"], dimensions=512, force=False)
+    counts = s._embed_nodes(
+        client,
+        GC["entities"],
+        dimensions=512,
+        embedder=_FE(),
+        model="BAAI/bge-small-zh-v1.5",
+    )
 
     # vector_index=False 的 "表" 被跳过，只有 "指标" 两个节点
     assert counts == {"指标": 2}

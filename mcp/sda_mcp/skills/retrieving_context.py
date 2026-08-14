@@ -21,30 +21,97 @@ def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in (raw or {}).items() if k not in _INTERNAL_PROPS}
 
 
-def _build_schema(gc: dict[str, Any]) -> dict[str, Any]:
-    entities = []
-    for label, cfg in (gc.get("entities") or {}).items():
-        entities.append({
-            "label": label,
-            "key_field": cfg.get("key_field"),
-            "table_id": cfg.get("table_id"),
-            "vector_index": cfg.get("vector_index", True),
-        })
-    relationships = []
-    for rel in (gc.get("relationships") or []):
-        out = {"type": rel.get("type"), "from": rel.get("from"), "to": rel.get("to")}
-        if rel.get("match"):
-            out["match"] = {
-                "source_field": rel["match"].get("source_field"),
-                "target_field": rel["match"].get("target_field"),
-            }
-        relationships.append(out)
-    return {"embedding": gc.get("embedding", {}), "entities": entities, "relationships": relationships}
+def _format_schema_pattern(source: str, rel_type: str, target: str) -> str:
+    """把关系模式格式化为可直接参考的 Cypher 片段。"""
+    esc = lambda value: value.replace("`", "``")
+    return f"(:`{esc(source)}`)-[:`{esc(rel_type)}`]->(:`{esc(target)}`)"
+
+
+def _build_live_schema(
+    property_rows: list[dict[str, Any]],
+    constraint_rows: list[dict[str, Any]],
+    relationship_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """把 Neo4j 元数据收敛为大模型写 Cypher 所需的最小结构。"""
+    nodes: dict[str, dict[str, Any]] = {}
+    for row in property_rows:
+        labels = row.get("nodeLabels") or []
+        if not labels:
+            continue
+        label = ":".join(str(item) for item in labels)
+        node = nodes.setdefault(label, {"properties": {}})
+        property_name = row.get("propertyName")
+        if not property_name or property_name in _INTERNAL_PROPS:
+            continue
+        property_types = [str(item) for item in (row.get("propertyTypes") or [])]
+        node["properties"][property_name] = " | ".join(property_types) or "ANY"
+
+    live_labels = set(nodes)
+    for row in constraint_rows:
+        constraint_type = str(row.get("type") or "")
+        if "UNIQUENESS" not in constraint_type and not constraint_type.endswith("KEY"):
+            continue
+        labels = row.get("labelsOrTypes") or []
+        properties = row.get("properties") or []
+        if len(labels) != 1 or not properties:
+            continue
+        label = str(labels[0])
+        if label not in live_labels:
+            continue
+        unique = nodes[label].setdefault("unique", [])
+        for property_name in properties:
+            if property_name in nodes[label]["properties"] and property_name not in unique:
+                unique.append(property_name)
+
+    for node in nodes.values():
+        if "unique" in node:
+            node["unique"].sort()
+
+    relationships = sorted({
+        _format_schema_pattern(
+            str(row["sourceLabel"]),
+            str(row["relationshipType"]),
+            str(row["targetLabel"]),
+        )
+        for row in relationship_rows
+        if row.get("sourceLabel") and row.get("relationshipType") and row.get("targetLabel")
+    })
+    return {"nodes": nodes, "relationships": relationships}
 
 
 def schema() -> dict[str, Any]:
-    gc = load_config().get("graph-config", {})
-    return _build_schema(gc)
+    """从 Neo4j 实时读取精简图 schema，不依赖 graph-config。"""
+    client = Neo4jClient()
+    try:
+        cypher_prefix = "CYPHER 25 " if client._supports_vector_search_clause() else ""
+        property_rows = client.run_cypher(
+            cypher_prefix
+            + "CALL db.schema.nodeTypeProperties() "
+              "YIELD nodeLabels, propertyName, propertyTypes "
+              "RETURN nodeLabels, propertyName, propertyTypes "
+              "ORDER BY nodeLabels, propertyName"
+        )
+        constraint_rows = client.run_cypher(
+            "SHOW CONSTRAINTS "
+            "YIELD type, labelsOrTypes, properties"
+        )
+        relationship_rows = client.run_cypher(
+            "MATCH (source)-[rel]->(target) "
+            "UNWIND labels(source) AS sourceLabel "
+            "UNWIND labels(target) AS targetLabel "
+            "RETURN DISTINCT sourceLabel, type(rel) AS relationshipType, targetLabel "
+            "ORDER BY sourceLabel, relationshipType, targetLabel"
+        )
+        result = _build_live_schema(property_rows, constraint_rows, relationship_rows)
+        if not result["nodes"]:
+            raise DataSourceError("Neo4j 图中没有可用 schema，请先执行 sync")
+        return result
+    except DataSourceError:
+        raise
+    except Exception as exc:
+        raise DataSourceError(f"读取 Neo4j schema 失败：{exc}") from exc
+    finally:
+        client.close()
 
 
 @lru_cache(maxsize=1)

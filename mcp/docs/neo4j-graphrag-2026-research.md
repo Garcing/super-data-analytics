@@ -72,8 +72,8 @@
 
 ### Phase 1：建立检索基线（已完成）
 
-- `evals/retrieval_gold.json` 已整理 30 条真实问题，覆盖指标定义、表定位、关系链、维度、英文表名/字段名和业务层级。
-- `evals/benchmark_retrieval.py` 输出 Recall@1/5、MRR@5、平均/P95 延迟和逐题排名，不调用 LLM、不写数据库。
+- `tests/retrieval_gold.json` 已整理 30 条真实问题，覆盖指标定义、表定位、关系链、维度、英文表名/字段名和业务层级。
+- `tests/test_retrieval_quality.py` 计算 Recall@1/5、MRR@5、平均/P95 延迟和逐题排名，并校验 vector 与 hybrid 的质量下限；不调用 LLM、不写数据库。
 - 纯向量基线：Recall@1 70%、Recall@5 93.3%、MRR@5 0.794。
 
 ### Phase 2：混合召回与批量图扩展（已完成）
@@ -82,7 +82,7 @@
 - 查询侧独立执行向量、全文和受治理 ID/名称/别名精确命中，再用 RRF 融合；不直接相加 cosine 与 Lucene score。
 - 图扩展从逐命中、逐关系查询改为按关系方向批量 Cypher，并只扩展融合后的最终候选。
 - `retrieve_search` 默认 `strategy=hybrid`，保留 `strategy=vector` 回退；原 `score` 仍表示向量相似度，新增 `retrieval` evidence。
-- 30 题 A/B：Hybrid Recall@1 83.3%、Recall@5 100%、MRR@5 0.906，分别较纯向量提升 13.3pp、6.7pp 和 0.112。
+- 30 题 A/B：Hybrid Recall@1 80%、Recall@5 100%、MRR@5 0.889，分别较纯向量提升 10pp、6.7pp 和 0.094。
 
 ### Phase 3：评估引入 `neo4j-graphrag` 1.x
 

@@ -1,7 +1,7 @@
 """语义检索工具（retrieving_context 内核）→ MCP 工具。"""
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from sda_mcp.skills.retrieving_context import (
     search as _search, cypher as _cypher, schema as _schema, doc as _doc, update_doc as _update_doc,
@@ -51,7 +51,7 @@ def retrieve_cypher(params: CypherIn) -> dict[str, Any]:
 
 @mcp.tool(name="retrieve_schema")
 def retrieve_schema() -> dict[str, Any]:
-    """返回图 schema，包括实体、关系和 embedding 配置。只读。"""
+    """返回 Neo4j 实时节点属性、唯一字段和关系路径。只读。"""
     return _schema()
 
 
@@ -68,13 +68,16 @@ def retrieve_doc_update(params: DocUpdateIn) -> dict[str, Any]:
 
 
 class SyncIn(BaseModel):
-    only: str | None = Field(default=None, description="fetch|graph|embed；None 全跑")
-    dry_run: bool = False
-    force_embed: bool = False
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = Field(
+        default=False,
+        description="true=完成源数据、模型和数据库预检但不写库；false=全量重建",
+    )
 
 
 @mcp.tool(name="sync")
 def sync(params: SyncIn) -> dict[str, Any]:
-    """同步飞书多维表、Neo4j 图和 ONNX 向量，会修改数据库。"""
+    """预检或全量重建飞书语义层、Neo4j 图和 ONNX 向量。"""
     from sda_mcp.skills.retrieving_context_sync import sync_graph
-    return sync_graph(params.only, params.dry_run, params.force_embed)
+    return sync_graph(params.dry_run)

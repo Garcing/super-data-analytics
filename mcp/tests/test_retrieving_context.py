@@ -1,6 +1,6 @@
 """retrieving_context 内核 mock 单元测试（离线）。"""
 import pytest
-from sda_mcp.errors import ValidationError
+from sda_mcp.errors import DataSourceError, ValidationError
 from sda_mcp.skills import retrieving_context as r
 
 GC = {
@@ -16,13 +16,83 @@ def test_clean_properties_strips_internal():
     assert out == {"name": "GMV"}
 
 
-def test_schema_builds_from_graph_config(monkeypatch):
-    monkeypatch.setattr(r, "load_config", lambda: {"graph-config": GC})
-    s = r.schema()
-    labels = [e["label"] for e in s["entities"]]
-    assert "指标" in labels and "表" in labels
-    assert s["relationships"][0]["type"] == "属于"
-    assert not hasattr(s, "ok")
+def test_build_live_schema_is_compact_and_filters_stale_metadata():
+    out = r._build_live_schema(
+        [
+            {"nodeLabels": ["指标"], "propertyName": "指标ID", "propertyTypes": ["STRING"]},
+            {"nodeLabels": ["指标"], "propertyName": "指标名称", "propertyTypes": ["STRING"]},
+            {"nodeLabels": ["指标"], "propertyName": "embedding", "propertyTypes": ["LIST<FLOAT>"]},
+            {"nodeLabels": ["表"], "propertyName": "表名称", "propertyTypes": ["STRING"]},
+        ],
+        [
+            {"type": "NODE_PROPERTY_UNIQUENESS", "labelsOrTypes": ["指标"], "properties": ["指标ID"]},
+            {"type": "NODE_PROPERTY_UNIQUENESS", "labelsOrTypes": ["Movie"], "properties": ["title"]},
+        ],
+        [
+            {"sourceLabel": "指标", "relationshipType": "使用", "targetLabel": "表"},
+            {"sourceLabel": "指标", "relationshipType": "使用", "targetLabel": "表"},
+        ],
+    )
+
+    assert out == {
+        "nodes": {
+            "指标": {
+                "properties": {"指标ID": "STRING", "指标名称": "STRING"},
+                "unique": ["指标ID"],
+            },
+            "表": {"properties": {"表名称": "STRING"}},
+        },
+        "relationships": ["(:`指标`)-[:`使用`]->(:`表`)"],
+    }
+
+
+def test_schema_reads_neo4j_only_and_closes_client(monkeypatch):
+    class FakeClient:
+        closed = False
+
+        def _supports_vector_search_clause(self):
+            return True
+
+        def run_cypher(self, statement):
+            if "nodeTypeProperties" in statement:
+                return [{
+                    "nodeLabels": ["指标"],
+                    "propertyName": "指标ID",
+                    "propertyTypes": ["STRING"],
+                }]
+            if statement.startswith("SHOW CONSTRAINTS"):
+                return [{
+                    "type": "NODE_PROPERTY_UNIQUENESS",
+                    "labelsOrTypes": ["指标"],
+                    "properties": ["指标ID"],
+                }]
+            return []
+
+        def close(self):
+            self.closed = True
+
+    client = FakeClient()
+    monkeypatch.setattr(r, "Neo4jClient", lambda: client)
+    out = r.schema()
+
+    assert out["nodes"]["指标"]["unique"] == ["指标ID"]
+    assert client.closed is True
+
+
+def test_schema_empty_graph_gives_actionable_error(monkeypatch):
+    class EmptyClient:
+        def _supports_vector_search_clause(self):
+            return True
+
+        def run_cypher(self, statement):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(r, "Neo4jClient", EmptyClient)
+    with pytest.raises(DataSourceError, match="先执行 sync"):
+        r.schema()
 
 
 def test_search_sorts_and_cleans(monkeypatch):

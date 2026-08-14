@@ -158,6 +158,33 @@ def test_retrieve_doc_update(monkeypatch):
     assert sc == {"updated": True, "document_id": "DOC1"}
 
 
+def test_retrieve_schema_tool(monkeypatch):
+    monkeypatch.setattr(
+        retrieve_tools,
+        "_schema",
+        lambda: {"nodes": {"指标": {"properties": {"指标ID": "STRING"}}}, "relationships": []},
+    )
+    sc, err, _ = _call("retrieve_schema", {})
+    assert not err
+    assert sc["nodes"]["指标"]["properties"]["指标ID"] == "STRING"
+
+
+def test_sync_tool_only_accepts_dry_run(monkeypatch):
+    from sda_mcp.skills import retrieving_context_sync
+
+    monkeypatch.setattr(
+        retrieving_context_sync,
+        "sync_graph",
+        lambda dry_run=False: {"dry_run": dry_run, "validated": True},
+    )
+    sc, err, _ = _call("sync", {"params": {"dry_run": True}})
+    assert not err
+    assert sc == {"dry_run": True, "validated": True}
+
+    _, err, _ = _call("sync", {"params": {"only": "fetch"}})
+    assert err
+
+
 def test_validation_error_is_error():
     # Pydantic 校验失败（缺必填）→ is_error
     sc, err, _ = _call("sql_query", {"params": {}})

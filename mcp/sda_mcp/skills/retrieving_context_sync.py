@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sda_mcp.config import get_env, load_config
-from sda_mcp.errors import ConfigError, ValidationError
+from sda_mcp.errors import ConfigError, DataSourceError
 from sda_mcp.feishu import FeishuClient
 from sda_mcp.feishu import (_F_TEXT, _F_NUMBER, _F_SINGLE_SELECT,
                             _F_MULTI_SELECT, _F_DATE, _F_CHECKBOX, _F_USER,
@@ -16,7 +16,7 @@ from sda_mcp.feishu import (_F_TEXT, _F_NUMBER, _F_SINGLE_SELECT,
                             _F_DUPLEX_LINK, _F_LOCATION, _F_GROUP_CHAT,
                             _F_CREATED_TIME, _F_MODIFIED_TIME, _F_CREATED_USER,
                             _F_MODIFIED_USER)
-from sda_mcp.skills.retrieving_context import Neo4jClient
+from sda_mcp.skills.retrieving_context import Neo4jClient, _embedder as _query_embedder
 
 _SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
                          "embedding_dimensions", "embedding_updated_at"})
@@ -272,11 +272,119 @@ def _fetch_all_feishu(gc: dict) -> dict[str, list[dict]]:
     return data
 
 
+def _validate_graph_config(gc: dict[str, Any]) -> None:
+    """在写库前校验完整同步所需的配置。"""
+    entities = gc.get("entities")
+    if not isinstance(entities, dict) or not entities:
+        raise ConfigError("config.json 缺 graph-config.entities")
+    embedding = gc.get("embedding") or {}
+    if not isinstance(embedding.get("model"), str) or not embedding["model"].strip():
+        raise ConfigError("config.json 缺 graph-config.embedding.model")
+    dimensions = embedding.get("dimensions", 512)
+    if not isinstance(dimensions, int) or dimensions <= 0:
+        raise ConfigError("graph-config.embedding.dimensions 必须是正整数")
+    for label, entity in entities.items():
+        if not isinstance(entity, dict):
+            raise ConfigError(f"实体 {label} 配置必须是对象")
+        for field in ("table_id", "key_field"):
+            if not isinstance(entity.get(field), str) or not entity[field].strip():
+                raise ConfigError(f"实体 {label} 缺 {field}")
+    for relationship in gc.get("relationships") or []:
+        rel_type = relationship.get("type") or "（未命名）"
+        if relationship.get("from") not in entities or relationship.get("to") not in entities:
+            raise ConfigError(f"关系 {rel_type} 的 from/to 必须引用已配置实体")
+        match = relationship.get("match") or {}
+        if not match.get("source_field") or not match.get("target_field"):
+            raise ConfigError(f"关系 {rel_type} 缺 match.source_field/target_field")
+
+
+def _validate_feishu_data(
+    gc: dict[str, Any], data: dict[str, list[dict]],
+) -> list[str]:
+    """校验源数据；空主键沿用跳过行为并返回警告，重复主键阻止写库。"""
+    if not any(data.values()):
+        raise DataSourceError("飞书语义层没有可同步记录，已停止写库")
+    warnings: list[str] = []
+    for label, entity in gc["entities"].items():
+        key_field = entity["key_field"]
+        seen: set[Any] = set()
+        missing_keys = 0
+        for record in data.get(label, []):
+            key_value = record.get(key_field)
+            if key_value in (None, ""):
+                missing_keys += 1
+                continue
+            try:
+                duplicate = key_value in seen
+                seen.add(key_value)
+            except TypeError as exc:
+                raise DataSourceError(
+                    f"飞书实体 {label} 的主键字段 {key_field} 必须是标量"
+                ) from exc
+            if duplicate:
+                raise DataSourceError(
+                    f"飞书实体 {label} 的主键字段 {key_field} 存在重复值 {key_value!r}，已停止写库"
+                )
+        if missing_keys:
+            warnings.append(
+                f"飞书实体 {label} 有 {missing_keys} 条记录缺主键字段 {key_field}，同步时将跳过"
+            )
+    return warnings
+
+
+def _prepare_embedder(dimensions: int):
+    """实际生成探测向量，确认模型可用且维度与索引配置一致。"""
+    try:
+        _query_embedder.cache_clear()
+        embedder = _query_embedder()
+        probe = list(next(embedder.embed(["SDA 同步预检"])))
+    except ConfigError:
+        raise
+    except Exception as exc:
+        raise DataSourceError(f"Fastembed 模型预检失败：{exc}") from exc
+    if len(probe) != dimensions:
+        raise ConfigError(
+            f"embedding 维度配置为 {dimensions}，模型实际输出 {len(probe)}"
+        )
+    return embedder
+
+
 # ---------- 阶段 2：构建 Neo4j 节点和关系 ----------
 
 def _clear_graph(client: Neo4jClient) -> None:
     """清空当前数据库中的图数据。"""
     client.execute("MATCH (n) DETACH DELETE n")
+
+
+def _clear_database_schema(client: Neo4jClient) -> dict[str, int]:
+    """删除全部约束和非 LOOKUP 索引；数据库仅供 SDA 使用。"""
+    constraints = client.run_cypher("SHOW CONSTRAINTS YIELD name")
+    for row in constraints:
+        client.execute(f"DROP CONSTRAINT `{_escape(row['name'])}` IF EXISTS")
+
+    indexes = client.run_cypher("SHOW INDEXES YIELD name, type")
+    dropped_indexes = 0
+    for row in indexes:
+        if row.get("type") == "LOOKUP":
+            continue
+        client.execute(f"DROP INDEX `{_escape(row['name'])}` IF EXISTS")
+        dropped_indexes += 1
+    return {"constraints": len(constraints), "indexes": dropped_indexes}
+
+
+def _create_unique_constraints(client: Neo4jClient, entities: dict) -> list[str]:
+    """把各实体 key_field 固化为 Neo4j 唯一约束。"""
+    names: list[str] = []
+    for label, entity in entities.items():
+        key_field = entity["key_field"]
+        name = f"sda_{label}_{key_field}_unique"
+        client.execute(
+            f"CREATE CONSTRAINT `{_escape(name)}` IF NOT EXISTS "
+            f"FOR (n:`{_escape(label)}`) "
+            f"REQUIRE n.`{_escape(key_field)}` IS UNIQUE"
+        )
+        names.append(name)
+    return names
 
 
 def _build_nodes(client: Neo4jClient, entities: dict, feishu_data: dict) -> dict[str, int]:
@@ -439,21 +547,21 @@ def _create_fulltext_indexes(client: Neo4jClient, entities: dict) -> list[str]:
     return index_names
 
 
-def _embed_nodes(client: Neo4jClient, entities: dict, dimensions: int, force: bool) -> dict[str, int]:
+def _embed_nodes(
+    client: Neo4jClient,
+    entities: dict,
+    dimensions: int,
+    embedder,
+    model: str,
+) -> dict[str, int]:
     """批量生成 L2 归一化向量，并写入模型、维度和更新时间。"""
-    model = (load_config().get("graph-config", {}).get("embedding", {}) or {}).get(
-        "model", "BAAI/bge-small-zh-v1.5")
-    from fastembed import TextEmbedding
-    fe = TextEmbedding(model_name=model)
     counts: dict[str, int] = {}
     for label, cfg in entities.items():
         if not _should_vectorize(cfg):
             continue
         esc_label = _escape(label)
-        where = ("n.search_text IS NOT NULL" if force
-                 else "n.search_text IS NOT NULL AND n.embedding IS NULL")
         rows = client.run_cypher(
-            f"MATCH (n:`{esc_label}`) WHERE {where} "
+            f"MATCH (n:`{esc_label}`) WHERE n.search_text IS NOT NULL "
             f"RETURN elementId(n) AS id, n.search_text AS text"
         )
         if not rows:
@@ -461,7 +569,7 @@ def _embed_nodes(client: Neo4jClient, entities: dict, dimensions: int, force: bo
             continue
         texts = [r["text"] for r in rows]
         ids = [r["id"] for r in rows]
-        vecs = list(fe.embed(texts))   # fastembed 批量，已 L2 归一化
+        vecs = list(embedder.embed(texts))   # fastembed 批量，已 L2 归一化
         now = datetime.now(timezone.utc).isoformat()
         for nid, emb in zip(ids, vecs):
             client.execute(
@@ -478,46 +586,58 @@ def _embed_nodes(client: Neo4jClient, entities: dict, dimensions: int, force: bo
 
 # ---------- 编排 ----------
 
-def sync_graph(only: str | None = None, dry_run: bool = False, force_embed: bool = False) -> dict[str, Any]:
-    """同步飞书多维表 → Neo4j → ONNX 向量。
-
-    Args:
-        only: 'fetch' | 'graph' | 'embed'，只跑某阶段；None 全跑。
-        dry_run: 只 fetch 预览，不写库。
-        force_embed: 重新生成全部 embedding（即使已存在）。
-    Returns: 各阶段计数 {fetch:{...}, nodes:{...}, relationships:{...},
-    search_text:{...}, indexes:n, fulltext_indexes:n, embed:{...}}。
-    """
-    if only is not None and only not in ("fetch", "graph", "embed"):
-        raise ValidationError("only 必须是 fetch|graph|embed 或 None")
+def sync_graph(dry_run: bool = False) -> dict[str, Any]:
+    """预检通过后完整重建 SDA 图、约束、索引和向量。"""
     gc = load_config().get("graph-config", {}) or {}
-    if "entities" not in gc:
-        raise ConfigError("config.json 缺 graph-config.entities")
-    dimensions = (gc.get("embedding", {}) or {}).get("dimensions", 512)
-    result: dict[str, Any] = {}
+    _validate_graph_config(gc)
+    dimensions = (gc.get("embedding") or {}).get("dimensions", 512)
+    model = gc["embedding"]["model"]
 
-    if only in (None, "fetch", "graph"):
-        feishu_data = _fetch_all_feishu(gc)
-        result["fetch"] = {k: len(v) for k, v in feishu_data.items()}
-    else:
-        feishu_data = {}
-
-    if dry_run:
-        return result
+    feishu_data = _fetch_all_feishu(gc)
+    warnings = _validate_feishu_data(gc, feishu_data)
+    embedder = _prepare_embedder(dimensions)
+    fetch_counts = {label: len(records) for label, records in feishu_data.items()}
+    vector_entities = sum(
+        1 for entity in gc["entities"].values() if _should_vectorize(entity)
+    )
 
     client = Neo4jClient()
     try:
-        if only in (None, "graph"):
-            if only is None:
-                _clear_graph(client)
-            result["nodes"] = _build_nodes(client, gc["entities"], feishu_data)
-            result["relationships"] = _build_relationships(
-                client, gc.get("relationships", []), gc["entities"], feishu_data)
-        if only in (None, "embed"):
-            result["search_text"] = _generate_search_text(client, gc["entities"])
-            result["indexes"] = len(_create_vector_indexes(client, gc["entities"], dimensions))
-            result["fulltext_indexes"] = len(_create_fulltext_indexes(client, gc["entities"]))
-            result["embed"] = _embed_nodes(client, gc["entities"], dimensions, force_embed)
+        client.run_cypher("RETURN 1 AS ok")
+        if dry_run:
+            return {
+                "dry_run": True,
+                "validated": True,
+                "fetch": fetch_counts,
+                "warnings": warnings,
+                "planned": {
+                    "clear_graph": True,
+                    "rebuild_constraints": len(gc["entities"]),
+                    "rebuild_relationship_types": len(gc.get("relationships") or []),
+                    "rebuild_vector_indexes": vector_entities,
+                    "rebuild_fulltext_indexes": vector_entities,
+                    "regenerate_embeddings": True,
+                },
+            }
+
+        result: dict[str, Any] = {
+            "dry_run": False,
+            "validated": True,
+            "fetch": fetch_counts,
+            "warnings": warnings,
+        }
+        _clear_graph(client)
+        result["removed_schema"] = _clear_database_schema(client)
+        result["constraints"] = len(_create_unique_constraints(client, gc["entities"]))
+        result["nodes"] = _build_nodes(client, gc["entities"], feishu_data)
+        result["relationships"] = _build_relationships(
+            client, gc.get("relationships", []), gc["entities"], feishu_data)
+        result["search_text"] = _generate_search_text(client, gc["entities"])
+        result["indexes"] = len(_create_vector_indexes(client, gc["entities"], dimensions))
+        result["fulltext_indexes"] = len(_create_fulltext_indexes(client, gc["entities"]))
+        result["embed"] = _embed_nodes(
+            client, gc["entities"], dimensions, embedder, model,
+        )
+        return result
     finally:
         client.close()
-    return result

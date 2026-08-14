@@ -65,9 +65,9 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 | **取数** | `sql_query` / `sql_schema` | Hologres SQL（psycopg）|
 | | `powerbi_schema` / `powerbi_query` | Power BI Fabric MCP（msal + 202 轮询）；模型列表见 config.json，不另开工具 |
 | **语义检索** | `retrieve_search` | 默认 Hybrid（fastembed 向量 + CJK 全文 + RRF + 精确实体名）+ 批量图扩展；`strategy=vector` 可回退 |
-| | `retrieve_cypher` / `retrieve_schema` | Cypher / 图 schema |
+| | `retrieve_cypher` / `retrieve_schema` | Cypher / Neo4j 实时精简 schema |
 | | `retrieve_doc_read` / `retrieve_doc_update` | 飞书文档读 / 覆盖写正文（模板正文在 docx）|
-| | `sync` | 飞书多维表 → Neo4j → ONNX 向量（首次或刷新）|
+| | `sync` | 预检或全量重建：飞书多维表 → Neo4j → ONNX 向量 |
 | **分析** | `contribute` / `forecast` / `impact` | 贡献度归因 / 时序预测 / 效果评估（AB/DID/ROI）|
 | **可视化** | `chart` | matplotlib 渲染 → ImageContent + Blob URL |
 | **报告** | `report_html_publish` / `_list` / `_get` / `_delete` | HTML 报告（Vercel Blob，索引乐观锁）|
@@ -130,6 +130,8 @@ retrieve_search(question, targets, top_k, strategy="hybrid")
 - 当前 embedding 默认为 `BAAI/bge-small-zh-v1.5`、512 维；sync 写入 `embedding_model`、`embedding_dimensions` 和 `embedding_updated_at` 便于审计。
 - 写入节点和查询问题必须使用同一个 embedding 模型、维度和版本。更换模型或维度时，必须全量重算 embedding 并重建不兼容的向量索引，不能混用旧向量。
 - 索引名称不靠配置猜测：查询侧通过 `SHOW VECTOR INDEXES` / `SHOW FULLTEXT INDEXES` 按 label 发现并在 client 生命周期内缓存。
+- Neo4j 数据库仅供 SDA 使用。全量 sync 会清空节点/关系、全部约束和所有非 `LOOKUP` 索引，再按当前配置重建；历史实体不会残留 schema 对象。
+- sync 为每类实体的 `key_field` 创建唯一约束，使其成为 Neo4j 内可发现的稳定标识字段。
 
 #### 查询、融合与兼容契约
 
@@ -148,6 +150,29 @@ Hybrid 返回中，顶层 `score` 为向后兼容字段，始终表示 vector co
 | `vector_score` / `fulltext_score` | 各检索源的原始分数；两者不可直接比较 |
 | `vector_rank` / `lexical_rank` / `exact_rank` | 候选在各来源中的独立排名 |
 | `exact_match` | 命中的受治理名称、ID 或别名；未命中为 `null` |
+
+#### `retrieve_schema` 返回契约
+
+`retrieve_schema` 完全从 Neo4j 实时内省，不读取 `graph-config`。它只返回大模型编写 Cypher 所需的内容：
+
+```json
+{
+  "nodes": {
+    "指标": {
+      "properties": {"指标ID": "STRING", "指标名称": "STRING"},
+      "unique": ["指标ID", "指标名称"]
+    }
+  },
+  "relationships": ["(:`指标`)-[:`使用`]->(:`表`)"]
+}
+```
+
+- 节点属性和类型来自 `db.schema.nodeTypeProperties()`。
+- `unique` 来自当前实际标签对应的唯一约束；无节点的历史约束不会返回。
+- 关系路径来自数据库中实际存在的有向边。
+- 不返回索引详情、embedding 配置、飞书 `table_id` 或建边规则，避免占用 MCP 上下文。
+- `embedding`、`search_text`、`embedding_model`、`embedding_dimensions`、`embedding_updated_at` 属于检索内部属性，会被过滤。
+- 图为空时返回可操作错误，提示先执行 `sync`，不会用遗留约束拼凑 schema。
 
 #### 与 Neo4j 官方 GraphRAG / MCP 的关系
 
@@ -303,36 +328,39 @@ mcp.super-data-analytics.online {
 | 看日志 | `docker compose logs -f`（或 `--tail=50`）|
 | 重启容器 | `docker compose restart` |
 | 改代码后更新 | 改本地→提交→传 `sda_mcp/` 到 `~/sda-mcp/`→`docker compose build && docker compose up -d --force-recreate`（代码层靠后，重建快）|
-| 重新灌图数据 | 调 `sync` 工具（full）；或 `sync` 带 `force_embed=true` 强制重算向量 |
+| 重新灌图数据 | 调 `sync` 工具；每次都完整重建图、约束、索引和向量 |
 | 备份 hermes 配置 | `cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak.$(date +%s)` |
 | 回退 hermes | 删 `mcp_servers` 段 + `gateway restart` |
 
 ### sync（语义层数据）
 首次部署后 Neo4j 是空的，**必须跑一次 `sync`** 才能检索：
-- 全量：`sync`（清空+重建图+生成 `search_text`、CJK 全文索引和 ONNX 向量索引）。
-- 只跑某阶段：`sync` with `only=fetch|graph|embed`。
+- `sync` 只保留 `dry_run` 参数，不再支持 `only` 或 `force_embed`；传入旧参数会直接校验失败，避免静默触发全量重建。
+- `dry_run=true`：拉取并校验全部飞书数据、主键完整性、配置、Fastembed 模型和 Neo4j 连接，不执行任何数据库写入。
+- `dry_run=false`（默认）：预检通过后，清空节点/关系、全部约束和所有非 `LOOKUP` 索引，再完整重建唯一约束、节点、关系、`search_text`、向量/全文索引和 embedding。
+- 可能失败的外部准备工作全部发生在清库前；飞书无记录、主键重复、模型不可用或 Neo4j 不可连接时会停止写库。空主键记录沿用跳过行为，并在结果的 `warnings` 中明确报告。
 - 向量用 **fastembed(ONNX)**，与查询侧同源 → 自洽，无 ONNX/PyTorch 混用风险。
 
 ### 检索基线
 
-`evals/retrieval_gold.json` 保存 30 条受治理实体检索 gold case；评测只读、不调用 LLM：
+`tests/retrieval_gold.json` 保存 30 条受治理实体检索 gold case。评估逻辑已经并入 pytest，
+真实质量回归默认跳过；显式启用后会连续评估 vector 与 hybrid，全程只读且不调用 LLM：
 
-```bash
+```powershell
 cd mcp
-python -m evals.benchmark_retrieval --strategy vector
-python -m evals.benchmark_retrieval --strategy hybrid
+$env:SDA_INTEGRATION="1"
+python -m pytest -q -s tests/test_retrieval_quality.py
 ```
 
-当前本地图（2026-08-14）Hybrid 相对纯向量：Recall@1 `70% → 83.3%`、Recall@5 `93.3% → 100%`、MRR@5 `0.794 → 0.906`。
+当前本地图（2026-08-14）Hybrid 相对纯向量：Recall@1 `70% → 80%`、Recall@5 `93.3% → 100%`、MRR@5 `0.794 → 0.889`。
 
 ### GraphRAG 维护与升级检查表
 
 任何 embedding 模型、`search_fields`、分词器、候选池、融合权重、RRF 参数、精确命中规则、图扩展规则或 Neo4j/Driver 大版本变更，都按以下顺序验收：
 
-1. 把新发现的真实失败问题先加入 `evals/retrieval_gold.json`，明确目标 label、稳定主键和值；不要只为已有 30 题调参。
+1. 把新发现的真实失败问题先加入 `tests/retrieval_gold.json`，明确目标 label、稳定主键和值；不要只为已有 30 题调参。
 2. 先跑 `strategy=vector` 保存基线，再跑 `strategy=hybrid`；至少比较 Recall@1、Recall@5、MRR@5、平均延迟和 P95。
 3. 检查 `retrieval` evidence，确认提升来自预期来源，且没有把 Lucene 分数误当 cosine 或把长定义当精确命中。
-4. 变更模型、维度或 `search_fields` 时，在测试图执行全量 sync/强制 embedding；确认所有 vector/full-text index 为 `ONLINE`。
+4. 变更模型、维度或 `search_fields` 时，在测试图执行 `sync(dry_run=true)`，通过后再全量 sync；确认所有 vector/full-text index 为 `ONLINE`。
 5. 跑完整测试：`cd mcp && python -m pytest -q`，再用真实 Neo4j 做代表性冒烟；测试通过不等于检索质量通过。
 6. 保留 `strategy=vector` 回退至少一个发布周期。只有新方案在质量、P95、镜像体积、外部依赖和错误可观测性上整体更优，才替换默认路径。
 
