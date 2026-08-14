@@ -29,11 +29,19 @@ class CypherIn(BaseModel):
 
 
 class DocIn(BaseModel):
-    doc: str = Field(..., min_length=1, description="飞书文档 URL 或 token")
+    doc: str = Field(
+        ...,
+        min_length=1,
+        description="飞书 docx 文档 token；仅传 token，不支持完整 URL",
+    )
 
 
 class DocUpdateIn(BaseModel):
-    doc: str = Field(..., min_length=1, description="飞书文档 token（URL 链接字段里的 docx token）")
+    doc: str = Field(
+        ...,
+        min_length=1,
+        description="飞书 docx 文档 token；仅传 token，不支持完整 URL",
+    )
     content: str = Field(..., min_length=1, description="覆盖写入的 markdown 正文")
 
 
@@ -57,13 +65,13 @@ def retrieve_schema() -> dict[str, Any]:
 
 @mcp.tool(name="retrieve_doc_read")
 def retrieve_doc_read(params: DocIn) -> dict[str, Any]:
-    """读取飞书文档并返回 Markdown。只读。"""
+    """按 docx token 读取飞书文档并返回 Markdown。只读。"""
     return _doc(params.doc)
 
 
 @mcp.tool(name="retrieve_doc_update")
 def retrieve_doc_update(params: DocUpdateIn) -> dict[str, Any]:
-    """覆盖更新飞书文档正文为 markdown（如修正报告模板内容）。"""
+    """按 docx token 覆盖更新飞书文档正文为 markdown（如修正报告模板内容）。"""
     return _update_doc(params.doc, params.content)
 
 

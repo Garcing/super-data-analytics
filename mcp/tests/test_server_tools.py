@@ -158,6 +158,14 @@ def test_retrieve_doc_update(monkeypatch):
     assert sc == {"updated": True, "document_id": "DOC1"}
 
 
+def test_retrieve_doc_inputs_only_advertise_docx_token():
+    for model in (retrieve_tools.DocIn, retrieve_tools.DocUpdateIn):
+        description = model.model_json_schema()["properties"]["doc"]["description"]
+        assert "docx 文档 token" in description
+        assert "不支持完整 URL" in description
+        assert "URL 或 token" not in description
+
+
 def test_retrieve_schema_tool(monkeypatch):
     monkeypatch.setattr(
         retrieve_tools,
