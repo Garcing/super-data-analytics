@@ -36,12 +36,18 @@ def test_search_sorts_and_cleans(monkeypatch):
         def search_vector_index(self, idx, label, emb, top_k):
             return [{"id": "a", "score": 0.9, "properties": {"name": "A", "embedding": [0]}},
                     {"id": "b", "score": 0.5, "properties": {"name": "B"}}]
-        def fetch_graph_context(self, label, nid, rels): return {}
+        def fetch_graph_context_batch(self, hits, rels): return {h["id"]: {} for h in hits}
     monkeypatch.setattr(r, "Neo4jClient", FakeClient)
-    out = r.search("GMV", top_k=5)
+    out = r.search("GMV", top_k=5, strategy="vector")
     assert out["results"][0]["score"] == 0.9
     assert out["results"][0]["properties"] == {"name": "A"}
     assert not hasattr(out, "ok")
+
+
+def test_search_rejects_unknown_strategy(monkeypatch):
+    monkeypatch.setattr(r, "load_config", lambda: {"graph-config": GC})
+    with pytest.raises(ValidationError, match="strategy"):
+        r.search("GMV", strategy="magic")
 
 
 def test_search_empty_question(monkeypatch):
@@ -165,3 +171,62 @@ def test_vector_search_falls_back_for_older_neo4j(monkeypatch):
     assert "db.index.vector.queryNodes" in query
     assert "SEARCH node IN" not in query
     assert session.kwargs == {"indexName": "metric_index", "topK": 5, "embedding": [0.1]}
+
+
+def test_lucene_query_escapes_parser_operators():
+    assert r._escape_lucene_query('NPS: "推荐" +样本') == 'NPS\\: \\"推荐\\" \\+样本'
+
+
+def test_rrf_rewards_items_found_by_both_sources():
+    vector = [
+        {"id": "v", "score": 0.9, "properties": {"指标ID": "v"}},
+        {"id": "both", "score": 0.8, "properties": {"指标ID": "both"}},
+    ]
+    lexical = [
+        {"id": "both", "score": 2.0, "properties": {"指标ID": "both"}},
+        {"id": "l", "score": 1.0, "properties": {"指标ID": "l"}},
+    ]
+    fused = r._fuse_ranked_sources([
+        ("vector", "指标", 1.0, vector),
+        ("fulltext", "指标", 1.0, lexical),
+    ])
+    assert fused[0]["id"] == "both"
+    assert fused[0]["vector_rank"] == 2
+    assert fused[0]["lexical_rank"] == 1
+
+
+def test_exact_property_hits_boosts_name_but_not_definition_mentions():
+    hits = [
+        {"id": "rate", "score": 0.9, "properties": {
+            "指标名称": "复购率", "指标定义": "复购人数除以总承接人数",
+        }},
+        {"id": "users", "score": 0.8, "properties": {
+            "指标名称": "复购人数", "指标定义": "复购下一正式营的人数",
+        }},
+    ]
+    exact = r._exact_property_hits("复购人数是什么", hits)
+    assert [item["id"] for item in exact] == ["users"]
+    assert exact[0]["exact_match"] == "复购人数"
+
+
+def test_exact_property_hits_ignores_generic_type_values():
+    hits = [{"id": "table", "score": 0.8, "properties": {
+        "表名称": "semantic.fact_order", "表类型": "事实表",
+    }}]
+    assert r._exact_property_hits("需要哪张事实表", hits) == []
+
+
+def test_fulltext_search_uses_escaped_question(monkeypatch):
+    client, session = _make_client(monkeypatch)
+    client.search_fulltext_index("指标_search_text_index", "指标", "NPS:推荐", 5)
+    assert "db.index.fulltext.queryNodes" in session.captured_cyphers[0]
+
+
+def test_batch_context_groups_ids_by_relationship(monkeypatch):
+    client, session = _make_client(monkeypatch)
+    hits = [{"id": "m1", "label": "指标"}, {"id": "m2", "label": "指标"}]
+    client.fetch_graph_context_batch(
+        hits, [{"type": "使用", "from": "指标", "to": "表"}],
+    )
+    assert len(session.captured_cyphers) == 1
+    assert "elementId(n) IN $nodeIds" in session.captured_cyphers[0]

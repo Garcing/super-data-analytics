@@ -234,6 +234,7 @@ def _stub_phases(monkeypatch, calls):
     monkeypatch.setattr(s, "_build_relationships", lambda c, r, e, d: (calls.append("rels") or {"x": 2}))
     monkeypatch.setattr(s, "_generate_search_text", lambda c, e: (calls.append("st") or {"指标": 1}))
     monkeypatch.setattr(s, "_create_vector_indexes", lambda c, e, dim: (calls.append("idx") or ["i0"]))
+    monkeypatch.setattr(s, "_create_fulltext_indexes", lambda c, e: (calls.append("ftidx") or ["f0"]))
     monkeypatch.setattr(s, "_embed_nodes", lambda c, e, dim, f: (calls.append("embed") or {"指标": 1}))
 
 
@@ -249,8 +250,9 @@ def test_sync_graph_orchestration(monkeypatch):
     assert out["relationships"] == {"x": 2}
     assert out["search_text"] == {"指标": 1}
     assert out["indexes"] == 1
+    assert out["fulltext_indexes"] == 1
     assert out["embed"] == {"指标": 1}
-    assert calls == ["fetch", "clear", "nodes", "rels", "st", "idx", "embed"]
+    assert calls == ["fetch", "clear", "nodes", "rels", "st", "idx", "ftidx", "embed"]
 
 
 def test_sync_graph_only_embed_skips_build(monkeypatch):
@@ -265,7 +267,24 @@ def test_sync_graph_only_embed_skips_build(monkeypatch):
     assert "relationships" not in out
     assert out["search_text"] == {"指标": 1}
     assert out["embed"] == {"指标": 1}
-    assert calls == ["st", "idx", "embed"]
+    assert calls == ["st", "idx", "ftidx", "embed"]
+
+
+def test_create_fulltext_indexes_uses_cjk_and_skips_disabled_entities():
+    class Client:
+        def __init__(self):
+            self.cyphers = []
+        def execute(self, cypher, **params):
+            self.cyphers.append(cypher)
+
+    client = Client()
+    names = s._create_fulltext_indexes(client, GC["entities"])
+
+    assert names == ["指标_search_text_index"]
+    assert len(client.cyphers) == 1
+    assert "CREATE FULLTEXT INDEX `指标_search_text_index` IF NOT EXISTS" in client.cyphers[0]
+    assert "ON EACH [n.search_text]" in client.cyphers[0]
+    assert "`fulltext.analyzer`: 'cjk'" in client.cyphers[0]
 
 
 def test_sync_dry_run_no_write(monkeypatch):

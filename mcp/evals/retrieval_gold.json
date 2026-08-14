@@ -1,0 +1,182 @@
+[
+  {
+    "id": "metric_repurchase_users",
+    "question": "同一品类里继续购买下一个正式营的学员人数，用哪个指标？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "repurchase_users"}]
+  },
+  {
+    "id": "metric_repurchase_rate",
+    "question": "为了销售激励，分母连延期和退费学员也保留的转化比例是什么？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "repurchase_rate"}]
+  },
+  {
+    "id": "metric_confirmed_violation",
+    "question": "申诉结束后仍最终确认为违规的质检工单数量，看哪个口径？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "confirmed_violation_count"}]
+  },
+  {
+    "id": "metric_false_positive",
+    "question": "风控质检经过申诉后被证明没有违规的占比，用哪个指标？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "quality_false_positive_rate"}]
+  },
+  {
+    "id": "metric_quality_duration",
+    "question": "想看质检单从分配到完成平均用了多少秒，应该取什么指标？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "avg_quality_handling_seconds"}]
+  },
+  {
+    "id": "metric_nps",
+    "question": "推荐者占比减去贬损者占比得到的用户推荐口径是什么？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "nps"}]
+  },
+  {
+    "id": "metric_complaint_users",
+    "question": "投诉发生时间范围内按用户去重，需要用哪个人数指标？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "complaint_user_count"}]
+  },
+  {
+    "id": "metric_preclass_refund",
+    "question": "只统计开营以前已经完成退款的学员人数，应该用什么指标？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "preclass_refund_users"}]
+  },
+  {
+    "id": "metric_effective_attendance",
+    "question": "把听课超过十五分钟才算到课时，对应哪个数量指标？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "effective_attendance_count"}]
+  },
+  {
+    "id": "metric_completion",
+    "question": "听课时长达到课程时长八成后计数的口径是什么？",
+    "targets": ["指标"],
+    "expected": [{"label": "指标", "key_field": "指标ID", "value": "completion_count"}]
+  },
+  {
+    "id": "table_listen_detail",
+    "question": "需要查询学员逐条听课明细，应该找哪张底表？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "dw_study.ads_xqd_study_user_listen_details_hour_bi"}]
+  },
+  {
+    "id": "table_employee_scd",
+    "question": "按历史时点还原员工部门架构的语义层拉链表是哪张？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "semantic.dim_employee_org_scd"}]
+  },
+  {
+    "id": "table_order_fact",
+    "question": "统一计算全司订单金额和退款的语义层订单事实表是哪张？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "semantic.fact_order"}]
+  },
+  {
+    "id": "table_complaint_fact",
+    "question": "投诉分析统一使用的语义层工单事实表是哪张？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "semantic.fact_complaint_ticket"}]
+  },
+  {
+    "id": "table_workflow_meta",
+    "question": "查询扣子工作流本身的定义和元数据，而不是运行记录，应该找哪张表？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "dw_ops.ods_xqd_ops_workflow_meta"}]
+  },
+  {
+    "id": "table_public_sea_transfer",
+    "question": "分析公海线索在账户之间转移的明细记录，应使用哪张表？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "dw_ops.dwd_xqd_ops_public_seas_transfer_detail"}]
+  },
+  {
+    "id": "table_qw_chat",
+    "question": "需要读取员工与客户的企微聊天原始记录，应该查询哪张数据表？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "dw_ops.dwd_xqd_ops_chat_qw"}]
+  },
+  {
+    "id": "table_page_view",
+    "question": "APP页面浏览行为的逐条明细来自哪张表？",
+    "targets": ["表"],
+    "expected": [{"label": "表", "key_field": "表名称", "value": "dw_cmt.dwd_xqd_cmt_page_pv_detail"}]
+  },
+  {
+    "id": "dimension_signup_deadline",
+    "question": "按期数的报名截止时刻做筛选，应选哪个维度字段？",
+    "targets": ["维度"],
+    "expected": [{"label": "维度", "key_field": "维度ID", "value": "period.sign_up_end_time"}]
+  },
+  {
+    "id": "dimension_city_level",
+    "question": "需要按一线、二线等城市级别分组，应使用哪个维度？",
+    "targets": ["维度"],
+    "expected": [{"label": "维度", "key_field": "维度ID", "value": "user.city_level"}]
+  },
+  {
+    "id": "dimension_team_name",
+    "question": "按员工所属团队名称拆分结果，对应的维度ID是什么？",
+    "targets": ["维度"],
+    "expected": [{"label": "维度", "key_field": "维度ID", "value": "raw_dep_zip.department_name"}]
+  },
+  {
+    "id": "dimension_third_channel",
+    "question": "投放分析需要细分到第三级渠道名称，应该用哪个维度？",
+    "targets": ["维度"],
+    "expected": [{"label": "维度", "key_field": "维度ID", "value": "channel.third_channel_name"}]
+  },
+  {
+    "id": "dimension_sku_type",
+    "question": "从商品维表取得商品类型时，对应哪个受治理维度？",
+    "targets": ["维度"],
+    "expected": [{"label": "维度", "key_field": "维度ID", "value": "sku.sku_type"}]
+  },
+  {
+    "id": "dimension_camp_stage",
+    "question": "需要按训练营课程阶段的先后序号排序，应使用哪个维度？",
+    "targets": ["维度"],
+    "expected": [{"label": "维度", "key_field": "维度ID", "value": "camp.camp_stage"}]
+  },
+  {
+    "id": "relationship_date_staff_quality",
+    "question": "要先按日期还原员工架构，再关联违规质检工单，应该启用哪条表关系？",
+    "targets": ["表关系"],
+    "expected": [{"label": "表关系", "key_field": "表关系ID", "value": "date-staff-quality"}]
+  },
+  {
+    "id": "relationship_learning",
+    "question": "从用户期数主链路统计完整课耗，但不拆单课时，应使用哪条表关系？",
+    "targets": ["表关系"],
+    "expected": [{"label": "表关系", "key_field": "表关系ID", "value": "link-learn"}]
+  },
+  {
+    "id": "relationship_rating",
+    "question": "把期数主链路与结营后的总分及四项满意评分连接起来，用哪条关系？",
+    "targets": ["表关系"],
+    "expected": [{"label": "表关系", "key_field": "表关系ID", "value": "link-rate"}]
+  },
+  {
+    "id": "relationship_order_complaint",
+    "question": "从全公司订单视角分析不同商品的投诉情况，应启用哪条表关系？",
+    "targets": ["表关系"],
+    "expected": [{"label": "表关系", "key_field": "表关系ID", "value": "ord-complaint"}]
+  },
+  {
+    "id": "business_front_growth",
+    "question": "广告商、投手、素材和信息流外投这一整块业务归属哪个板块？",
+    "targets": ["业务板块"],
+    "expected": [{"label": "业务板块", "key_field": "业务板块名称", "value": "前端增长投放"}]
+  },
+  {
+    "id": "business_private_ai",
+    "question": "让Agent接管私域日常回复、营销推送和直播催课以提高人效，属于哪个业务小点？",
+    "targets": ["业务小点"],
+    "expected": [{"label": "业务小点", "key_field": "业务小点名称", "value": "私域AI"}]
+  }
+]

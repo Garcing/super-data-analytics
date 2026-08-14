@@ -1,5 +1,7 @@
 # super-data-analytics MCP 服务
 
+> Neo4j 2026 的 `SEARCH`、GraphRAG Python、Hybrid Search 与官方 Neo4j MCP 的项目适配结论，见 [`docs/neo4j-graphrag-2026-research.md`](docs/neo4j-graphrag-2026-research.md)。
+
 把整套数据分析技能的确定性执行能力收敛进**一个 Docker 容器**，作为 MCP（Model Context Protocol）服务对外提供。hermes（接飞书/企微）和笔记本只配置一个 URL，不再每台机器调 Python/Node 依赖。
 
 - **实现**：FastMCP（MCP Python SDK v2 `MCPServer`），streamable HTTP（stateless + JSON response），19 个工具。
@@ -62,7 +64,7 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 |---|---|---|
 | **取数** | `sql_query` / `sql_schema` | Hologres SQL（psycopg）|
 | | `powerbi_schema` / `powerbi_query` | Power BI Fabric MCP（msal + 202 轮询）；模型列表见 config.json，不另开工具 |
-| **语义检索** | `retrieve_search` | 向量检索（fastembed ONNX）+ 图扩展上下文 |
+| **语义检索** | `retrieve_search` | 默认 Hybrid（fastembed 向量 + CJK 全文 + RRF + 精确实体名）+ 批量图扩展；`strategy=vector` 可回退 |
 | | `retrieve_cypher` / `retrieve_schema` | Cypher / 图 schema |
 | | `retrieve_doc_read` / `retrieve_doc_update` | 飞书文档读 / 覆盖写正文（模板正文在 docx）|
 | | `sync` | 飞书多维表 → Neo4j → ONNX 向量（首次或刷新）|
@@ -74,6 +76,77 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 > 报告模板已并入语义层：模板是「报告模板」多维表里的行（`retrieve_search`/`retrieve_cypher` 发现），正文在链接的 docx（`retrieve_doc_read` 读、`retrieve_doc_update` 改）。不再单列模板工具组。
 
 > `report_image_generate` 在**服务器无代理时不可用**（apimart 不通）；本机走代理可用。其余 23 个服务器全可用。
+
+### 2.1 GraphRAG 检索架构（维护重点）
+
+当前语义检索是一套面向受治理元数据的轻量 Hybrid GraphRAG：使用 Neo4j 2026 的原生索引和查询能力，保留本地 Fastembed，由 SDA 负责多实体路由、排序融合和图上下文组装。当前**没有**引入 `neo4j-graphrag` Python 包，也**没有**部署 Neo4j 官方 MCP Server。
+
+```text
+飞书结构化元数据
+  → sync 建立实体和关系
+  → 按实体配置生成 search_text
+  → Fastembed 生成 embedding
+  → 每类实体各建一个 vector index 和 CJK full-text index
+
+retrieve_search(question, targets, top_k, strategy="hybrid")
+  → 一次 Fastembed query embedding
+  → 每个 target 分别执行 vector SEARCH 和 CJK full-text search
+  → 从召回候选中识别名称 / ID / 别名的精确命中
+  → Weighted RRF 融合并截取全局 top_k
+  → 仅对最终候选批量扩展图邻居
+  → properties + context + retrieval evidence
+```
+
+职责边界：
+
+| 组件 | 负责 | 不负责 |
+|---|---|---|
+| Neo4j | vector/full-text 索引、Cypher `SEARCH`、图存储与关系遍历 | embedding 模型托管、业务实体路由、跨来源排序 |
+| Fastembed | 本地生成文档和问题的 512 维 embedding | 全文召回、图扩展、融合排序 |
+| SDA 检索内核 | `targets` 路由、精确命中、WRRF、批量图扩展、稳定返回契约 | 通用自然语言生成 Cypher |
+| SDA FastMCP | 对外暴露受约束的高层工具和结构化结果 | 代理或嵌套 Neo4j 官方 MCP |
+
+这套边界的目的不是重复造一个通用 GraphRAG 框架，而是让 Neo4j 执行底层检索，让 SDA 只维护与八类受治理实体、动态关系配置和业务返回格式有关的薄编排层。
+
+#### 数据与索引契约
+
+- `graph-config.entities.<label>.search_fields` 决定该实体的 `search_text`；字段集合变化后必须重新生成 `search_text` 并重算 embedding。
+- `graph-config.entities.<label>.vector_index=false` 的实体不参与向量、全文和 Hybrid 召回。
+- 向量索引命名为 `<label>_embedding_index`，索引 `n.embedding`，相似度为 `cosine`。
+- 全文索引命名为 `<label>_search_text_index`，索引 `n.search_text`，analyzer 固定为 `cjk`。
+- 当前 embedding 默认为 `BAAI/bge-small-zh-v1.5`、512 维；sync 写入 `embedding_model`、`embedding_dimensions` 和 `embedding_updated_at` 便于审计。
+- 写入节点和查询问题必须使用同一个 embedding 模型、维度和版本。更换模型或维度时，必须全量重算 embedding 并重建不兼容的向量索引，不能混用旧向量。
+- 索引名称不靠配置猜测：查询侧通过 `SHOW VECTOR INDEXES` / `SHOW FULLTEXT INDEXES` 按 label 发现并在 client 生命周期内缓存。
+
+#### 查询、融合与兼容契约
+
+- `strategy=hybrid` 是默认生产路径；`strategy=vector` 保留为故障回退和 A/B 基线。
+- Hybrid 对每个 target 的向量和全文各取 `source_k = top_k × 2` 个候选，再融合成**全局** `top_k`；纯向量模式保持历史行为，即每个目标索引取 `top_k` 后按 cosine 排序。
+- 精确命中只检查受治理的 ID、名称和别名类字段，不扫描定义等长文本，避免“定义中提到另一个指标”造成错误加权。
+- 融合使用 Weighted RRF：向量权重 `1.0`、全文权重 `1.0`、精确命中权重 `1.2`、`rrf_k=60`。cosine 与 Lucene score 量纲不同，禁止直接相加或跨索引比较原始分数。
+- Neo4j 2026.01+ 使用 Cypher 25 `SEARCH`；Neo4j 5.x / 2025.x 回退 `db.index.vector.queryNodes`。不要为了消除弃用日志改成逐节点 cosine 全表扫描。
+- 图扩展发生在融合和截断之后，按关系及方向批量查询；每个命中、每类关系最多保留 20 个邻居，避免命中数 × 关系数的查询往返。
+
+Hybrid 返回中，顶层 `score` 为向后兼容字段，始终表示 vector cosine；仅被全文召回的结果为 `0`。真实融合顺序应看 `retrieval`：
+
+| 字段 | 含义 |
+|---|---|
+| `fusion_score` | Weighted RRF 分数，只用于本次候选排序，不是概率 |
+| `vector_score` / `fulltext_score` | 各检索源的原始分数；两者不可直接比较 |
+| `vector_rank` / `lexical_rank` / `exact_rank` | 候选在各来源中的独立排名 |
+| `exact_match` | 命中的受治理名称、ID 或别名；未命中为 `null` |
+
+#### 与 Neo4j 官方 GraphRAG / MCP 的关系
+
+| 官方能力 | 当前是否使用 | 后续定位 |
+|---|---:|---|
+| Neo4j vector index、full-text index、Cypher 25 `SEARCH` | 是 | 当前生产底座 |
+| `neo4j-graphrag` 的 `VectorCypherRetriever` / `HybridCypherRetriever` | 否 | 只能通过 feature flag 做查询侧 A/B，评测胜出后再替换 |
+| GraphRAG `Embedder` 和云端 embedding provider | 否 | 现有 Fastembed 可薄包装；使用远程 provider 才会产生外部 API、费用和数据出境问题 |
+| Neo4j KG Builder / Text2Cypher / GDS FastRP | 否 | 仅在真实失败案例证明有价值时实验，不纳入默认主链 |
+| Neo4j 官方 MCP Server | 否 | 可作为开发者只读诊断 sidecar，不代理进 SDA MCP、不暴露给业务 Agent |
+
+完整调研、取舍和候选实验见 [`docs/neo4j-graphrag-2026-research.md`](docs/neo4j-graphrag-2026-research.md)。
 
 ---
 
@@ -223,9 +296,34 @@ mcp.super-data-analytics.online {
 
 ### sync（语义层数据）
 首次部署后 Neo4j 是空的，**必须跑一次 `sync`** 才能检索：
-- 全量：`sync`（清空+重建图+生成 ONNX 向量）。
+- 全量：`sync`（清空+重建图+生成 `search_text`、CJK 全文索引和 ONNX 向量索引）。
 - 只跑某阶段：`sync` with `only=fetch|graph|embed`。
 - 向量用 **fastembed(ONNX)**，与查询侧同源 → 自洽，无 ONNX/PyTorch 混用风险。
+
+### 检索基线
+
+`evals/retrieval_gold.json` 保存 30 条受治理实体检索 gold case；评测只读、不调用 LLM：
+
+```bash
+cd mcp
+python -m evals.benchmark_retrieval --strategy vector
+python -m evals.benchmark_retrieval --strategy hybrid
+```
+
+当前本地图（2026-08-14）Hybrid 相对纯向量：Recall@1 `70% → 83.3%`、Recall@5 `93.3% → 100%`、MRR@5 `0.794 → 0.906`。
+
+### GraphRAG 维护与升级检查表
+
+任何 embedding 模型、`search_fields`、分词器、候选池、融合权重、RRF 参数、精确命中规则、图扩展规则或 Neo4j/Driver 大版本变更，都按以下顺序验收：
+
+1. 把新发现的真实失败问题先加入 `evals/retrieval_gold.json`，明确目标 label、稳定主键和值；不要只为已有 30 题调参。
+2. 先跑 `strategy=vector` 保存基线，再跑 `strategy=hybrid`；至少比较 Recall@1、Recall@5、MRR@5、平均延迟和 P95。
+3. 检查 `retrieval` evidence，确认提升来自预期来源，且没有把 Lucene 分数误当 cosine 或把长定义当精确命中。
+4. 变更模型、维度或 `search_fields` 时，在测试图执行全量 sync/强制 embedding；确认所有 vector/full-text index 为 `ONLINE`。
+5. 跑完整测试：`cd mcp && python -m pytest -q`，再用真实 Neo4j 做代表性冒烟；测试通过不等于检索质量通过。
+6. 保留 `strategy=vector` 回退至少一个发布周期。只有新方案在质量、P95、镜像体积、外部依赖和错误可观测性上整体更优，才替换默认路径。
+
+建议的升级优先级是：扩充线上失败评测集 → 查询改写/同义词实验 → reranker A/B → 官方 Retriever A/B → 有证据后再考虑 GDS 结构向量。不要仅因官方新增组件而改写主链。
 
 ---
 

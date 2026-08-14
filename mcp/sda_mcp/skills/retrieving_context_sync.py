@@ -1,10 +1,6 @@
 """GraphRAG sync 内核：飞书多维表 → Neo4j 图 → fastembed(ONNX) 向量。
 
-移植 retrieving-context/scripts/pipeline/{sync,feishu_reader,graph_builder,embedding}.py，
-去 CLI/argparse/print；embedding 用 fastembed（与查询侧 retrieving_context.embed 同源 →
-向量自洽，无 ONNX/PyTorch 混用 parity 风险）。失败抛 SkillError。
-
-公共入口：sync_graph(only=None, dry_run=False, force_embed=False) -> dict[str,Any]。
+同步侧和查询侧共用 Fastembed 模型，确保写入向量与查询向量一致。
 """
 from __future__ import annotations
 
@@ -27,29 +23,26 @@ _SKIP_PROPS = frozenset({"search_text", "embedding", "embedding_model",
 
 
 def _escape(label: str) -> str:
-    """Escape a label for Cypher backtick quotes (replace ` with ``)。
-
-    对齐 graph_builder._escape / embedding._escape。
-    """
+    """转义 Cypher 反引号标识符。"""
     return label.replace("`", "``")
 
 
 def _should_vectorize(cfg: dict) -> bool:
-    """对齐 embedding._should_vectorize：vector_index 默认 True。"""
+    """判断实体是否参与检索；vector_index 默认为 True。"""
     return (cfg or {}).get("vector_index", True) is not False
 
 
 def _format_value(value) -> str:
-    """对齐 embedding._format_value：list 用中文顿号连接，其余 str()。"""
+    """把属性值格式化为 search_text 片段。"""
     if isinstance(value, list):
         return "、".join(str(v) for v in value)
     return str(value)
 
 
-# ---------- Phase 1: feishu fetch（开放平台 FeishuClient + 值简化器）----------
+# ---------- 阶段 1：读取飞书多维表并简化字段值 ----------
 
 def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
-    """开放平台字段 → 描述符列表。不再过滤 auto_number（已纳入支持）。
+    """把飞书字段定义转换为同步所需的描述符。
 
     每项含：name/type/id、ui_type、options(Select 选项 [{id,name}])、
     formula_data_type（公式/lookup【结果】data_type int，分派用，见下）。
@@ -279,15 +272,15 @@ def _fetch_all_feishu(gc: dict) -> dict[str, list[dict]]:
     return data
 
 
-# ---------- Phase 2: graph build（移植 graph_builder.py，逐行对齐 Cypher）----------
+# ---------- 阶段 2：构建 Neo4j 节点和关系 ----------
 
 def _clear_graph(client: Neo4jClient) -> None:
-    """移植 graph_builder.clear_graph：MATCH (n) DETACH DELETE n。"""
+    """清空当前数据库中的图数据。"""
     client.execute("MATCH (n) DETACH DELETE n")
 
 
 def _build_nodes(client: Neo4jClient, entities: dict, feishu_data: dict) -> dict[str, int]:
-    """移植 graph_builder.build_nodes：MERGE on key_field + SET n += props，幂等去重。"""
+    """按 key_field 幂等写入实体节点。"""
     counts: dict[str, int] = {}
     for label, cfg in entities.items():
         key_field = cfg["key_field"]
@@ -315,7 +308,7 @@ def _build_nodes(client: Neo4jClient, entities: dict, feishu_data: dict) -> dict
 def _build_relationships(client: Neo4jClient, relationships: list, entities: dict,
                          feishu_data: dict) -> dict[str, int]:
     """按 match 字段直连建边：from 实体的 source_field 值（含列表）匹配 to 实体的
-    target_field 值。via 中间表模式已删（语义层不再使用）。"""
+    target_field 值。"""
     counts: dict[str, int] = {}
     for rel_cfg in relationships:
         rel_type = rel_cfg["type"]
@@ -370,10 +363,10 @@ def _build_relationships(client: Neo4jClient, relationships: list, entities: dic
     return counts
 
 
-# ---------- Phase 3: embed（移植 embedding.py 的非 embed 部分 + fastembed 替换）----------
+# ---------- 阶段 3：生成检索文本、索引和向量 ----------
 
 def _generate_search_text(client: Neo4jClient, entities: dict) -> dict[str, int]:
-    """移植 embedding.generate_search_text（84-136）：拼 '字段名：值。' 写回 n.search_text。"""
+    """把节点属性拼成“字段名：值。”并写入 search_text。"""
     counts: dict[str, int] = {}
     for label, cfg in entities.items():
         if not _should_vectorize(cfg):
@@ -408,7 +401,7 @@ def _generate_search_text(client: Neo4jClient, entities: dict) -> dict[str, int]
 
 
 def _create_vector_indexes(client: Neo4jClient, entities: dict, dimensions: int) -> list[str]:
-    """移植 embedding.create_vector_indexes（139-179）：CREATE VECTOR INDEX IF NOT EXISTS，cosine。"""
+    """为参与检索的实体创建 cosine 向量索引。"""
     index_names: list[str] = []
     for label, cfg in entities.items():
         if not _should_vectorize(cfg):
@@ -430,11 +423,24 @@ def _create_vector_indexes(client: Neo4jClient, entities: dict, dimensions: int)
     return index_names
 
 
+def _create_fulltext_indexes(client: Neo4jClient, entities: dict) -> list[str]:
+    """按实体类型为 search_text 创建 CJK 全文索引。"""
+    index_names: list[str] = []
+    for label, cfg in entities.items():
+        if not _should_vectorize(cfg):
+            continue
+        index_name = f"{label}_search_text_index"
+        client.execute(
+            f"CREATE FULLTEXT INDEX `{_escape(index_name)}` IF NOT EXISTS "
+            f"FOR (n:`{_escape(label)}`) ON EACH [n.search_text] "
+            "OPTIONS {indexConfig: {`fulltext.analyzer`: 'cjk'}}"
+        )
+        index_names.append(index_name)
+    return index_names
+
+
 def _embed_nodes(client: Neo4jClient, entities: dict, dimensions: int, force: bool) -> dict[str, int]:
-    """生成 embedding。**关键差异**：用 fastembed 批量编码（retrieving_context.embed 同源），
-    替代原 SentenceTransformer。fastembed 对 bge 默认 L2 归一化（与原 normalize_embeddings=True 一致）。
-    写回字段对齐 embedding.embed_nodes（264-277）：n.embedding / embedding_model /
-    embedding_dimensions / embedding_updated_at。"""
+    """批量生成 L2 归一化向量，并写入模型、维度和更新时间。"""
     model = (load_config().get("graph-config", {}).get("embedding", {}) or {}).get(
         "model", "BAAI/bge-small-zh-v1.5")
     from fastembed import TextEmbedding
@@ -479,7 +485,8 @@ def sync_graph(only: str | None = None, dry_run: bool = False, force_embed: bool
         only: 'fetch' | 'graph' | 'embed'，只跑某阶段；None 全跑。
         dry_run: 只 fetch 预览，不写库。
         force_embed: 重新生成全部 embedding（即使已存在）。
-    Returns: 各阶段计数 {fetch:{...}, nodes:{...}, relationships:{...}, search_text:{...}, indexes:n, embed:{...}}。
+    Returns: 各阶段计数 {fetch:{...}, nodes:{...}, relationships:{...},
+    search_text:{...}, indexes:n, fulltext_indexes:n, embed:{...}}。
     """
     if only is not None and only not in ("fetch", "graph", "embed"):
         raise ValidationError("only 必须是 fetch|graph|embed 或 None")
@@ -509,6 +516,7 @@ def sync_graph(only: str | None = None, dry_run: bool = False, force_embed: bool
         if only in (None, "embed"):
             result["search_text"] = _generate_search_text(client, gc["entities"])
             result["indexes"] = len(_create_vector_indexes(client, gc["entities"], dimensions))
+            result["fulltext_indexes"] = len(_create_fulltext_indexes(client, gc["entities"]))
             result["embed"] = _embed_nodes(client, gc["entities"], dimensions, force_embed)
     finally:
         client.close()

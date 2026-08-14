@@ -1,9 +1,7 @@
-"""retrieving_context 内核：GraphRAG 向量检索 + 图扩展 + Cypher + 飞书文档，
-从原 retrieve.js 移植为纯 Python。embedding 用 fastembed(ONNX) in-process。
-去 CLI/三态/{ok} 信封；失败抛 SkillError。行为对齐 retrieving-context/scripts/retrieve.js。
-"""
+"""业务知识图谱检索内核：混合召回、图扩展、Cypher 和飞书文档。"""
 from __future__ import annotations
 
+from collections import defaultdict
 from functools import lru_cache
 import re
 from typing import Any
@@ -66,6 +64,12 @@ def embed(text: str) -> list[float]:
     return list(next(_embedder().embed([text])))
 
 
+def _escape_lucene_query(text: str) -> str:
+    """转义 Lucene 运算符，同时保留可分词文本。"""
+    text = text.replace("&&", r"\&&").replace("||", r"\||")
+    return re.sub(r'([+\-!(){}\[\]^"~*?:\\/])', r"\\\1", text)
+
+
 class Neo4jClient:
     def __init__(self) -> None:
         env = load_config().get("env", {})
@@ -84,39 +88,58 @@ class Neo4jClient:
     def _session(self):
         return self._driver.session(database=self._database)
 
-    @lru_cache(maxsize=1)
     def _supports_vector_search_clause(self) -> bool:
-        """Return whether the connected server supports Cypher 25 ``SEARCH``.
-
-        ``db.index.vector.queryNodes`` is deprecated from Neo4j 2026.04.  The
-        replacement was introduced in 2026.01 and is Cypher-25-only.  Keep the
-        procedure fallback for Neo4j 5.x / 2025.x deployments so the MCP image
-        remains backwards compatible.
-        """
+        """判断当前 Neo4j 是否支持 Cypher 25 ``SEARCH``。"""
+        cached = getattr(self, "_supports_search_clause_cache", None)
+        if cached is not None:
+            return cached
         try:
             info = self._driver.get_server_info()
             match = re.search(r"(?:Neo4j/)?(\d{4})\.(\d{1,2})", info.agent or "")
-            return bool(match and (int(match.group(1)), int(match.group(2))) >= (2026, 1))
+            supported = bool(match and (int(match.group(1)), int(match.group(2))) >= (2026, 1))
         except Exception:
-            return False
+            supported = False
+        self._supports_search_clause_cache = supported
+        return supported
 
     def find_vector_index_name(self, label: str) -> str | None:
-        with self._session() as s:
+        indexes = getattr(self, "_vector_index_names_cache", None)
+        if indexes is None:
+            indexes = {}
             try:
-                for rec in s.run("SHOW VECTOR INDEXES YIELD name, labelsOrTypes"):
-                    labels = rec["labelsOrTypes"]
-                    if labels and label in labels:
-                        return rec["name"]
+                with self._session() as s:
+                    records = list(s.run("SHOW VECTOR INDEXES YIELD name, labelsOrTypes"))
+                for rec in records:
+                    for indexed_label in rec["labelsOrTypes"] or []:
+                        indexes.setdefault(indexed_label, rec["name"])
             except Exception:
-                return None
-        return None
+                pass
+            self._vector_index_names_cache = indexes
+        return indexes.get(label)
+
+    def find_fulltext_index_name(self, label: str) -> str | None:
+        indexes = getattr(self, "_fulltext_index_names_cache", None)
+        if indexes is None:
+            indexes = {}
+            try:
+                with self._session() as s:
+                    records = list(s.run(
+                        "SHOW FULLTEXT INDEXES YIELD name, labelsOrTypes, properties"
+                    ))
+                for rec in records:
+                    if "search_text" not in (rec["properties"] or []):
+                        continue
+                    for indexed_label in rec["labelsOrTypes"] or []:
+                        indexes.setdefault(indexed_label, rec["name"])
+            except Exception:
+                pass
+            self._fulltext_index_names_cache = indexes
+        return indexes.get(label)
 
     def search_vector_index(self, index_name: str, label: str, embedding: list[float], top_k: int) -> list[dict]:
         esc = label.replace("`", "``")
         if self._supports_vector_search_clause():
-            # SEARCH requires the index name to be an identifier, not a
-            # parameter.  It comes from SHOW VECTOR INDEXES; still escape it as
-            # a Cypher identifier before interpolation.
+            # SEARCH 的索引名必须写成标识符；名称来自 SHOW VECTOR INDEXES，插入前仍需转义。
             esc_index = index_name.replace("`", "``")
             cypher = (
                 f"CYPHER 25 MATCH (node:`{esc}`) "
@@ -143,57 +166,97 @@ class Neo4jClient:
         except Exception:
             return []
 
-    def fetch_graph_context(self, label: str, node_id: str, relationships: list[dict]) -> dict:
-        """Port of retrieve.js fetchGraphContext (402-485). 沿库里已有边扩展，
-        不再读 match / source_field。失败按 per-rel continue。"""
-        context: dict[str, Any] = {}
+    def search_fulltext_index(
+        self, index_name: str, label: str, question: str, top_k: int,
+    ) -> list[dict]:
+        esc_label = label.replace("`", "``")
+        cypher = (
+            "CALL db.index.fulltext.queryNodes("
+            "$indexName, $question, {limit: $topK}) "
+            "YIELD node, score "
+            f"WHERE node:`{esc_label}` "
+            "RETURN elementId(node) AS id, score, properties(node) AS properties "
+            "ORDER BY score DESC"
+        )
+        try:
+            with self._session() as s:
+                return [{"id": r["id"], "score": r["score"], "properties": dict(r["properties"])}
+                        for r in s.run(
+                            cypher,
+                            indexName=index_name,
+                            question=_escape_lucene_query(question),
+                            topK=top_k,
+                        )]
+        except Exception:
+            return []
 
-        relevant = [rel for rel in relationships if rel.get("from") == label or rel.get("to") == label]
+    def fetch_graph_context_batch(
+        self, hits: list[dict[str, Any]], relationships: list[dict],
+    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        """按关系方向批量扩展图上下文，并限制每个命中的邻居数量。"""
+        contexts: dict[str, dict[str, list[dict[str, Any]]]] = {
+            hit["id"]: {} for hit in hits
+        }
+        ids_by_label: dict[str, list[str]] = defaultdict(list)
+        for hit in hits:
+            ids_by_label[hit["label"]].append(hit["id"])
 
-        for rel in relevant:
+        def expand(node_ids: list[str], rel_pattern: str, other_label: str, *, self_loop: bool) -> None:
+            if not node_ids:
+                return
+            esc_other = other_label.replace("`", "``")
+            self_exclude = " AND elementId(other) <> elementId(n)" if self_loop else ""
+            cypher = (
+                f"MATCH (n){rel_pattern}(other:`{esc_other}`) "
+                f"WHERE elementId(n) IN $nodeIds{self_exclude} "
+                "RETURN elementId(n) AS nodeId, properties(other) AS props"
+            )
             try:
-                is_from = rel.get("from") == label
-                is_to = rel.get("to") == label
-                other_label = rel.get("to") if is_from else rel.get("from")
-                if not other_label:
-                    continue
-
-                esc_other = other_label.replace("`", "``")
-                esc_rel_type = (rel.get("type") or "").replace("`", "``")
-
-                # 自环走无向；否则按 from/to 判方向
-                if is_from and is_to:
-                    rel_pattern = f"-[:`{esc_rel_type}`]-"
-                elif is_from:
-                    rel_pattern = f"-[:`{esc_rel_type}`]->"
-                else:
-                    rel_pattern = f"<-[:`{esc_rel_type}`]-"
-
-                # 自环时排除起点自身
-                self_exclude = " AND elementId(other) <> $nodeId" if other_label == label else ""
-
-                cypher = (
-                    f"MATCH (n){rel_pattern}(other:`{esc_other}`) "
-                    f"WHERE elementId(n) = $nodeId{self_exclude} "
-                    "RETURN properties(other) AS props "
-                    "LIMIT 20"
-                )
-
                 with self._session() as s:
-                    records = list(s.run(cypher, nodeId=node_id))
-
-                if not records:
-                    continue
-
-                context.setdefault(other_label, [])
-                for rec in records:
-                    props = _clean_properties(dict(rec["props"]))
-                    context[other_label].append(props)
+                    records = list(s.run(cypher, nodeIds=node_ids))
             except Exception:
-                # 对齐 retrieve.js：单条关系失败不影响其余扩展
-                continue
+                return
+            for rec in records:
+                bucket = contexts.get(rec["nodeId"])
+                if bucket is None:
+                    continue
+                values = bucket.setdefault(other_label, [])
+                if len(values) < 20:
+                    values.append(_clean_properties(dict(rec["props"])))
 
-        return context
+        for rel in relationships:
+            from_label = rel.get("from")
+            to_label = rel.get("to")
+            rel_type = (rel.get("type") or "").replace("`", "``")
+            if not from_label or not to_label or not rel_type:
+                continue
+            if from_label == to_label:
+                expand(
+                    ids_by_label.get(from_label, []),
+                    f"-[:`{rel_type}`]-",
+                    to_label,
+                    self_loop=True,
+                )
+            else:
+                expand(
+                    ids_by_label.get(from_label, []),
+                    f"-[:`{rel_type}`]->",
+                    to_label,
+                    self_loop=False,
+                )
+                expand(
+                    ids_by_label.get(to_label, []),
+                    f"<-[:`{rel_type}`]-",
+                    from_label,
+                    self_loop=False,
+                )
+        return contexts
+
+    def fetch_graph_context(self, label: str, node_id: str, relationships: list[dict]) -> dict:
+        """沿图中已有关系扩展单个节点的上下文。"""
+        return self.fetch_graph_context_batch(
+            [{"id": node_id, "label": label}], relationships,
+        ).get(node_id, {})
 
     def execute(self, cypher: str, **params) -> None:
         """通用写/DDL 执行（MERGE/SET/CREATE/CLEAR）。无返回。"""
@@ -217,9 +280,106 @@ class Neo4jClient:
             return rows
 
 
-def search(question: str, top_k: int = 5, targets: list[str] | None = None) -> dict[str, Any]:
+def _fuse_ranked_sources(
+    ranked_sources: list[tuple[str, str, float, list[dict[str, Any]]]],
+    *,
+    rrf_k: int = 60,
+) -> list[dict[str, Any]]:
+    """用加权 RRF 融合各实体类型的向量、全文和精确命中结果。"""
+    fused: dict[str, dict[str, Any]] = {}
+    for source_kind, label, weight, hits in ranked_sources:
+        for rank, hit in enumerate(hits, start=1):
+            item = fused.setdefault(hit["id"], {
+                "id": hit["id"],
+                "label": label,
+                "properties": hit["properties"],
+                "fusion_score": 0.0,
+                "vector_score": None,
+                "fulltext_score": None,
+                "exact_match": None,
+                "vector_rank": None,
+                "lexical_rank": None,
+                "exact_rank": None,
+                "matched_sources": 0,
+            })
+            item["fusion_score"] += weight / (rrf_k + rank)
+            item["matched_sources"] += 1
+            if source_kind == "vector":
+                item["vector_score"] = hit["score"]
+                item["vector_rank"] = rank
+            elif source_kind == "fulltext":
+                item["fulltext_score"] = hit["score"]
+                item["lexical_rank"] = rank
+            else:
+                item["exact_match"] = hit.get("exact_match")
+                item["exact_rank"] = rank
+
+    def sort_key(item: dict[str, Any]):
+        ranks = [r for r in (
+            item["vector_rank"], item["lexical_rank"], item["exact_rank"],
+        ) if r is not None]
+        return (
+            item["fusion_score"],
+            item["matched_sources"],
+            -(min(ranks) if ranks else 10**9),
+            item["vector_score"] or 0.0,
+        )
+
+    return sorted(fused.values(), key=sort_key, reverse=True)
+
+
+def _exact_property_hits(
+    question: str, hits: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """按问题中出现的受治理 ID、名称和别名对候选排序。
+
+    不检查定义等长文本，避免因提到其他实体而获得错误加权。
+    """
+    normalized_question = question.casefold()
+    ranked: list[tuple[int, dict[str, Any], str]] = []
+    seen: set[str] = set()
+    for hit in hits:
+        if hit["id"] in seen:
+            continue
+        seen.add(hit["id"])
+        matches: list[str] = []
+        for key, raw_value in _clean_properties(hit.get("properties", {})).items():
+            key_folded = key.casefold()
+            is_identity_field = (
+                key.endswith("ID")
+                or "名称" in key
+                or "别名" in key
+                or key_folded.endswith("id")
+                or key_folded.endswith("name")
+                or "alias" in key_folded
+            )
+            if not is_identity_field:
+                continue
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                value = value.strip()
+                if 2 <= len(value) <= 80 and value.casefold() in normalized_question:
+                    matches.append(value)
+        if matches:
+            best = max(matches, key=len)
+            ranked.append((len(best), hit, best))
+    ranked.sort(key=lambda row: row[0], reverse=True)
+    return [{**hit, "exact_match": matched, "score": float(length)}
+            for length, hit, matched in ranked]
+
+
+def search(
+    question: str,
+    top_k: int = 5,
+    targets: list[str] | None = None,
+    strategy: str = "hybrid",
+) -> dict[str, Any]:
     if not isinstance(question, str) or not question.strip():
         raise ValidationError("question 不能为空")
+    if strategy not in ("vector", "hybrid"):
+        raise ValidationError("strategy 必须是 vector|hybrid")
     gc = load_config().get("graph-config", {})
     entities = gc.get("entities") or {}
     relationships = gc.get("relationships") or []
@@ -228,21 +388,61 @@ def search(question: str, top_k: int = 5, targets: list[str] | None = None) -> d
     embedding_vec = embed(question)
     client = Neo4jClient()
     try:
-        all_results = []
+        ranked_sources: list[tuple[str, str, float, list[dict[str, Any]]]] = []
+        vector_results: list[dict[str, Any]] = []
+        source_k = top_k * 2 if strategy == "hybrid" else top_k
         for label in target_labels:
             index_name = client.find_vector_index_name(label)
             if not index_name:
                 continue
-            for hit in client.search_vector_index(index_name, label, embedding_vec, top_k):
-                context = client.fetch_graph_context(label, hit["id"], relationships) if relationships else {}
-                all_results.append({
-                    "label": label,
-                    "score": hit["score"],
-                    "properties": _clean_properties(dict(hit["properties"])),
-                    "context": context,
-                })
-        all_results.sort(key=lambda x: x["score"], reverse=True)
-        return {"question": question, "results": all_results}
+            hits = client.search_vector_index(index_name, label, embedding_vec, source_k)
+            for hit in hits:
+                hit["label"] = label
+            if strategy == "vector":
+                vector_results.extend(hits)
+            else:
+                ranked_sources.append(("vector", label, 1.0, hits))
+                fulltext_name = client.find_fulltext_index_name(label)
+                if fulltext_name:
+                    lexical_hits = client.search_fulltext_index(
+                        fulltext_name, label, question, source_k,
+                    )
+                    ranked_sources.append(("fulltext", label, 1.0, lexical_hits))
+                exact_hits = _exact_property_hits(question, hits + (lexical_hits if fulltext_name else []))
+                if exact_hits:
+                    ranked_sources.append(("exact", label, 1.2, exact_hits))
+
+        if strategy == "vector":
+            candidates = sorted(vector_results, key=lambda x: x["score"], reverse=True)
+        else:
+            candidates = _fuse_ranked_sources(ranked_sources)[:top_k]
+
+        contexts = (
+            client.fetch_graph_context_batch(candidates, relationships)
+            if relationships and candidates else {}
+        )
+        results = []
+        for hit in candidates:
+            result = {
+                "label": hit["label"],
+                # score 保持表示向量相似度；仅由全文召回的结果记为 0。
+                "score": hit.get("vector_score", hit.get("score")) or 0.0,
+                "properties": _clean_properties(dict(hit["properties"])),
+                "context": contexts.get(hit["id"], {}),
+            }
+            if strategy == "hybrid":
+                result["retrieval"] = {
+                    "strategy": "hybrid_rrf",
+                    "fusion_score": hit["fusion_score"],
+                    "vector_score": hit["vector_score"],
+                    "fulltext_score": hit["fulltext_score"],
+                    "exact_match": hit["exact_match"],
+                    "vector_rank": hit["vector_rank"],
+                    "lexical_rank": hit["lexical_rank"],
+                    "exact_rank": hit["exact_rank"],
+                }
+            results.append(result)
+        return {"question": question, "strategy": strategy, "results": results}
     finally:
         client.close()
 

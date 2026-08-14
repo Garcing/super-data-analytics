@@ -64,9 +64,11 @@ def test_skill_error_becomes_is_error(monkeypatch):
 
 def test_retrieve_search(monkeypatch):
     monkeypatch.setattr(retrieve_tools, "_search",
-                        lambda question, top_k=5, targets=None: {"question": question, "results": []})
+                        lambda question, top_k=5, targets=None, strategy="vector":
+                        {"question": question, "strategy": strategy, "results": []})
     sc, err, _ = _call("retrieve_search", {"params": {"question": "Q"}})
     assert sc["results"] == []
+    assert sc["strategy"] == "hybrid"
 
 
 def test_contribute(monkeypatch):

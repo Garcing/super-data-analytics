@@ -1,5 +1,5 @@
 """语义检索工具（retrieving_context 内核）→ MCP 工具。"""
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,8 +11,17 @@ from sda_mcp.tools._common import mcp
 
 class SearchIn(BaseModel):
     question: str = Field(..., min_length=1, description="自然语言问题")
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="hybrid 返回融合后的全局 top_k；vector 保持每个目标索引 top_k",
+    )
     targets: list[str] | None = Field(default=None, description="限定实体标签")
+    strategy: Literal["vector", "hybrid"] = Field(
+        default="hybrid",
+        description="hybrid=默认的向量+CJK全文+RRF融合；vector=兼容的纯向量回退",
+    )
 
 
 class CypherIn(BaseModel):
@@ -30,25 +39,25 @@ class DocUpdateIn(BaseModel):
 
 @mcp.tool(name="retrieve_search")
 def retrieve_search(params: SearchIn) -> dict[str, Any]:
-    """向量检索语义层 + 图扩展上下文。readOnly。"""
-    return _search(params.question, params.top_k, params.targets)
+    """检索语义层并扩展图上下文；支持纯向量或 Hybrid RRF。只读。"""
+    return _search(params.question, params.top_k, params.targets, params.strategy)
 
 
 @mcp.tool(name="retrieve_cypher")
 def retrieve_cypher(params: CypherIn) -> dict[str, Any]:
-    """直接跑 Cypher（可能写库）。destructive。"""
+    """直接执行 Cypher，可能修改数据库。"""
     return _cypher(params.statement)
 
 
 @mcp.tool(name="retrieve_schema")
 def retrieve_schema() -> dict[str, Any]:
-    """返回图 schema（实体/关系/embedding 配置）。readOnly。"""
+    """返回图 schema，包括实体、关系和 embedding 配置。只读。"""
     return _schema()
 
 
 @mcp.tool(name="retrieve_doc_read")
 def retrieve_doc_read(params: DocIn) -> dict[str, Any]:
-    """读取飞书文档为 markdown。readOnly。"""
+    """读取飞书文档并返回 Markdown。只读。"""
     return _doc(params.doc)
 
 
@@ -66,6 +75,6 @@ class SyncIn(BaseModel):
 
 @mcp.tool(name="sync")
 def sync(params: SyncIn) -> dict[str, Any]:
-    """同步飞书多维表 → Neo4j → ONNX 向量（首次或刷新语义层数据）。destructive。"""
+    """同步飞书多维表、Neo4j 图和 ONNX 向量，会修改数据库。"""
     from sda_mcp.skills.retrieving_context_sync import sync_graph
     return sync_graph(params.only, params.dry_run, params.force_embed)
