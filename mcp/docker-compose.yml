@@ -11,5 +11,4 @@ services:
       SDA_CONFIG_PATH: /root/.super-data-analytics/config.json
     volumes:
       - ${HOME}/.super-data-analytics/config.json:/root/.super-data-analytics/config.json:ro
-      # 飞书走开放平台 REST（FEISHU_APP_ID/SECRET 在 config.json），不再挂 lark-cli 密钥链
     restart: unless-stopped
