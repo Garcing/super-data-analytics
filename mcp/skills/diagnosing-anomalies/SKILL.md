@@ -48,7 +48,7 @@ metadata:
 
 | 工具 | 输入指引 | 输出指引 |
 |---|---|---|
-| `contribute` | `method: "add"\|"multiply"\|"ratio"` 必填；`payload: dict` 必填，结构随 method：**add** `{baseline_total: float=0, current_total: float=0, items: [{name?: str（缺省 `item_N`）, baseline: float 必填, current: float 必填}]}`（items 非空数组必填）；**multiply** `{factors: [{name?: str（缺省 `factor_N`）, baseline: float 必填且 >0, current: float 必填且 >0}]}`（factors 非空必填，总体=各因子连乘自动得出）；**ratio** `{groups: [{name?: str（缺省 `group_N`）, baseline_numerator: float, baseline_denominator: float>0, current_numerator: float, current_denominator: float>0}]}`（groups 非空必填，四数字字段均必填，总体率值自动加总得出）。数字字段传 bool 或非数字会校验报错 | `{summary, rows, checks}`：summary 含 `baseline_total/current_total/delta/relative_change`（relative_change 基线为 0 时 null）；rows 每行含 `contribution_value`（贡献量）、`contribution_share`（贡献率 Vi/ΔY，可超 100% 或为负）、`relative_contribution`（相对贡献 Vi/Y0）、`direction`（同向解释/反向抵消/无明显贡献），multiply 另有 `factor_ratio/log_delta/log_contribution_share`，ratio 另有 `baseline_rate/current_rate/baseline_weight/current_weight/within_contribution/mix_contribution/interaction_contribution`；checks 含 `sum_contribution/residual/warnings`。**先看 checks**：residual≈0 且 warnings 空才可信，再按 contribution_value 绝对值排序解读 |
+| `contribute` | `method: "add"\|"multiply"\|"ratio"` 必填；`payload: dict` 必填，结构随 method：**add** `{baseline_total: float=0, current_total: float=0, items: [{name?: str（缺省 `item_N`）, baseline: float 必填, current: float 必填}]}`（items 非空数组必填）；**multiply** `{factors: [{name?: str（缺省 `factor_N`）, baseline: float 必填且 >0, current: float 必填且 >0}]}`（factors 非空必填，总体=各因子连乘自动得出）；**ratio** `{groups: [{name?: str（缺省 `group_N`）, baseline_numerator: float, baseline_denominator: float>0, current_numerator: float, current_denominator: float>0}]}`（groups 非空必填，四数字字段均必填，总体率值自动加总得出）。数字字段传 bool 或非数字会校验报错 | `{summary, rows, checks}`：summary 含 `baseline_total/current_total/delta/relative_change`（relative_change 基线为 0 时 null）；rows 每行含 `contribution_value`（贡献量）、`contribution_share`（贡献率 Vi/ΔY，可超 100% 或为负）、`relative_contribution`（相对贡献 Vi/Y0）、`direction`（同向解释/反向抵消/无明显贡献/总变化接近0方向不解释），multiply 另有 `factor_ratio/log_delta/log_contribution_share`，ratio 另有 `baseline_rate/current_rate/baseline_weight/current_weight/within_contribution/mix_contribution/interaction_contribution`；checks 含 `sum_contribution/residual/warnings`。**先看 checks**：residual≈0 且 warnings 空才可信，再按 contribution_value 绝对值排序解读 |
 
 ## 调用示例
 
@@ -73,7 +73,7 @@ metadata:
 - **两期口径必须一致**：过滤条件、粒度、完整度任一不同则归因失真；口径拿不准先 `retrieve_search` 对齐，字段拿不准先 `sql_schema`。
 - **比率指标不能直接用 add**：拆分子分母各自的差值不等于率值变化的分解，必须用 `ratio`。
 - **multiply 拒绝 0/负值**：log 拆解要求全部因子为正；有 0 值需业务认可的平滑处理或换方法。
-- **checks 不过先修数据**：residual 显著非 0 或有 warnings，说明分项不互斥/不完整或方法选错，先补全分组再解读，不要硬讲结论。
+- **checks 不过先修数据**：residual 显著非 0 或有 warnings，说明分项不互斥/不完整或方法选错，先补全分组再解读，不要硬讲结论。例外：multiply 在总体对数变化≈0 时（各因子一涨一跌相抵），贡献置 0、residual=总变化且必带 warning——这是方法的边界情形，不是数据错误。
 - **贡献度 ≠ 因果**："贡献最大"要写成"已验证/较可能/待验证"，需独立证据（实验、事件、发布记录）才能说根因。
 - 报告数字要给基数和影响量，不要只给百分比；贡献率（占 ΔY）与相对贡献（占 Y0）不要混用。
 - 贡献值合计约等于总变化（残差≈0）时也应说明未解释部分与置信度，长尾维度不必穷尽下钻。
