@@ -35,7 +35,7 @@
 └─────────────────────────┬──────────────────────────────────┘
                 VPN(tun0) │                  │ HTTPS
                            ▼                  ▼
-          Hologres(内网)        Vercel Blob / apimart / Power BI / 飞书
+          Hologres(内网)        Vercel Blob / 火山方舟 / Power BI / 飞书
 ```
 
 **两条接入路径，同一 Bearer token：**
@@ -71,13 +71,26 @@ hermes 最终看到 `mcp_sda_<工具名>`；本机 Claude 看到 `mcp__sda__<工
 | **分析** | `contribute` / `forecast` / `impact` | 贡献度归因 / 时序预测 / 效果评估（AB/DID/ROI）|
 | **可视化** | `chart` | matplotlib 渲染 → ImageContent + Blob URL |
 | **报告** | `report_html_publish` / `_list` / `_get` / `_delete` | HTML 报告（Vercel Blob，索引乐观锁）|
-| | `report_image_generate` | apimart gpt-image-2 异步生图（最长 180s）|
+| | `report_image_generate` | 火山方舟 Seedream 单图生成；默认返回下载 URL，可选 MCP 图片块 |
 
 > 报告模板已并入语义层：模板是「报告模板」多维表里的行（`retrieve_search`/`retrieve_cypher` 发现），正文在链接的 docx（`retrieve_doc_read` 读、`retrieve_doc_update` 改）。不再单列模板工具组。
 
-> `report_image_generate` 在**服务器无代理时不可用**（apimart 不通）；本机走代理可用。其余 23 个服务器全可用。
+> `report_image_generate` 走火山方舟。旧 `building-reports` Node CLI 不在 MCP 升级范围内。
 
-### 2.1 GraphRAG 检索架构（维护重点）
+### 2.1 图片报告生成契约
+
+`report_image_generate` 保持工具名稳定，但 provider 默认改为火山方舟图片生成 API：
+
+- 单次同步 HTTP 请求，不暴露后台 `task_id/status` 轮询语义。
+- 默认 `response_format=url`，结构化结果直接返回方舟提供的 JPEG 下载 URL，不上传 Vercel Blob。
+- 调用 Agent 可显式选择 `response_format=b64_json`；服务端将 Base64 解码成 MCP `ImageContent`，不会把大段 Base64 放进结构化结果。
+- 首版不发送 `stream` 和 `sequential_image_generation`，使用 API 默认的非流式单图语义，兼容 Seedream 5.0 Pro。
+- `model` 可传 Model ID 或 Endpoint ID；不传时读取 `VOLCENGINE_ARK_IMAGE_MODEL`，因此兼容协议内的新模型只需改配置。
+- 图片生成 POST 不自动重试，避免响应丢失后重复生成和计费。
+
+**真实冒烟基线（2026-08-14）**：`doubao-seedream-5-0-pro-260628`、`size=2K`、`response_format=url`、提示词指定 3:4，成功返回 `1776x2368` JPEG；耗时约 92 秒，`usage.generated_images=1`、`total_tokens=16428`。返回的 TOS 签名 URL 本次带 `X-Tos-Expires=86400`（24 小时），调用方应在有效期内下载保存。测试图的中文 KPI、8 个趋势数值和结论均核对正确；全程未上传 Vercel Blob。
+
+### 2.2 GraphRAG 检索架构（维护重点）
 
 当前语义检索是一套面向受治理元数据的轻量 Hybrid GraphRAG：使用 Neo4j 2026 的原生索引和查询能力，保留本地 Fastembed，由 SDA 负责多实体路由、排序融合和图上下文组装。当前**没有**引入 `neo4j-graphrag` Python 包，也**没有**部署 Neo4j 官方 MCP Server。
 
@@ -331,7 +344,7 @@ python -m evals.benchmark_retrieval --strategy hybrid
 
 | 项 | 说明 |
 |---|---|
-| **apimart 生图** | 服务器直连 `api.apimart.ai` 超时（无代理）。`report_image_generate` 仅本机走代理可用。给容器加 `HTTPS_PROXY` 即可服务器启用。 |
+| **方舟图片 URL** | 真实冒烟返回的 TOS 签名 URL 有效期为 24 小时；需要长期保留时由调用方及时下载，不自动上传 Blob。 |
 | **HuggingFace 不通** | 服务器直连 HF 超时。Dockerfile 固化 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（否则 fastembed 拉模型/Xet 401 失败）。 |
 | **中国镜像** | Dockerfile 用 tuna apt/PyPI；否则构建从中国极慢/超时。 |
 | **飞书自建应用授权** | graph 多维表、`retrieve_doc_read` 目标文档、报告模板 docx（`retrieve_doc_update` 要写）须共享给应用（`tenant_access_token` = 应用身份）。凭证 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 在 config.json。 |
@@ -349,16 +362,28 @@ python -m evals.benchmark_retrieval --strategy hybrid
 
 | 块 | key |
 |---|---|
-| `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`APIMART_API_KEY`/`APIMART_BASE_URL`、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（自建应用，tenant token 鉴权）、`FEISHU_GRAPH_BITABLE_APP_TOKEN` |
+| `env` | `NEO4J_*`、`HOLOGRES_*`、`POWERBI_*`、`BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL`、`VOLCENGINE_ARK_API_KEY`、`VOLCENGINE_ARK_BASE_URL`、`VOLCENGINE_ARK_IMAGE_MODEL`、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（自建应用，tenant token 鉴权）、`FEISHU_GRAPH_BITABLE_APP_TOKEN` |
 | `graph-config` | `embedding.model`（`BAAI/bge-small-zh-v1.5`）、`entities`、`relationships` |
 
-缺必填 key → `ConfigError`（可操作提示）；可选 key（如 `APIMART_BASE_URL`）走 `load_config()` 不报错。
+图片生成配置示例：
+
+```json
+{
+  "env": {
+    "VOLCENGINE_ARK_API_KEY": "粘贴方舟 API Key",
+    "VOLCENGINE_ARK_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3",
+    "VOLCENGINE_ARK_IMAGE_MODEL": "doubao-seedream-5-0-pro-260628"
+  }
+}
+```
+
+缺必填 key → `ConfigError`（可操作提示）；base URL、默认模型等可选 key 走 `load_config()` 并使用代码默认值。
 
 ---
 
 ## 9. 开发
 
 - **铁律**：原 skill 目录树（`building-reports/`、`querying-data/` 等）**零改动**，作对照基准。所有新代码只在 `mcp/`。
-- 测试：`cd mcp && python -m pytest -q`（144 通过 + 7 集成 skip）。mock 单元测试 + 可选集成对照（`SDA_INTEGRATION=1`）。
+- 测试：`cd mcp && python -m pytest -q`（当前 157 通过 + 7 集成 skip）。mock 单元测试 + 可选集成对照（`SDA_INTEGRATION=1`）。
 - 计划/设计文档：`docs/superpowers/specs/2026-08-09-mcp-server-design.md`、`docs/superpowers/plans/2026-08-09-subproject-*.md`。
 - MCP 设计参考：`/mcp-builder` 技能（Anthropic 权威 MCP 手册）。

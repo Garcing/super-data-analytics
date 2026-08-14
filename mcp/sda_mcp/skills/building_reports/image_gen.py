@@ -1,205 +1,170 @@
-"""图片生成内核：apimart gpt-image-2 异步生成，移植 building-reports/scripts/image/image.js。
+"""火山方舟 Seedream 图片生成内核。
 
-异步三步：submit（拿 task_id）→ poll 到终态（completed/failed/cancelled）→ download 字节。
-generate 一键到底；submit/get_image_status 提供断点续跑。
-
-去 CLI/三态/{ok}/落盘（MCP 无共享磁盘，图片字节回内存）；返回 dataclass。
-失败抛 ConfigError(缺凭证)/ExternalAPIError(HTTP)/ValidationError(参数)。
+方舟图片生成是单次 HTTP 请求：请求直接返回最终图片 URL 或 Base64，
+没有后台 task_id/status 轮询接口。首版不发送组图/流式字段，不自动重试 POST。
 """
 from __future__ import annotations
 
-import time
+import base64
+import binascii
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
 from sda_mcp.config import get_env, load_config
-from sda_mcp.errors import ConfigError, ExternalAPIError, SkillTimeoutError, ValidationError
+from sda_mcp.errors import ExternalAPIError, ValidationError
 
-DEFAULT_BASE_URL = "https://api.apimart.ai/v1"
+ImageResponseFormat = Literal["url", "b64_json"]
+DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+DEFAULT_MODEL = "doubao-seedream-5-0-pro-260628"
 IMAGES_PATH = "/images/generations"
-POLL_INITIAL_DELAY_S = 12.0
-POLL_INTERVAL_S = 4.0
-POLL_TIMEOUT_S = 180.0
-TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-MODEL_DEFAULT = "gpt-image-2"
-VALID_MODELS = {"gpt-image-2", "gpt-image-2-official"}
-PARAM_MATRIX = {
-    "gpt-image-2": ["prompt", "model", "size", "resolution", "n", "image_urls", "official_fallback"],
-    "gpt-image-2-official": ["prompt", "model", "size", "resolution", "quality", "background",
-                             "moderation", "output_format", "output_compression", "n", "image_urls", "mask_url"],
-}
-_TIMEOUT = httpx.Timeout(60.0)
+VALID_RESPONSE_FORMATS = {"url", "b64_json"}
+_TIMEOUT = httpx.Timeout(300.0, connect=20.0)
 
 
 @dataclass
-class SubmitResult:
-    task_id: str
-    cost: float | None
-
-
-@dataclass
-class ImageResult:
-    url: str
-    data: bytes | None = None        # 下载后的字节（失败为 None）
+class GeneratedImage:
+    url: str | None = None
+    data: bytes | None = None
+    size: str | None = None
+    format: str = "jpeg"
     error: str | None = None
 
 
 @dataclass
-class ImageStatusResult:
-    task_id: str
-    status: str
-    cost: float | None = None
-    images: list[str] = field(default_factory=list)   # 图片 URL
-    error: str | None = None
+class ImageGenerationResult:
+    provider: str
+    model: str
+    response_format: ImageResponseFormat
+    status: str = "completed"
+    created: int | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = field(default_factory=dict)
+    images: list[GeneratedImage] = field(default_factory=list)
 
 
-@dataclass
-class ImageGenResult:
-    task_id: str
-    cost: float | None
-    status: str
-    images: list[ImageResult]
+def _env() -> dict[str, Any]:
+    return load_config().get("env", {}) or {}
 
 
 def build_request_body(prompt: str, **opts: Any) -> dict[str, Any]:
-    """按模型白名单构造请求体。移植 image.js buildRequestBody（纯函数）。"""
-    model = opts.get("model", MODEL_DEFAULT)
-    if model not in VALID_MODELS:
-        raise ValidationError(f"不支持的 model: {model}，可选: {' / '.join(sorted(VALID_MODELS))}")
-    if not isinstance(prompt, str) or not prompt:
-        raise ValidationError("prompt 必填且为字符串")
-    candidates = {
-        "prompt": prompt, "model": model,
-        "size": opts.get("size", "1:1"), "resolution": opts.get("resolution", "1k"),
-        "quality": opts.get("quality", "auto"), "background": opts.get("background", "auto"),
-        "moderation": opts.get("moderation", "auto"), "output_format": opts.get("output_format", "png"),
-        "output_compression": opts.get("output_compression"), "n": opts.get("n", 1),
-        "image_urls": opts.get("image_urls"), "mask_url": opts.get("mask_url"),
-        "official_fallback": opts.get("official_fallback"),
+    """构造方舟请求体；模型 ID 配置化，不使用硬编码枚举。"""
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValidationError("prompt 必填且为非空字符串")
+
+    env = _env()
+    model = str(opts.get("model") or env.get("VOLCENGINE_ARK_IMAGE_MODEL") or DEFAULT_MODEL).strip()
+    if not model:
+        raise ValidationError("model 不能为空")
+
+    response_format = str(opts.get("response_format") or "url").strip().lower()
+    if response_format not in VALID_RESPONSE_FORMATS:
+        raise ValidationError("response_format 仅支持 url 或 b64_json")
+
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt.strip(),
+        "size": opts.get("size") or "2K",
+        "response_format": response_format,
+        "watermark": bool(opts.get("watermark", False)),
     }
-    if model == "gpt-image-2" and candidates["n"] != 1:
-        raise ValidationError("gpt-image-2 模型只支持 n=1；如需多张请用 model='gpt-image-2-official'")
-    return {k: v for k in PARAM_MATRIX[model] if (v := candidates.get(k)) is not None}
+    if opts.get("seed") is not None:
+        body["seed"] = opts["seed"]
+    return body
+
+
+def _request_id(resp: httpx.Response) -> str | None:
+    return resp.headers.get("x-request-id") or resp.headers.get("x-tt-logid")
+
+
+def _decode_image(value: str) -> bytes:
+    raw = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ExternalAPIError("方舟返回了无效的 b64_json 图片数据") from exc
+
+
+def _image_format(data: bytes) -> str:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+    return "jpeg"
 
 
 class ImageClient:
     def __init__(self) -> None:
-        # APIMART_API_KEY 必填走 get_env；APIMART_BASE_URL 可选（缺省回退 DEFAULT_BASE_URL），
-        # 不能塞进 get_env（缺省会抛 ConfigError，使 DEFAULT_BASE_URL 回退变成死代码）。
-        env = get_env("APIMART_API_KEY")
-        self._api_key = env["APIMART_API_KEY"]
-        if not self._api_key:
-            raise ConfigError("APIMART_API_KEY 未配置")
-        cfg_env = load_config().get("env", {}) or {}
-        self._base_url = (cfg_env.get("APIMART_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self._api_key = get_env("VOLCENGINE_ARK_API_KEY")["VOLCENGINE_ARK_API_KEY"]
+        env = _env()
+        self._base_url = str(env.get("VOLCENGINE_ARK_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
 
-    def _headers(self, json_body: bool = False) -> dict[str, str]:
-        h = {"Authorization": f"Bearer {self._api_key}"}
-        if json_body:
-            h["Content-Type"] = "application/json"
-        return h
-
-    def submit(self, body: dict[str, Any]) -> tuple[str, Any]:
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.post(f"{self._base_url}{IMAGES_PATH}",
-                               headers=self._headers(json_body=True), json=body)
-        if resp.status_code == 401:
-            raise ExternalAPIError("APIMART_API_KEY 无效")
-        text = resp.text
-        if resp.status_code >= 400:
-            raise ExternalAPIError(f"提交失败 ({resp.status_code}): {text[:500]}")
+    def generate(self, body: dict[str, Any]) -> ImageGenerationResult:
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
         try:
-            data = resp.json()
+            with httpx.Client(timeout=_TIMEOUT) as client:
+                resp = client.post(f"{self._base_url}{IMAGES_PATH}", headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            raise ExternalAPIError(
+                "火山方舟图片生成请求超时；该 POST 不会自动重试，以免重复生成和计费"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ExternalAPIError(f"火山方舟连接失败: {exc}") from exc
+
+        request_id = _request_id(resp)
+        suffix = f" (request_id={request_id})" if request_id else ""
+        if resp.status_code in {401, 403}:
+            raise ExternalAPIError(
+                f"VOLCENGINE_ARK_API_KEY 无效或无模型权限 ({resp.status_code}){suffix}"
+            )
+        if resp.status_code == 429:
+            raise ExternalAPIError(f"火山方舟请求限流 (429)，请稍后重试{suffix}")
+        if resp.status_code >= 400:
+            raise ExternalAPIError(
+                f"火山方舟图片生成失败 ({resp.status_code}): {resp.text[:500]}{suffix}"
+            )
+        try:
+            payload = resp.json()
         except ValueError as exc:
-            raise ExternalAPIError(f"提交失败：响应非 JSON ({resp.status_code}): {text[:500]}") from exc
-        d = data.get("data")
-        task_id = d[0].get("task_id") if isinstance(d, list) else (d.get("task_id") if isinstance(d, dict) else None)
-        if not task_id:
-            raise ExternalAPIError(f"未返回 task_id: {str(data)[:500]}")
-        return task_id, data
+            raise ExternalAPIError(
+                f"火山方舟返回非 JSON 响应 ({resp.status_code}): {resp.text[:500]}{suffix}"
+            ) from exc
 
-    def get_status(self, task_id: str) -> dict[str, Any]:
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.get(f"{self._base_url}/tasks/{task_id}",
-                              headers=self._headers(), params={"language": "zh"})
-        if resp.status_code >= 400:
-            raise ExternalAPIError(f"查询任务失败 ({resp.status_code}): {resp.text[:500]}")
-        data = resp.json()
-        return data.get("data") or data
+        response_format: ImageResponseFormat = body["response_format"]
+        images: list[GeneratedImage] = []
+        for item in payload.get("data") or []:
+            if response_format == "url":
+                url = item.get("url")
+                if url:
+                    images.append(GeneratedImage(
+                        url=str(url),
+                        size=item.get("size"),
+                        format=str(item.get("output_format") or "jpeg").lower(),
+                    ))
+            else:
+                encoded = item.get("b64_json")
+                if encoded:
+                    data = _decode_image(str(encoded))
+                    images.append(
+                        GeneratedImage(data=data, size=item.get("size"), format=_image_format(data))
+                    )
+        if not images:
+            raise ExternalAPIError(f"火山方舟请求成功但未返回图片: {str(payload)[:500]}{suffix}")
 
-    def poll(self, task_id: str) -> tuple[str, dict[str, Any]]:
-        """轮询到终态或超时。移植 image.js pollUntilTerminal。"""
-        time.sleep(POLL_INITIAL_DELAY_S)
-        deadline = time.monotonic() + POLL_TIMEOUT_S
-        while True:
-            task_data = self.get_status(task_id)
-            status = task_data.get("status")
-            if status in TERMINAL_STATUSES:
-                return status, task_data
-            if time.monotonic() > deadline:
-                raise SkillTimeoutError(
-                    f"轮询超时 ({POLL_TIMEOUT_S:.0f}s)，task_id={task_id}，可手动复查: GET /v1/tasks/{task_id}")
-            time.sleep(POLL_INTERVAL_S)
-
-    @staticmethod
-    def _image_urls(task_data: dict[str, Any]) -> list[str]:
-        out = []
-        for im in (task_data.get("result") or {}).get("images") or []:
-            u = im.get("url")
-            if isinstance(u, list):
-                u = u[0] if u else None
-            if u:
-                out.append(u)
-        return out
-
-    def download(self, url: str) -> bytes:
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.get(url)
-        if resp.status_code >= 400:
-            raise ExternalAPIError(f"下载失败 ({resp.status_code}): {url}")
-        return resp.content
+        return ImageGenerationResult(
+            provider="volcengine",
+            model=str(payload.get("model") or body["model"]),
+            response_format=response_format,
+            created=payload.get("created"),
+            request_id=request_id,
+            usage=payload.get("usage") or {},
+            images=images,
+        )
 
 
-def submit_image(prompt: str, **opts: Any) -> SubmitResult:
-    body = build_request_body(prompt, **opts)
-    task_id, raw = ImageClient().submit(body)
-    d = raw.get("data")
-    cost = d[0].get("cost") if isinstance(d, list) else (d.get("cost") if isinstance(d, dict) else None)
-    return SubmitResult(task_id=task_id, cost=cost)
-
-
-def get_image_status(task_id: str) -> ImageStatusResult:
-    if not task_id:
-        raise ValidationError("task_id 不能为空")
-    client = ImageClient()
-    status, task_data = client.poll(task_id)
-    result = ImageStatusResult(task_id=task_id, status=status, cost=task_data.get("cost"))
-    if status == "completed":
-        result.images = client._image_urls(task_data)
-    else:
-        result.error = ((task_data.get("error") or {}).get("message")) or f"任务未完成: {status}"
-    return result
-
-
-def generate_image(prompt: str, **opts: Any) -> ImageGenResult:
-    body = build_request_body(prompt, **opts)
-    client = ImageClient()
-    task_id, _ = client.submit(body)
-    status, task_data = client.poll(task_id)
-    if status != "completed":
-        err = ((task_data.get("error") or {}).get("message")) or f"任务状态 {status}"
-        raise ExternalAPIError(f"图片生成失败: {err} (task_id={task_id})")
-    urls = client._image_urls(task_data)
-    if not urls:
-        raise ExternalAPIError(f"任务完成但无图片: {str(task_data)[:300]}")
-    images: list[ImageResult] = []
-    for u in urls:
-        entry = ImageResult(url=u)
-        try:
-            entry.data = client.download(u)
-        except ExternalAPIError as exc:
-            entry.error = str(exc)
-        images.append(entry)
-    return ImageGenResult(task_id=task_id, cost=task_data.get("cost"), status=status, images=images)
+def generate_image(prompt: str, **opts: Any) -> ImageGenerationResult:
+    return ImageClient().generate(build_request_body(prompt, **opts))

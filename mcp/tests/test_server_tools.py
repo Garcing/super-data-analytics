@@ -100,6 +100,56 @@ def test_report_publish(monkeypatch):
     assert sc["url"].endswith("/report/r1")
 
 
+def test_report_image_url_returns_structured_content(monkeypatch):
+    from sda_mcp.skills.building_reports.image_gen import (
+        GeneratedImage, ImageGenerationResult,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_gen",
+        lambda prompt, **opts: ImageGenerationResult(
+            provider="volcengine",
+            model="future-seedream",
+            response_format="url",
+            created=1780000000,
+            request_id="req-1",
+            usage={"generated_images": 1},
+            images=[GeneratedImage(url="https://img/a.jpeg", size="2048x2732")],
+        ),
+    )
+    sc, err, content = _call(
+        "report_image_generate",
+        {"params": {"prompt": "报告", "response_format": "url"}},
+    )
+    assert not err
+    assert sc["provider"] == "volcengine"
+    assert sc["images"][0]["url"] == "https://img/a.jpeg"
+    assert [getattr(block, "type", "") for block in content] == ["text"]
+
+
+def test_report_image_b64_returns_image_block(monkeypatch):
+    from sda_mcp.skills.building_reports.image_gen import (
+        GeneratedImage, ImageGenerationResult,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_gen",
+        lambda prompt, **opts: ImageGenerationResult(
+            provider="volcengine",
+            model="future-seedream",
+            response_format="b64_json",
+            images=[GeneratedImage(data=b"\x89PNG\r\n\x1a\n", format="png")],
+        ),
+    )
+    sc, err, content = _call(
+        "report_image_generate",
+        {"params": {"prompt": "报告", "response_format": "b64_json"}},
+    )
+    assert not err
+    assert sc["images"][0]["url"] is None
+    assert [getattr(block, "type", "") for block in content] == ["image", "text"]
+
+
 def test_retrieve_doc_update(monkeypatch):
     monkeypatch.setattr(retrieve_tools, "_update_doc",
                         lambda doc, content: {"updated": True, "document_id": doc})

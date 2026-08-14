@@ -22,7 +22,7 @@ class DataSourceError(SkillError):
 
 
 class ExternalAPIError(SkillError):
-    """外部 API 调用失败（apimart/Vercel Blob/Fabric）。"""
+    """外部 API 调用失败（火山方舟/Vercel Blob/Fabric）。"""
 
 
 class SkillTimeoutError(SkillError):
