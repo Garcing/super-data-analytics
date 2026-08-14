@@ -32,7 +32,7 @@ metadata:
 **不用**：
 - 只要一张**数值精确**的数据图表 → visualizing-data 的 `chart`（image 生成不保证坐标精确）。
 - 只要数字不要交付物 → querying-data 直接取数。
-- 要落飞书文档/多维表 → 走飞书相关技能（retrieve_doc_update）。
+- 要落飞书文档/多维表 → 走 retrieving-context 技能（其 `retrieve_doc_update` 可改 docx 正文）。
 
 ## 决策流程
 
@@ -57,7 +57,7 @@ metadata:
 | `report_html_list` | 无参数 | `{reports: [...]}` 索引条目 `{id, title, created_at, updated_at, summary, tags}`，最新在前 |
 | `report_html_get` | `id: str` 必填非空 | 报告完整 JSON（读改重发用）；找不到该 id 报错 |
 | `report_html_delete` | `id: str` 必填非空 | `{success, report_id}`。**destructive**：删除报告 JSON 并移出索引，不可恢复——删除前确认用户意图 |
-| `report_image_generate` | `prompt: str` 必填非空；`model?: str`（Model ID 或 Endpoint ID，缺省 config.json `VOLCENGINE_ARK_IMAGE_MODEL`）；`size?: str`（如 `"2K"` 或模型支持的 WxH，**比例要写进 prompt**如「3:4 竖版」，冒烟基线 2K+3:4 → 1776x2368）；`response_format: "url"（默认）\|"b64_json"`；`seed?: int`（-1..2^31-1）；`watermark: bool=false` | structuredContent `{provider, model, status, created, request_id, usage, images[{url, size, format, error}]}`。同步单图、**无轮询**；URL 含 `X-Tos-Expires=86400`（**24h 过期**，要留存立即下载）；失败/超时**不自动重试**（防重复计费）；耗时约 60-90s 正常。b64_json 时额外返回 MCP ImageContent 图片块（适合直接给用户看图）；url 适合转述/下载留存 |
+| `report_image_generate` | `prompt: str` 必填非空；`model?: str`（Model ID 或 Endpoint ID，缺省 config.json `VOLCENGINE_ARK_IMAGE_MODEL`）；`size?: str`（如 `"2K"` 或模型支持的 WxH，**比例要写进 prompt**如「3:4 竖版」，冒烟基线 2K+3:4 → 1776x2368）；`response_format: "url"（默认）\|"b64_json"`；`seed?: int`（-1..2^31-1）；`watermark: bool=false` | structuredContent `{provider, model, response_format, status, created, request_id, usage, images[{url, size, format, error}]}`。同步单图、**无轮询**；URL 含 `X-Tos-Expires=86400`（**24h 过期**，要留存立即下载）；失败/超时**不自动重试**（防重复计费）；耗时约 60-90s 正常。b64_json 时额外返回 MCP ImageContent 图片块（适合直接给用户看图）；url 适合转述/下载留存 |
 
 ## 调用示例
 
