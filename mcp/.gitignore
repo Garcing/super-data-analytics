@@ -5,3 +5,8 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# 本机冒烟产物（含 token/凭证，不进 git）
+.env
+.config-local.json
+.hologres-forwarder.py
