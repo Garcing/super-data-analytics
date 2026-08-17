@@ -9,6 +9,8 @@ metadata:
     owns: []
     uses:
       - retrieve_search
+      - retrieve_cypher
+      - retrieve_doc_read
       - sql_query
       - sql_schema
       - contribute
@@ -53,18 +55,18 @@ metadata:
 
 1. **轻重分流**：按上节判断直连还是编排。简单问题不进流程：能 inline 回答的不套链路，能一个技能解决的不串三个。最小必要技能集合是底线。
 
-2. **实体消歧**：模糊指标名先 `retrieve_search` 检索受治理定义（指标、维度、表关系），拿到口径后与用户确认再取数。消歧要点：
+2. **实体消歧**：模糊指标名先 `retrieve_search` 检索受治理定义（指标、维度、表关系），拿到口径后与用户确认再取数。命中指标后用 `retrieve_cypher` 精确取全量取数要素：**参与计算表（含表别名、`实现方式`、`SQL文档` 链接）、启用的表关系链、默认时间字段、计算表达式、常用维度**——语义表（`实现方式=sql_query`）还要用 `retrieve_doc_read` 读 SQL 文档最新正文。消歧要点：
    - **同名指标**：不同团队/阶段的同名概念含义不同，确认适用语境。
    - **时间粒度**：日/周/月、完整周期含义、时间字段与范围。
    - **过滤条件**：人群、渠道、排除项。
    - **权威来源**：受治理指标 > 受治理表 > 用户确认的 SQL/数据 > 原始探索；Power BI 不是默认来源。
    只有会实质改变结果的歧义才追问，一次只问最关键的阻塞问题。
 
-3. **SQL Spec 意识**：编排路径下取数前先写下查询规格（内部执行契约，不必展示给用户）：问题、指标 id 与口径、粒度与去重键、时间字段与范围、分组/筛选维度、参与表与 JOIN、输出列。所有 JOIN 严格来自语义层的启用关系链，不猜字段不猜 JOIN。
+3. **SQL Spec 意识**：编排路径下取数前先写下查询规格（内部执行契约，不必展示给用户）：问题、指标 id 与口径、粒度与去重键、时间字段与范围、分组/筛选维度、参与表（物理表写表名、语义表写别名+SQL 文档来源）与 JOIN、输出列。所有 JOIN 严格来自语义层的启用关系链，不猜字段不猜 JOIN。语义表按 querying-data 的「CTE 组装规则」嵌入，保留文档业务逻辑。
 
 4. **串联顺序**：
    ```text
-   retrieving-context → querying-data → 分析三选一
+   retrieving-context（含语义表 SQL 文档读取）→ querying-data → 分析三选一
    （diagnosing-anomalies / predicting-trends / evaluating-impact）
    → visualizing-data → building-reports → validating-analyses 质检 → 交付
    ```

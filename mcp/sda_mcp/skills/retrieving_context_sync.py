@@ -67,10 +67,11 @@ def fetch_table_fields(app_token: str, table_id: str) -> list[dict]:
 
 
 def _join_text(runs: Any) -> Any:
-    """text/公式(文本)/lookup(文本)/url 值 → 拼接字符串；空→None。
+    """text/公式(文本)/lookup(文本) 值 → 拼接字符串；空→None。
 
-    支持形态：纯串（含 \\n 多行）、单段 dict（{text,...}，如 url {text,link}）、
+    支持形态：纯串（含 \\n 多行）、单段 dict（{text,...}）、
     片段数组 [{text,...}]（多段/多行，逐段拼接，内嵌 \\n 保留）。
+    url 字段不走这里（link 会丢），见 _join_url。
     """
     if isinstance(runs, str):
         return runs.strip() or None
@@ -80,6 +81,29 @@ def _join_text(runs: Any) -> Any:
         parts = [r.get("text", "") if isinstance(r, dict) else str(r) for r in runs]
         return "".join(parts).strip() or None
     return runs
+
+
+def _join_url(runs: Any) -> str | None:
+    """Url 字段值 → "显示文本\\nURL"（保留 link，如 SQL文档 字段 agent 靠 URL 读文档）；空→None。
+
+    支持形态与 _join_text 一致：{text,link} 裸 dict、[{text,link}] 片段数组、纯串。
+    text 与 link 均为空才过滤；只有 link 时仅返回 link。
+    """
+    def one(seg: Any) -> str | None:
+        if isinstance(seg, dict):
+            text = (seg.get("text") or "").strip()
+            link = (seg.get("link") or "").strip()
+            if text and link:
+                return f"{text}\n{link}"
+            return text or link or None
+        if isinstance(seg, str):
+            return seg.strip() or None
+        return None
+
+    if isinstance(runs, list):
+        parts = [p for p in (one(r) for r in runs) if p]
+        return "\n".join(parts) or None
+    return one(runs)
 
 
 def _opt_to_str(v: Any) -> Any:
@@ -218,7 +242,7 @@ def _simplify_value(field_type: int, value: Any, *,
             value = value[0]
         return value  # bool 原样（Neo4j 原生支持）
     if field_type == _F_URL:
-        return _join_text(value)
+        return _join_url(value)
     if field_type in _UNSUPPORTED:
         return f"（{_UNSUPPORTED[field_type]}字段，暂不支持取值）"
     if isinstance(value, str):

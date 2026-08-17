@@ -167,16 +167,20 @@ def test_simplify_formula_wrapper_number_unwraps_single_list():
     assert s._simplify_formula({"type": _F_NUMBER, "value": [12.5]}, None, None) == 12.5
 
 
-def test_simplify_value_url_field_flattens_to_text():
+def test_simplify_value_url_field_keeps_text_and_link():
     """Url(15) 字段开放平台返回 {text, link} 裸 dict（单值）或 [{text,link}]，
-    须拍平成可读 text 串，否则 dict 写进 Neo4j 报 Map 类型错（线上 sync 实踩）。"""
+    须拍平成 str 且**保留 link**（如 SQL文档 字段，agent 靠 URL 才能读到文档正文）。
+    格式：显示文本与 URL 以换行分隔；dict 直接写 Neo4j 会报 Map 类型错（线上 sync 实踩）。"""
     assert s._simplify_value(_F_URL, {"text": "link｜用户期数主链路事实表",
-                                      "link": "https://my.feishu.cn/docx/SaQ5"}) == "link｜用户期数主链路事实表"
-    # 片段数组形态同样拍平
+                                      "link": "https://my.feishu.cn/docx/SaQ5"}) == \
+        "link｜用户期数主链路事实表\nhttps://my.feishu.cn/docx/SaQ5"
+    # 片段数组形态：逐段拍平，段间换行
     assert s._simplify_value(_F_URL, [{"text": "a", "link": "u1"},
-                                      {"text": "b", "link": "u2"}]) == "ab"
-    # 空 text → None（过滤掉，不进图）
-    assert s._simplify_value(_F_URL, {"text": "", "link": "u"}) is None
+                                      {"text": "b", "link": "u2"}]) == "a\nu1\nb\nu2"
+    # 空 text 但有 link → 保留 link（URL 本身就是有用信息）
+    assert s._simplify_value(_F_URL, {"text": "", "link": "u"}) == "u"
+    # 两者皆空 → None（过滤掉，不进图）
+    assert s._simplify_value(_F_URL, {"text": "", "link": ""}) is None
 
 
 def test_simplify_value_unknown_type_dict_flattened():

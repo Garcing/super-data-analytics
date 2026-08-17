@@ -50,7 +50,8 @@
 
 | 类型 | 清洗 |
 |---|---|
-| Text / URL | `[{text}]` / `{text,link}` / 纯串 → 拼接字符串，换行保留 |
+| Text | `[{text}]` / `{text}` / 纯串 → 拼接字符串，换行保留 |
+| URL | `{text,link}` → `显示文本\nURL`（**保留 link**，如 `SQL文档` 字段 agent 靠 URL 读文档正文）；只有 link 时仅存 link |
 | Number | 开放平台返回**字符串**（"12.5"）→ int/float |
 | DateTime | ms 毫秒时间戳 → `YYYY-MM-DD HH:MM:SS`（+8 时区） |
 | Checkbox | bool 原样 |

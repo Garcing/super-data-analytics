@@ -39,8 +39,9 @@ metadata:
 1. **受治理指标先查口径再下数**：凡问题涉及指标、表、维度等语义层实体，必须先 `retrieve_search` 拿到受治理定义，禁止凭名称猜测口径或表归属。
 2. **默认 hybrid 检索**：`retrieve_search` 默认 `strategy="hybrid"`（向量 + CJK 全文 + 精确命中，WRRF 融合）。仅在诊断检索质量问题、需要 A/B 基线时回退 `strategy="vector"`。
 3. **需要图上精确遍历**（上下游依赖、层级展开、"X 下有哪些 Y"、计数）→ 先 `retrieve_schema` 拿实时结构，再写 Cypher 走 `retrieve_cypher`。
-4. **报告模板（原 using-templates 的替代）**：模板 = 语义层「报告模板」多维表里的行（用 `retrieve_search` / `retrieve_cypher` 发现元数据）+ 其链接的 docx 正文（`retrieve_doc_read` 读、`retrieve_doc_update` 改）。
-5. **检索为空 / schema 报图为空** → 图未建或已变更，跑 `sync`（详见 [references/sync-and-maintenance.md](references/sync-and-maintenance.md)）。
+4. **语义表与 SQL 文档（取数前的关键一步）**：命中的「表」实体看 `实现方式` 字段——值为 `sql_query` 时这是**语义表（逻辑表）**：库中没有同名物理表，其数据由飞书「SQL 文档」里的查询定义产生。`SQL文档` 字段值为「显示文本\n文档URL」（第二行是 docx 链接）→ 剥出 token 用 `retrieve_doc_read` 读正文，查询定义交给 querying-data 按 CTE 组装（组装规则见该技能）。`实现方式` 为其他值或缺省 → 按物理表处理。**别对语义表跑 `sql_schema`**——`relation does not exist` 是预期行为，不是数据缺失。
+5. **报告模板（原 using-templates 的替代）**：模板 = 语义层「报告模板」多维表里的行（用 `retrieve_search` / `retrieve_cypher` 发现元数据）+ 其链接的 docx 正文（`retrieve_doc_read` 读、`retrieve_doc_update` 改）。
+6. **检索为空 / schema 报图为空** → 图未建或已变更，跑 `sync`（详见 [references/sync-and-maintenance.md](references/sync-and-maintenance.md)）。
 
 ## 工具契约
 
