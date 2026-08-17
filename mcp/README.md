@@ -334,7 +334,7 @@ mcp.super-data-analytics.online {
 
 ### sync（语义层数据）
 首次部署后 Neo4j 是空的，**必须跑一次 `sync`** 才能检索：
-- `sync` 只保留 `dry_run` 参数，不再支持 `only` 或 `force_embed`；传入旧参数会直接校验失败，避免静默触发全量重建。
+- `sync` 只保留 `dry_run` 参数，不再支持 `only` 或 `force_embed`；工具入参平铺后未知键会被**静默忽略**（不再校验报错），拼错参数名（如 `dryrun`）会以 `dry_run=false` 执行——**sync 是破坏性全量重建**，调用前先核对工具 schema 只暴露 `dry_run`。
 - `dry_run=true`：拉取并校验全部飞书数据、主键完整性、配置、Fastembed 模型和 Neo4j 连接，不执行任何数据库写入。
 - `dry_run=false`（默认）：预检通过后，清空节点/关系、全部约束和所有非 `LOOKUP` 索引，再完整重建唯一约束、节点、关系、`search_text`、向量/全文索引和 embedding。
 - 可能失败的外部准备工作全部发生在清库前；飞书无记录、主键重复、模型不可用或 Neo4j 不可连接时会停止写库。空主键记录沿用跳过行为，并在结果的 `warnings` 中明确报告。
