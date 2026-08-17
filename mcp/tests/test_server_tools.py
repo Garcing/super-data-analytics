@@ -1,8 +1,11 @@
 """MCP 工具 in-memory 单测（Client(mcp)，mock 内核，不走 HTTP）。
 
-入参约定（实测 mcp 2.0.0 FastMCP v2）：当工具函数形参为单个 Pydantic BaseModel
-（形参名 `params`）时，in-memory client 调 call_tool 必须用 {"params": {...}} 包一层；
-平铺字段（如 {"sql": "..."}）会触发校验失败 → is_error。
+入参约定（实测 mcp 2.0.0 MCPServer/FastMCP v2）：工具函数签名平铺
+（每个字段是独立关键字参数，约束走 Annotated[..., Field(...)]），
+call_tool 直接传平铺字段（如 {"sql": "..."}）。
+
+注意：平铺签名下 SDK 的动态参数模型默认 extra="ignore"——
+未知键被静默丢弃（不报错），详见 test_sync_tool_schema。
 zero-arg 工具传空 dict {}。
 """
 import asyncio
@@ -40,11 +43,46 @@ def _call(name, args):
     return asyncio.run(_run())
 
 
+def _tools():
+    """同步包装：list_tools → {name: Tool}。"""
+    from mcp import Client
+    from sda_mcp.tools._common import mcp
+
+    async def _run():
+        async with Client(mcp) as client:
+            tools = (await client.list_tools()).tools
+            return {t.name: t for t in tools}
+    return asyncio.run(_run())
+
+
+def test_tool_schemas_are_flat():
+    """所有工具 input_schema 平铺：properties 不含 params 包装，字段直接展开。"""
+    tools = _tools()
+    assert len(tools) == 19
+    for name, tool in tools.items():
+        props = tool.input_schema.get("properties", {})
+        assert "params" not in props, f"{name} 仍有 params 包装"
+
+    rs = tools["retrieve_search"].input_schema["properties"]
+    assert set(rs) == {"question", "top_k", "targets", "strategy"}
+    # Annotated Field 约束保留（ge=1/le=20 → minimum/maximum）
+    assert rs["top_k"]["maximum"] == 20
+    assert rs["top_k"]["minimum"] == 1
+    assert rs["top_k"]["default"] == 5
+    assert rs["question"]["minLength"] == 1
+    # description 保留
+    assert "Hybrid" in rs["strategy"]["description"] or "hybrid" in rs["strategy"]["description"]
+
+    chart = tools["chart"].input_schema["properties"]
+    assert chart["dpi"]["minimum"] == 72 and chart["dpi"]["maximum"] == 300
+    assert chart["dpi"]["default"] == 144
+
+
 def test_sql_query_tool(monkeypatch):
     from sda_mcp.skills.querying_data import SqlResult
     monkeypatch.setattr(query_tools, "_sql_query",
                         lambda sql: SqlResult(columns=[{"name": "a"}], rows=[{"a": 1}], row_count=1))
-    sc, err, _ = _call("sql_query", {"params": {"sql": "SELECT 1"}})
+    sc, err, _ = _call("sql_query", {"sql": "SELECT 1"})
     assert not err
     assert sc["row_count"] == 1 and sc["columns"][0]["name"] == "a"
 
@@ -55,7 +93,7 @@ def test_skill_error_becomes_is_error(monkeypatch):
     def _boom(sql):
         raise DataSourceError("连不上 Hologres（检查 VPN）")
     monkeypatch.setattr(query_tools, "_sql_query", _boom)
-    sc, err, content = _call("sql_query", {"params": {"sql": "SELECT 1"}})
+    sc, err, content = _call("sql_query", {"sql": "SELECT 1"})
     assert err is True
     # 可操作 message 进了 text content
     joined = "".join(getattr(c, "text", "") for c in content)
@@ -66,7 +104,7 @@ def test_retrieve_search(monkeypatch):
     monkeypatch.setattr(retrieve_tools, "_search",
                         lambda question, top_k=5, targets=None, strategy="vector":
                         {"question": question, "strategy": strategy, "results": []})
-    sc, err, _ = _call("retrieve_search", {"params": {"question": "Q"}})
+    sc, err, _ = _call("retrieve_search", {"question": "Q"})
     assert sc["results"] == []
     assert sc["strategy"] == "hybrid"
 
@@ -74,7 +112,7 @@ def test_retrieve_search(monkeypatch):
 def test_contribute(monkeypatch):
     monkeypatch.setattr(analyze_tools, "_contribute",
                         lambda method, payload: {"summary": "s", "rows": [], "checks": []})
-    sc, err, _ = _call("contribute", {"params": {"method": "add", "payload": {"a": [1, 2]}}})
+    sc, err, _ = _call("contribute", {"method": "add", "payload": {"a": [1, 2]}})
     assert sc["summary"] == "s"
 
 
@@ -84,7 +122,7 @@ def test_chart_returns_image_block(monkeypatch):
                         lambda spec, format="png", dpi=144: ChartResult(
                             format="png", dpi=144, width=10, height=20,
                             data=b"\x89PNG\r\n\x1a\n", warnings=[]))
-    sc, err, content = _call("chart", {"params": {"spec": {"type": "bar", "title": "T"}, "format": "png"}})
+    sc, err, content = _call("chart", {"spec": {"type": "bar", "title": "T"}, "format": "png"})
     assert not err
     # 至少有一个 image 内容块（Blob 上传会失败因无凭证，不影响图片块）
     types = [getattr(c, "type", "") for c in content]
@@ -96,7 +134,7 @@ def test_report_publish(monkeypatch):
     monkeypatch.setattr(report_tools, "_publish",
                         lambda report, rid: PublishResult(url=f"https://app/report/{rid}",
                                                           report_id=rid, blob_url="b"))
-    sc, err, _ = _call("report_html_publish", {"params": {"id": "r1", "report": {"meta": {"title": "t"}}}})
+    sc, err, _ = _call("report_html_publish", {"id": "r1", "report": {"meta": {"title": "t"}}})
     assert sc["url"].endswith("/report/r1")
 
 
@@ -119,7 +157,7 @@ def test_report_image_url_returns_structured_content(monkeypatch):
     )
     sc, err, content = _call(
         "report_image_generate",
-        {"params": {"prompt": "报告", "response_format": "url"}},
+        {"prompt": "报告", "response_format": "url"},
     )
     assert not err
     assert sc["provider"] == "volcengine"
@@ -143,7 +181,7 @@ def test_report_image_b64_returns_image_block(monkeypatch):
     )
     sc, err, content = _call(
         "report_image_generate",
-        {"params": {"prompt": "报告", "response_format": "b64_json"}},
+        {"prompt": "报告", "response_format": "b64_json"},
     )
     assert not err
     assert sc["images"][0]["url"] is None
@@ -153,14 +191,15 @@ def test_report_image_b64_returns_image_block(monkeypatch):
 def test_retrieve_doc_update(monkeypatch):
     monkeypatch.setattr(retrieve_tools, "_update_doc",
                         lambda doc, content: {"updated": True, "document_id": doc})
-    sc, err, _ = _call("retrieve_doc_update", {"params": {"doc": "DOC1", "content": "# 新"}})
+    sc, err, _ = _call("retrieve_doc_update", {"doc": "DOC1", "content": "# 新"})
     assert not err
     assert sc == {"updated": True, "document_id": "DOC1"}
 
 
 def test_retrieve_doc_inputs_only_advertise_docx_token():
-    for model in (retrieve_tools.DocIn, retrieve_tools.DocUpdateIn):
-        description = model.model_json_schema()["properties"]["doc"]["description"]
+    tools = _tools()
+    for name in ("retrieve_doc_read", "retrieve_doc_update"):
+        description = tools[name].input_schema["properties"]["doc"]["description"]
         assert "docx 文档 token" in description
         assert "不支持完整 URL" in description
         assert "URL 或 token" not in description
@@ -177,7 +216,13 @@ def test_retrieve_schema_tool(monkeypatch):
     assert sc["nodes"]["指标"]["properties"]["指标ID"] == "STRING"
 
 
-def test_sync_tool_only_accepts_dry_run(monkeypatch):
+def test_sync_tool_schema(monkeypatch):
+    """sync 只暴露 dry_run 一个字段（平铺 schema）。
+
+    平铺签名下 SDK 动态参数模型 extra="ignore"：未知键（如旧的 only）被静默
+    丢弃、不报错——与 Pydantic 模型入参 + extra="forbid" 时的行为不同，
+    客户端只应按广告出的 schema 传参。
+    """
     from sda_mcp.skills import retrieving_context_sync
 
     monkeypatch.setattr(
@@ -185,15 +230,20 @@ def test_sync_tool_only_accepts_dry_run(monkeypatch):
         "sync_graph",
         lambda dry_run=False: {"dry_run": dry_run, "validated": True},
     )
-    sc, err, _ = _call("sync", {"params": {"dry_run": True}})
+    tools = _tools()
+    assert set(tools["sync"].input_schema["properties"]) == {"dry_run"}
+
+    sc, err, _ = _call("sync", {"dry_run": True})
     assert not err
     assert sc == {"dry_run": True, "validated": True}
 
-    _, err, _ = _call("sync", {"params": {"only": "fetch"}})
-    assert err
+    # 未知键被忽略（extra=ignore），dry_run 缺省 False
+    sc, err, _ = _call("sync", {"only": "fetch"})
+    assert not err
+    assert sc == {"dry_run": False, "validated": True}
 
 
 def test_validation_error_is_error():
     # Pydantic 校验失败（缺必填）→ is_error
-    sc, err, _ = _call("sql_query", {"params": {}})
+    sc, err, _ = _call("sql_query", {})
     assert err

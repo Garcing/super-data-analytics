@@ -1,7 +1,10 @@
-"""取数工具（querying_data 内核）→ MCP 工具。"""
-from typing import Any
+"""取数工具（querying_data 内核）→ MCP 工具。
 
-from pydantic import BaseModel, Field
+入参平铺：每个字段是独立关键字参数，约束/描述走 Annotated[..., Field(...)]。
+"""
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from sda_mcp.skills.querying_data import (
     sql_query as _sql_query, sql_schema as _sql_schema,
@@ -10,44 +13,37 @@ from sda_mcp.skills.querying_data import (
 from sda_mcp.tools._common import mcp, to_dict
 
 
-class SqlQueryIn(BaseModel):
-    sql: str = Field(..., description="单条 SELECT SQL", min_length=1)
-    max_rows: int | None = Field(default=None, description="预留（内核未用）", ge=1)
-
-
-class SqlSchemaIn(BaseModel):
-    tables: list[str] = Field(..., description='schema.table 列表，如 ["public.orders"]', min_length=1)
-
-
-class ArtifactIn(BaseModel):
-    artifact_id: str = Field(..., description="Power BI 语义模型 GUID")
-
-
-class PowerBIQueryIn(BaseModel):
-    artifact_id: str = Field(..., description="Power BI 语义模型 GUID")
-    dax_queries: list[str] = Field(..., description="1-4 条 DAX", min_length=1, max_length=4)
-    max_rows: int = Field(default=250, description="每条最大行数", ge=1, le=1000)
-
-
 @mcp.tool(name="sql_query")
-def sql_query(params: SqlQueryIn) -> dict[str, Any]:
+def sql_query(
+    sql: Annotated[str, Field(description="单条 SELECT SQL", min_length=1)],
+    max_rows: Annotated[int | None, Field(description="预留（内核未用）", ge=1)] = None,
+) -> dict[str, Any]:
     """在 Hologres 执行单条 SQL，返回列与行。readOnly。"""
-    return to_dict(_sql_query(params.sql))
+    return to_dict(_sql_query(sql))
 
 
 @mcp.tool(name="sql_schema")
-def sql_schema(params: SqlSchemaIn) -> dict[str, Any]:
+def sql_schema(
+    tables: Annotated[list[str], Field(
+        description='schema.table 列表，如 ["public.orders"]', min_length=1)],
+) -> dict[str, Any]:
     """查多张表的列定义。readOnly。"""
-    return {"tables": to_dict(_sql_schema(params.tables))}
+    return {"tables": to_dict(_sql_schema(tables))}
 
 
 @mcp.tool(name="powerbi_schema")
-def powerbi_schema(params: ArtifactIn) -> dict[str, Any]:
+def powerbi_schema(
+    artifact_id: Annotated[str, Field(description="Power BI 语义模型 GUID")],
+) -> dict[str, Any]:
     """取某语义模型的表/列 schema。readOnly。"""
-    return _powerbi_schema(params.artifact_id)
+    return _powerbi_schema(artifact_id)
 
 
 @mcp.tool(name="powerbi_query")
-def powerbi_query(params: PowerBIQueryIn) -> dict[str, Any]:
+def powerbi_query(
+    artifact_id: Annotated[str, Field(description="Power BI 语义模型 GUID")],
+    dax_queries: Annotated[list[str], Field(description="1-4 条 DAX", min_length=1, max_length=4)],
+    max_rows: Annotated[int, Field(description="每条最大行数", ge=1, le=1000)] = 250,
+) -> dict[str, Any]:
     """对语义模型跑 1-4 条 DAX。readOnly。"""
-    return _powerbi_query(params.artifact_id, params.dax_queries, params.max_rows)
+    return _powerbi_query(artifact_id, dax_queries, max_rows)
