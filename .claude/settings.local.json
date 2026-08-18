@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(node da-data/from-powerbi/powerbi-client.mjs)",
-      "Bash(echo \"EXIT_CODE=$?\")",
-      "Bash(node da-data/from-powerbi/powerbi-client.mjs list-tools)"
-    ]
-  }
-}

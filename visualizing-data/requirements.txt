@@ -1,8 +1,0 @@
-matplotlib>=3.8
-pandas>=2.0
-pillow>=10.0
-seaborn>=0.13
-scipy>=1.11
-
-# Test dependency
-pytest>=8.0

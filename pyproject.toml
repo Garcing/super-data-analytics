@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sda-mcp"
+version = "0.1.0"
+description = "Super Data Analytics 的 Python 分析内核与 FastMCP 服务"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+    "seaborn>=0.13",
+    "scipy>=1.11",
+    "pillow>=10.0",
+    "psycopg[binary]>=3.1",
+    "msal>=1.28",
+    "httpx>=0.27",
+    "neo4j>=5.20",
+    "fastembed>=0.3",
+    "mcp>=2.0,<3",
+    "pydantic>=2.6",
+    "typing-extensions>=4.9",
+    "uvicorn>=0.30",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["sda_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

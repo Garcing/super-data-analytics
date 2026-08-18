@@ -1,25 +1,10 @@
-# Python
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.venv/
-venv/
-.coverage
-htmlcov/
-
-# Workspace-local artifacts (results/scratch); shared config lives in ~/.super-data-analytics/
-.super-data-analytics/
-
-# Node
-node_modules/
+*.egg-info/
+build/
 dist/
-.vercel/
+.venv/
 
-# Embedding model (92M,公开资源,首次同步时 `node sync.js --download-model` 自动从 HuggingFace 下载)
-retrieving-context/scripts/pipeline/models/
-
-# OS
-.DS_Store
-Thumbs.db
+# 环境文件（compose 用，含 token，不进 git）
+.env
