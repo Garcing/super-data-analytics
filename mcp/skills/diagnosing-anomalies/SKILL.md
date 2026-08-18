@@ -1,83 +1,129 @@
 ---
 name: diagnosing-anomalies
-description: 指标异动归因与贡献度拆解。当用户问指标为什么上涨、下跌、异常波动、同比环比变化、监控告警原因诊断、贡献度、归因拆解时使用；contribute 工具完成加法/乘法/比率三类贡献度计算。
-metadata:
-  skill-series: super-data-analytics
-  chinese-name: 异动归因
-  mcp-server: sda
-  mcp-tools:
-    owns:
-      - contribute
-    uses:
-      - sql_query
-      - sql_schema
-      - retrieve_search
-      - chart
+description: 诊断业务指标上涨、下跌、异常波动、同比环比变化和监控告警，完成异常确认、数据质量排查、贡献度拆解、维度下钻、业务事件验证和置信度表达。contribute 支持加法、乘法/LMDI 与比率三类确定性分解；实验效果交给 evaluating-impact，未来预测交给 predicting-trends。
 ---
 
-# diagnosing-anomalies（异动归因）
+# 指标异动归因
 
-当业务指标出现上涨、下跌或异常波动时，回答"为什么变了、谁贡献的"。通过 `sda` MCP 服务的 `contribute` 工具做贡献度拆解（加法 / 乘法 LMDI / 比率三法），配合 `sql_query` 取两期数据、`retrieve_search` 对齐口径。核心纪律：**先确认异动是真的，再解释为什么；贡献度是差值分解，不是因果证明**。
+回答“是否真的异常、变化由哪些切片或因子解释、哪些只是候选原因”。贡献度是差值分解，不自动证明因果。
 
-## 何时使用 / 何时不用
+## 核心原则
 
-**用**：
-- 用户问异动原因："GMV 为什么跌了"、"昨天 DAU 突增"、"转化率同比降了 2pp"。
-- 需要贡献度拆解："各渠道对增长的贡献"、"哪个因子拉动了变化"。
-- 监控告警后的根因排查。
+- 先复现指标和异动，再解释原因。
+- 先排除口径/数据问题，再下钻业务因素。
+- 按指标数学结构选方法，不把所有问题都当加法拆解。
+- 每层保留总体变化、已解释贡献和残差。
+- 观察、归因贡献和因果结论分开表达。
 
-**不用**：
-- 只要具体数据值、不问原因 → querying-data 直接取数。
-- 评估实验/策略效果（AB、DID、ROI）→ evaluating-impact。
-- 预测未来走势 → predicting-trends。
+## 默认流程
 
-## 决策流程
+### 1. 定义诊断问题
 
-1. **复现**：先 `retrieve_search` 拿受治理口径，再 `sql_query` 取当前期与基线期数据。**两期口径必须一致**（同过滤条件、同粒度、同完整度），否则归因无意义。
-2. **确认异动成立**：算出绝对变化、相对变化；排除数据延迟/补数/截断、埋点或 ETL 变更、未完整周期、节假日/同期不可比。是数据问题就先修数据或将其量化为候选原因，不要把脏数据下钻结果当业务根因。
-3. **按指标结构选 method**：
-   - **加法型**（收入、订单数、DAU 等可按维度加合的绝对量）→ `add`：各维度差值直接分解。
-   - **乘法型**（GMV=流量×转化×客单等连乘结构；漏斗环节转化率也属此类）→ `multiply`：LMDI/log 拆解。
-   - **比率型**（转化率、成功率、投诉率等 P/Q 指标按分组拆）→ `ratio`：组内/结构/交叉三分。比率指标**不能**直接用 add 拆差值。
-4. **调 `contribute` 计算**，输出 `{summary, rows, checks}`。
-5. **下钻**：对贡献绝对值最大的维度递归再拆（每层保留可解释比例）；比率型留意辛普森悖论（各组都变好但总体变差 = 结构变化）。
-6. **事件验证**：把 Top 贡献项与同期运营活动、改版、发布记录、投放变化互相印证——时间吻合不等于因果。
-7. **结论表达**："X 维度贡献了总变化的 Y%" + 方向（同向解释/反向抵消）+ 置信度（已验证/较可能/待验证）+ 未解释残差。
+确认：指标定义与分子分母、当前/基准窗口、时间粒度、业务范围、对比基准、诊断目标和交付形式。缺失会改变结果时才追问。
 
-## 工具契约
+受治理指标先用 `retrieve_search` 获取定义、时间字段、过滤、参与表和维度；再由 `sql_query` 取当前期与基准期。两期必须同口径、同粒度、同完整度。
 
-| 工具 | 输入指引 | 输出指引 |
-|---|---|---|
-| `contribute` | `method: "add"\|"multiply"\|"ratio"` 必填；`payload: dict` 必填，结构随 method：**add** `{baseline_total: float=0, current_total: float=0, items: [{name?: str（缺省 `item_N`）, baseline: float 必填, current: float 必填}]}`（items 非空数组必填）；**multiply** `{factors: [{name?: str（缺省 `factor_N`）, baseline: float 必填且 >0, current: float 必填且 >0}]}`（factors 非空必填，总体=各因子连乘自动得出）；**ratio** `{groups: [{name?: str（缺省 `group_N`）, baseline_numerator: float, baseline_denominator: float>0, current_numerator: float, current_denominator: float>0}]}`（groups 非空必填，四数字字段均必填，总体率值自动加总得出）。数字字段传 bool 或非数字会校验报错 | `{summary, rows, checks}`：summary 含 `baseline_total/current_total/delta/relative_change`（relative_change 基线为 0 时 null）；rows 每行含 `contribution_value`（贡献量）、`contribution_share`（贡献率 Vi/ΔY，可超 100% 或为负）、`relative_contribution`（相对贡献 Vi/Y0）、`direction`（同向解释/反向抵消/无明显贡献/总变化接近0方向不解释），multiply 另有 `factor_ratio/log_delta/log_contribution_share`，ratio 另有 `baseline_rate/current_rate/baseline_weight/current_weight/within_contribution/mix_contribution/interaction_contribution`；checks 含 `sum_contribution/residual/warnings`。**先看 checks**：residual≈0 且 warnings 空才可信，再按 contribution_value 绝对值排序解读 |
+### 2. 验证异动成立
 
-## 调用示例
+至少计算当前值、基准值、绝对变化、相对变化，并判断：
 
-转化率（下单数/访客数）按渠道两期对比。调 `contribute`：
+- 是否超出历史正常波动（同环比、移动基线、IQR/标准差或预测基线）。
+- 形态是单点尖峰、阶跃、持续漂移、周期性还是补数后恢复。
+- 是否由节假日、活动日、发布日或未完整周期天然造成。
 
-```json
-{
-  "method": "ratio",
-  "payload": {
-    "groups": [
-      {"name": "自然流量", "baseline_numerator": 800, "baseline_denominator": 3000, "current_numerator": 950, "current_denominator": 3500},
-      {"name": "广告投放", "baseline_numerator": 300, "baseline_denominator": 2000, "current_numerator": 400, "current_denominator": 2500}
-    ]
-  }
-}
+波动仍在正常范围时，结论应是“未发现显著异常”，而不是硬找根因。
+
+### 3. 排除数据与口径问题
+
+检查指标定义变更、延迟/补数、缺失/重复/截断、埋点/ETL/权限变化、JOIN 放大或丢失、维表更新和时间窗口完整性。
+
+发现数据问题时先量化其影响并把它列为已验证原因或 blocker；不要继续把脏数据的细分结果解释成业务行为。
+
+### 4. 选择拆解方法
+
+| 指标结构/场景 | 方法 |
+|---|---|
+| 可加合绝对量，如收入、订单、DAU | `contribute(method="add")` |
+| 连乘结构，如 GMV=流量×转化×客单 | `contribute(method="multiply")` |
+| 比率 P/Q，如转化率、投诉率 | `contribute(method="ratio")` |
+| 漏斗链路 | 节点取数后把环节转化率作为 multiply factors |
+| 非线性公式、Shapley、监控多维根因 | 按 [attribution-methods.md](references/attribution-methods.md) 用 SQL/方法论分析 |
+
+`contribute` 的具体 payload 字段以工具输入 schema 为准。
+
+### 5. 计算并检查
+
+调用 `contribute` 后先看 `checks`，再看排名：
+
+- `residual` 应接近 0；显著残差通常表示分项不完整、重复、不互斥或方法选错。
+- `warnings` 必须进入最终判断；不能只取 rows 忽略工具警告。
+- 按 `abs(contribution_value)` 排序；负贡献可能是反向抵消，不是错误。
+- `contribution_share = Vi/ΔY` 可为负或超过 100%；`relative_contribution = Vi/Y0` 含义不同，不能混用。
+- 总变化接近 0 时贡献率会不稳定，不强行解释方向。
+
+比率分解同时看：
+
+- `within_contribution`：各组自身率值变化。
+- `mix_contribution`：分母结构变化。
+- `interaction_contribution`：两者共同变化。
+
+分组都改善而总体变差时优先检查 mix，这通常是辛普森悖论。
+
+### 6. 先广后深下钻
+
+1. 先按一个互斥、完整且可行动的一级维度拆分。
+2. 对 Top 贡献项再按第二维度下钻，每层保留总体 delta 和可解释比例。
+3. 同时观察 numerator、denominator、mix 和组内变化，不只盯率值。
+4. 样本过小、维度不可行动或继续下钻只增加噪声时停止。
+
+优先业务可行动维度：渠道、产品、版本、地区、用户层级、组织、漏斗环节；但前提是已由语义层解析并能保持统计粒度。
+
+### 7. 验证候选原因
+
+把 Top 贡献项与独立证据互相印证：运营活动、发布记录、投放/价格/库存变化、系统事故、政策或实验。仅仅时间吻合只能写“较可能/待验证”，不能写“导致”。
+
+## 工具边界
+
+### add
+
+- 分项应互斥且完整，合计与总体一致。
+- 适合绝对量，不适合比率。
+- 权重或价格本身变化时，考虑 multiply 或非线性方法。
+
+### multiply
+
+- 所有 baseline/current 因子必须大于 0；0/负值无法做 log 分解。
+- 报告原单位 `contribution_value`，不要只报对数份额。
+- 因子一涨一跌使总体对数变化接近 0 时工具会警告，这是方法边界。
+
+### ratio
+
+- 每组两期分母必须大于 0，分组需互斥且覆盖总体。
+- 不要把分子和分母分别 add 后声称解释了比率变化。
+- 结构贡献大时要同时报告分组占比变化。
+
+## 输出模板
+
+```text
+结论：<指标> 在 <当前窗口> 相比 <基准窗口> <上升/下降> <幅度>；异动<成立/未超正常波动>。
+口径与质量：<定义、时间、完整性、数据问题检查>。
+主要驱动：<因素>贡献 <原单位影响量>，占总变化 <贡献率>；<同向解释/反向抵消>。
+证据：<贡献分解、切片、事件或独立验证>。
+判断：<已验证/较可能/待验证/已排除>。
+未解释：<残差、长尾、缺失数据>。
+建议：<下一步验证或业务动作>。
 ```
 
-返回摘要：`summary.delta` 为总体转化率变化；rows 中自然流量的 `within_contribution`（自身率值变化）、`mix_contribution`（占比结构变化）、`interaction_contribution`、`contribution_value` 与 `direction`；`checks.residual` 应≈0（非 0 说明分组不互斥或分母不完整）。下一步：对 `contribution_value` 绝对值最大的组用 `sql_query` 递归下钻（如再按端/人群拆），或调 `chart` 画贡献瀑布。
+必须给基数和影响量，不只给百分比。若用户需要图，用 `chart` 画时间趋势、分组贡献柱图或瀑布图；正式报告交付前走 validating-analyses。
 
-## 陷阱与注意
+## 停止条件
 
-- **两期口径必须一致**：过滤条件、粒度、完整度任一不同则归因失真；口径拿不准先 `retrieve_search` 对齐，字段拿不准先 `sql_schema`。
-- **比率指标不能直接用 add**：拆分子分母各自的差值不等于率值变化的分解，必须用 `ratio`。
-- **multiply 拒绝 0/负值**：log 拆解要求全部因子为正；有 0 值需业务认可的平滑处理或换方法。
-- **checks 不过先修数据**：residual 显著非 0 或有 warnings，说明分项不互斥/不完整或方法选错，先补全分组再解读，不要硬讲结论。例外：multiply 在总体对数变化≈0 时（各因子一涨一跌相抵），贡献置 0、residual=总变化且必带 warning——这是方法的边界情形，不是数据错误。
-- **贡献度 ≠ 因果**："贡献最大"要写成"已验证/较可能/待验证"，需独立证据（实验、事件、发布记录）才能说根因。
-- 报告数字要给基数和影响量，不要只给百分比；贡献率（占 ΔY）与相对贡献（占 Y0）不要混用。
-- 贡献值合计约等于总变化（残差≈0）时也应说明未解释部分与置信度，长尾维度不必穷尽下钻。
+- 异动未超正常波动。
+- Top 驱动已解释大部分变化，继续下钻只增加噪声。
+- 更细粒度样本不足。
+- 数据源不支持细化，或关键口径/关系无法验证。
+- 候选因素无法通过独立证据验证；此时保留为待验证，不制造伪因果。
 
-## 深入参考
+## 参考
 
-- [references/attribution-methods.md](references/attribution-methods.md) —— 七种归因方法的适用场景、数据要求与选择判据；哪些由 `contribute` 支撑、哪些需配合 `sql_query` 手工分析。
+- [attribution-methods.md](references/attribution-methods.md)：加法、LMDI、比率、漏斗、非线性、Shapley 与监控根因的选择和边界。

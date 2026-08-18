@@ -45,6 +45,28 @@ def _build_server() -> _Server:
 mcp = _build_server()
 
 
+def tool_annotations(
+    title: str,
+    *,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+) -> dict[str, Any]:
+    """Build a complete MCP ToolAnnotations mapping.
+
+    Keeping every hint explicit avoids inheriting the protocol defaults
+    (notably destructiveHint=true) when a client renders or gates a tool.
+    """
+    return {
+        "title": title,
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": open_world,
+    }
+
+
 def to_dict(obj: Any) -> dict[str, Any]:
     """把内核返回（dataclass / dict）转成 JSON 安全 dict（丢 bytes）。
     dataclass 经 asdict；dict 原样；其余包成 {"result": obj}。"""

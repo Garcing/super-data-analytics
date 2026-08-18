@@ -90,6 +90,9 @@ class HologresClient:
     def query(self, sql: str) -> SqlResult:
         with self._connect() as conn, conn.cursor() as cur:
             try:
+                # Enforce the MCP tool's read-only contract at the database
+                # transaction level instead of relying on SQL text parsing.
+                cur.execute("SET TRANSACTION READ ONLY")
                 cur.execute(sql)
             except psycopg.DatabaseError as exc:
                 raise DataSourceError(f"SQL 执行失败: {exc}") from exc

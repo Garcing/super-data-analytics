@@ -77,14 +77,66 @@ def test_tool_schemas_are_flat():
     assert chart["dpi"]["minimum"] == 72 and chart["dpi"]["maximum"] == 300
     assert chart["dpi"]["default"] == 144
 
+    # sql_query 不再广告无效的 max_rows；大结果由 SQL 自己 LIMIT。
+    assert set(tools["sql_query"].input_schema["properties"]) == {"sql"}
+
+
+def test_tool_metadata_is_complete_and_safety_accurate():
+    """tools/list 应给模型完整的显示名、行为提示与简洁返回契约。"""
+    tools = _tools()
+    for name, tool in tools.items():
+        assert tool.annotations is not None, f"{name} 缺 annotations"
+        assert tool.annotations.title, f"{name} 缺 title"
+        assert tool.annotations.read_only_hint is not None
+        assert tool.annotations.destructive_hint is not None
+        assert tool.annotations.idempotent_hint is not None
+        assert tool.annotations.open_world_hint is not None
+        assert tool.description and "返回" in tool.description, f"{name} 未说明返回内容"
+
+    for name in ("sql_query", "sql_schema", "powerbi_schema", "powerbi_query",
+                 "retrieve_search", "retrieve_schema", "retrieve_doc_read",
+                 "contribute", "forecast", "report_html_list", "report_html_get"):
+        assert tools[name].annotations.read_only_hint is True
+        assert tools[name].annotations.destructive_hint is False
+
+    for name in ("retrieve_cypher", "retrieve_doc_update", "sync",
+                 "report_html_publish", "report_html_delete"):
+        assert tools[name].annotations.destructive_hint is True
+
+    for name in ("contribute", "forecast", "impact"):
+        assert tools[name].annotations.open_world_hint is False
+
+
+def test_stable_tools_advertise_structured_output_schema():
+    tools = _tools()
+    assert set(tools["sql_query"].output_schema["properties"]) == {
+        "columns", "rows", "row_count",
+    }
+    assert set(tools["retrieve_schema"].output_schema["properties"]) == {
+        "nodes", "relationships",
+    }
+    assert set(tools["forecast"].output_schema["properties"]) == {
+        "metric", "model", "model_reason", "forecast", "summary", "backtest",
+        "confidence", "assumptions", "warnings",
+    }
+
 
 def test_sql_query_tool(monkeypatch):
     from sda_mcp.skills.querying_data import SqlResult
     monkeypatch.setattr(query_tools, "_sql_query",
-                        lambda sql: SqlResult(columns=[{"name": "a"}], rows=[{"a": 1}], row_count=1))
+                        lambda sql: SqlResult(columns=[{"name": "a", "dataTypeID": 23}],
+                                              rows=[{"a": 1}], row_count=1))
     sc, err, _ = _call("sql_query", {"sql": "SELECT 1"})
     assert not err
     assert sc["row_count"] == 1 and sc["columns"][0]["name"] == "a"
+
+
+def test_sql_schema_tool_has_no_result_wrapper(monkeypatch):
+    expected = [{"schema": "public", "table": "orders", "columns": []}]
+    monkeypatch.setattr(query_tools, "_sql_schema", lambda tables: expected)
+    sc, err, _ = _call("sql_schema", {"tables": ["public.orders"]})
+    assert not err
+    assert sc == {"tables": expected}
 
 
 def test_skill_error_becomes_is_error(monkeypatch):
@@ -111,9 +163,14 @@ def test_retrieve_search(monkeypatch):
 
 def test_contribute(monkeypatch):
     monkeypatch.setattr(analyze_tools, "_contribute",
-                        lambda method, payload: {"summary": "s", "rows": [], "checks": []})
+                        lambda method, payload: {
+                            "method": method,
+                            "summary": {},
+                            "rows": [],
+                            "checks": {},
+                        })
     sc, err, _ = _call("contribute", {"method": "add", "payload": {"a": [1, 2]}})
-    assert sc["summary"] == "s"
+    assert sc["method"] == "add"
 
 
 def test_chart_returns_image_block(monkeypatch):
@@ -209,7 +266,10 @@ def test_retrieve_schema_tool(monkeypatch):
     monkeypatch.setattr(
         retrieve_tools,
         "_schema",
-        lambda: {"nodes": {"指标": {"properties": {"指标ID": "STRING"}}}, "relationships": []},
+        lambda: {"nodes": {"指标": {
+            "properties": {"指标ID": "STRING"},
+            "unique": ["指标ID"],
+        }}, "relationships": []},
     )
     sc, err, _ = _call("retrieve_schema", {})
     assert not err

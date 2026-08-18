@@ -1,127 +1,128 @@
 ---
 name: building-reports
-description: 构建数据报告。当用户要求出报告、生成周报/月报、复盘报告、数据播报、分析简报，或要一张数据海报/报告封面图/单图播报时使用；report_html_* 把结构化报告发布为在线可分享页面，report_image_generate 用火山方舟 Seedream 生成单张图片报告。
-metadata:
-  skill-series: super-data-analytics
-  chinese-name: 构建报告
-  mcp-server: sda
-  mcp-tools:
-    owns:
-      - report_html_publish
-      - report_html_list
-      - report_html_get
-      - report_html_delete
-      - report_image_generate
-    uses:
-      - retrieve_search
-      - retrieve_doc_read
-      - chart
+description: 把已验证的数据与分析结论交付为在线 HTML 报告或单张图片报告。用户要求周报/月报、复盘报告、数据播报、分析简报、在线分享页、数据海报或报告封面时使用；支持报告发布/列出/读取/删除与 Seedream 单图生成。只要精确数据图表时使用 visualizing-data。
 ---
 
-# building-reports（构建报告）
+# 构建数据报告
 
-把分析结果交付成两种形态：**在线 HTML 报告**（`report_html_publish`，报告 JSON 存 Vercel Blob，返回可分享前端 URL）和**单张图片报告**（`report_image_generate`，火山方舟 Seedream，一张信息图/海报固化标题 + KPI + 趋势 + 结论）。核心纪律：**报告里的每个数字必须来自真实取数/分析结果，不在报告里编数**；发布后必须打开 URL 验证渲染再交付。
+把分析结果组织成可阅读、可追溯、可访问的交付物。当前 MCP 支持：
 
-## 何时使用 / 何时不用
+- **HTML 报告**：结构化 JSON 发布到 Vercel Blob，返回长期分享页。
+- **图片报告**：Seedream 生成单张信息图/海报，适合社交分享和封面，下载 URL 约 24 小时有效。
 
-**用**：
-- 用户要"出一份报告"、"周报"、"复盘"、"数据播报"、"分析简报"。
-- 结构化多结论、带数字/表格/内嵌图表的在线报告 → HTML。
-- 一张图讲清结论、贴进 PPT/飞书/微信、视觉海报/周报头图/封面图 → image。
+报告不创造新事实。每个数字必须来自已确认的查询或分析结果，每个结论必须能追溯到证据。
 
-**不用**：
-- 只要一张**数值精确**的数据图表 → visualizing-data 的 `chart`（image 生成不保证坐标精确）。
-- 只要数字不要交付物 → querying-data 直接取数。
-- 要落飞书文档/多维表 → 走 retrieving-context 技能（其 `retrieve_doc_update` 可改 docx 正文）。
+## 格式路由
 
-## 决策流程
+| 需求 | 选择 |
+|---|---|
+| 多结论、KPI、表格/图表、可在线分享和历史回看 | HTML |
+| 一张图讲清结论、周报头图、海报、封面 | image |
+| 一张数值必须精确的趋势/对比/分布图 | visualizing-data 的 `chart` |
+| 交互式多页应用、飞书文档/幻灯片 | 当前 SDA MCP 不直接支持，使用相应外部能力 |
 
-1. **格式路由**：
+HTML 报告可引用 `chart` 生成的精确图表；不要用生成式图片替代精确坐标图。
 
-   | 需求 | 选择 |
-   |---|---|
-   | 多结论、可在线分享、可回看历史 | HTML（`report_html_publish`） |
-   | 视觉海报 / 单图数据播报 / 周报头图 / 封面图 | image（`report_image_generate`） |
-   | 报告里还要嵌数值精确图表 | chart 出图后引用其 URL，报告本体仍走 HTML |
+## 报告前置
 
-2. **HTML 发布三步**：构造报告 JSON（meta/summary/conclusions，结构见 [references/html-report-contract.md](references/html-report-contract.md)）→ `report_html_publish` → **打开返回的 url 验证渲染**（标题/KPI/结论图表是否齐全）→ 交付链接并附一句口径说明（时间范围/数据来源/单位）。
-3. **报告模板**：用户提到"按模板出报告"时，先 `retrieve_search` 搜模板（注意：graph-config 当前实体标签里**尚无「报告模板」**——模板功能依赖语义层多维表配置，未配置时搜不到，按本 SKILL 内置的 meta/summary/conclusions 结构自拟即可）；搜到模板后用 `retrieve_doc_read` 读模板 docx 正文结构，照其章节骨架填数，再走第 2 步发布。
-4. **图片报告**：按 [references/image-report-prompting.md](references/image-report-prompting.md) 写提示词（类型/比例/标题/关键数字/趋势结论全写进去）→ `report_image_generate`（耗时约 60-90s 正常，勿超时重发）→ 交付 URL 并提醒 24h 过期、需要留存立即下载。
-5. **修改已发布报告**：`report_html_get` 取完整 JSON → 改 → 同 id 重新 `report_html_publish`（覆盖语义，`created_at` 保留原值）。
+开始排版前确认：
 
-## 工具契约
+- 报告目的、受众和要支持的决策。
+- 时间范围、统计口径、单位、数据来源和新鲜度。
+- 头条 KPI、关键结论、证据、限制和行动建议。
+- 关键数字已通过 querying-data/分析工具得到；高风险结论已完成 validating-analyses。
+- 用户要求“按模板”时已找到并读取正确模板。
 
-| 工具 | 输入指引 | 输出指引 |
-|---|---|---|
-| `report_html_publish` | `id: str` 必填非空（报告唯一标识，建议日期+主题 slug 如 `2026-08-weekly-gmv`）；`report: dict` 必填，校验仅强制 `report.meta.title` 非空，但完整结构 meta/summary/conclusions 见 reference——按完整结构写，前端才能渲染 KPI 卡和结论图表。同 id 重发是**覆盖** | `{url, report_id, blob_url}`：url 是可分享前端链接（依赖 config 的 `VERCEL_REPORTS_URL`），blob_url 是报告 JSON 原始地址。**必须打开 url 验证渲染再交付**。索引乐观锁并发冲突时报错，按提示重试即可 |
-| `report_html_list` | 无参数 | `{reports: [...]}` 索引条目 `{id, title, created_at, updated_at, summary, tags}`，最新在前 |
-| `report_html_get` | `id: str` 必填非空 | 报告完整 JSON（读改重发用）；找不到该 id 报错 |
-| `report_html_delete` | `id: str` 必填非空 | `{success, report_id}`。**destructive**：删除报告 JSON 并移出索引，不可恢复——删除前确认用户意图 |
-| `report_image_generate` | `prompt: str` 必填非空；`model?: str`（Model ID 或 Endpoint ID，缺省 config.json `VOLCENGINE_ARK_IMAGE_MODEL`）；`size?: str`（如 `"2K"` 或模型支持的 WxH，**比例要写进 prompt**如「3:4 竖版」，冒烟基线 2K+3:4 → 1776x2368）；`response_format: "url"（默认）\|"b64_json"`；`seed?: int`（-1..2^31-1）；`watermark: bool=false` | structuredContent `{provider, model, response_format, status, created, request_id, usage, images[{url, size, format, error}]}`。同步单图、**无轮询**；URL 含 `X-Tos-Expires=86400`（**24h 过期**，要留存立即下载）；失败/超时**不自动重试**（防重复计费）；耗时约 60-90s 正常。b64_json 时额外返回 MCP ImageContent 图片块（适合直接给用户看图）；url 适合转述/下载留存 |
+不要让精美呈现掩盖未验证数字、缺失指标或低置信结论。
 
-## 调用示例
+## 模板流程
 
-发布一份周度 GMV 报告。调 `report_html_publish`：
+模板是语义层“报告模板”实体的元数据加链接 docx 正文：
 
-```json
-{
-  "id": "2026-08-w31-gmv-weekly",
-  "report": {
-    "meta": {
-      "title": "第 31 周 GMV 周报",
-      "generated_at": "2026-08-03T10:00:00Z",
-      "tags": ["销售", "周报"]
-    },
-    "summary": {
-      "overall": "本周 GMV 1280 万，环比 +11.3%，渠道 A 主拉。",
-      "kpis": [
-        {"label": "GMV", "value": "1280 万", "trend": "up", "trend_value": "环比 +11.3%"},
-        {"label": "拉动渠道", "value": "渠道 A", "trend": "up", "trend_value": "+18%"}
-      ]
-    },
-    "conclusions": [
-      {
-        "id": 1,
-        "title": "渠道 A 拉动增长",
-        "description": "渠道 A 本周 520 万，环比 +18%，贡献主要增量。",
-        "data_support": "分渠道 GMV 对比，dws_gmv_channel",
-        "importance": "high",
-        "chart_type": "bar",
-        "chart_data": {"xKey": "name", "yKey": "value", "data": [
-          {"name": "渠道A", "value": 520}, {"name": "渠道B", "value": 430}, {"name": "渠道C", "value": 330}
-        ]}
-      }
-    ]
-  }
-}
+1. `retrieve_search` 搜模板类型/名称；必要时用 `retrieve_schema`/`retrieve_cypher` 精确列举。
+2. 排除占位符、测试模板和不匹配的报告类型。
+3. 从 URL 中剥出 docx token，用 `retrieve_doc_read` 获取最新正文。
+4. 只继承章节、必填项和表达要求；指标定义仍以语义层受治理口径为准。
+5. 运行时暂缺“报告模板”实体时，说明部署/同步缺口；无阻塞时可按内置 HTML 合约组织，不把暂缺写成永久架构。
+
+## HTML 工作流
+
+1. 按 [html-report-contract.md](references/html-report-contract.md) 构造完整 `meta + summary + conclusions`，不要只满足最低 `meta.title` 校验。
+2. 为报告选择稳定 ID：日期/周期 + 主题 slug。需要保留历史版本就使用新 ID；同 ID 发布会覆盖。
+3. 调 `report_html_publish`。
+4. 打开返回的 `url` 检查最终渲染态：标题、KPI、结论、图表、单位、长文本、移动端可读性和链接。
+5. 交付分享 URL，并附口径、时间范围、数据来源、新鲜度和 caveat。
+
+### HTML 内容原则
+
+- 摘要先回答“发生了什么、为什么重要、建议什么”。
+- 每条 conclusion 只承载一个主张，配对应 data_support。
+- 区分事实、解释和建议；相关性不写成因果。
+- 低置信或未验证内容在相关结论旁标注，不只藏在末尾。
+- KPI 单位、时间粒度和比较基准一致。
+- 图表数据与正文数字来自同一验证结果；不要双份手抄后漂移。
+
+## 已发布报告管理
+
+- `report_html_list`：发现报告 ID、标题、更新时间和标签。
+- `report_html_get`：读取完整最终 JSON，用于复核或修改。
+- 修改：先 get，基于完整 JSON 修改，再用同 ID publish；不要只发局部对象。
+- `report_html_delete`：永久删除报告 JSON 并移出索引，不可恢复。只有用户明确要求删除且目标 ID 已核对时执行。
+
+并发索引冲突按工具提示重新获取/重试；刚发布时可能受约 1 分钟 CDN 缓存影响，验证到旧内容时稍后再刷新，不连续覆盖发布。
+
+## 图片报告工作流
+
+1. 明确用途、比例、标题、受众和视觉层级。
+2. 把经过验证的 KPI、单位、趋势、结论和必要来源完整写入 prompt。
+3. 按 [image-report-prompting.md](references/image-report-prompting.md) 约束版式与文本；比例同时写在 prompt 中。
+4. 调 `report_image_generate`。调用有外部费用且通常耗时较长，未确认失败前不要重复提交。
+5. 检查生成图中的标题、数字、中文、方向和版式。生成式模型可能抄错数字；任何不一致都不能直接交付。
+6. 交付图片或 URL，并提醒 URL 约 24 小时过期，需要长期留存就立即下载。
+
+### 图片报告边界
+
+- image 适合强调已验证数字和结论，不适合精确坐标、密集表格或严格比例关系。
+- 所有关键数字在 prompt 中同时写值与单位，图表必须带数据标签。
+- `b64_json` 适合直接展示图片块；`url` 适合下载，但会过期。
+- 失败不自动重试是为了避免重复计费；先读错误再决定是否重发。
+
+## 来源与可信度
+
+报告末尾或相关结论旁至少记录：
+
+```text
+来源层级：受治理语义层 / 受治理表 / 用户数据 / 原始探索
+统计口径：<指标、分母、主要过滤>
+时间范围：<窗口与时区>
+数据新鲜度：<最大日期或未知>
+验证状态：<已复算/已质检/未验证项>
 ```
 
-返回 `{url: "https://…/report/2026-08-w31-gmv-weekly", report_id, blob_url}`。下一步：打开 url 确认渲染（标题/KPI/结论图表齐全）再交付。
+只有上游实际提供时才写所有者、revision 或新鲜度；不可为了完整格式编造。
 
-生成一张 3:4 竖版周报数据播报图。调 `report_image_generate`：
+## 交付验收
 
-```json
-{
-  "prompt": "生成一张 3:4 竖版数据播报信息图。【主题】给运营周会看的 GMV 周报简报。【关键数字】GMV 本周 1280 万、上周 1150 万、周环比 +11.3%；渠道A 520万(+18%)、渠道B 430万(+5%)、渠道C 330万(+12%)。【趋势结论】近 8 周趋势：820,910,980,1020,1100,1080,1150,1280，连续 3 周上行；高亮：渠道 A 主拉增长。商务扁平风，主色蓝，中文，数字粗体，所有图表带数据标签，数值须与提供数据完全一致。",
-  "size": "2K",
-  "response_format": "url"
-}
-```
+- 实际 URL/图片可访问，标题和主体不为空。
+- 所有用户要求的指标都出现，或明确标为不可得/不适用。
+- KPI、正文、图表和来源数字一致。
+- 图表未损坏，文字未裁切，无占位符和测试文案。
+- 时间、单位、比较基准和 caveat 可见。
+- HTML ID 覆盖/版本策略符合用户意图。
+- 图片 URL 的过期提醒已给出。
 
-返回 structuredContent，`images[0].url` 为 24h 有效下载链接。下一步：提醒用户链接 24h 过期，要留存立即下载（约 60-90s 出图正常）。
+只返回“已完成”不算交付。
 
-## 陷阱与注意
+## 常见陷阱
 
-- **同 id 覆盖语义**：`report_html_publish` 同 id 重发会整体覆盖旧报告（`created_at` 保留首版）；想留历史版本就换 id。索引乐观锁并发冲突报错时直接重试。
-- **校验只强制 `meta.title`**：缺 summary/conclusions 不会报错但前端渲染空——按 reference 的完整结构写全。
-- **image URL 24h 过期**（`X-Tos-Expires=86400`），且不上传 Vercel Blob；需要长期保留立即下载。
-- **生成慢勿超时重发**：约 60-90s 正常；失败不自动重试是防重复计费，确认失败原因后再手动重试。
-- **b64 vs url**：要直接给用户看图（IM 场景）用 `b64_json`（返回图片块）；只转述链接或要下载留存用 `url`。
-- **不要用 image 替代 chart**：Seedream 不保证坐标轴/比例精确，精确数据图走 visualizing-data 的 `chart`；image 里的图表必须带数据标签兜底。
-- **删除是破坏性操作**：`report_html_delete` 不可恢复，动手前向用户确认。
-- 新报告对前端约 1 分钟可见（Blob CDN 缓存 60s），刚发布 url 打开若是旧内容等一下再验。
+- 只填 `meta.title`：工具可能发布成功，但前端 KPI/结论为空。
+- 同 ID 误覆盖旧版：需要历史时改 ID。
+- 生成式图片数字错误：重新生成或改走 `chart`/HTML，不接受近似。
+- 结论比证据更强：降级措辞并紧邻标注限制。
+- 发布 JSON 与实际渲染不一致：必须看最终 URL，不只检查工具返回成功。
+- 报告模板存在但正文无权限：这是飞书共享问题，不能凭模板名猜章节。
 
-## 深入参考
+## 参考
 
-- [references/html-report-contract.md](references/html-report-contract.md) —— 报告 JSON 完整契约：meta/summary/conclusions 逐字段、chart_data 四种图型、id 命名建议、乐观锁冲突处理。
-- [references/image-report-prompting.md](references/image-report-prompting.md) —— Seedream 提示词写法：类型/比例声明、中文 KPI 数值写法、信息结构模板、负面边界、URL 时效与 seed 复现。
+- [html-report-contract.md](references/html-report-contract.md)：HTML 报告结构、图表数据、ID 与索引规则。
+- [image-report-prompting.md](references/image-report-prompting.md)：Seedream 提示词、版式、数字纪律和 URL 时效。

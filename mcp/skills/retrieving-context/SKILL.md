@@ -1,97 +1,107 @@
 ---
 name: retrieving-context
-description: 检索业务知识语义层（指标定义、口径、表归属、业务层级、报告模板），供下数前查口径、写 SQL 前找表。适用于指标定义与口径、哪张表、数据来源、业务上下文、业务板块、模板等问题。
-metadata:
-  skill-series: super-data-analytics
-  chinese-name: 检索业务知识
-  mcp-server: sda
-  mcp-tools:
-    owns:
-      - retrieve_search
-      - retrieve_cypher
-      - retrieve_schema
-      - retrieve_doc_read
-      - retrieve_doc_update
-      - sync
-    uses: []
+description: 检索和维护 SDA 受治理业务语义层。用户询问指标定义、计算口径、数据来源、表或维度、业务层级、看板、报告模板，或其他分析技能在取数前需要把业务概念映射到最新数据实体时使用；也用于读取/更新模板 SQL 文档和同步语义图。具体数据值交给 querying-data。
 ---
 
-# retrieving-context（检索业务知识）
+# 检索业务知识
 
-通过 `sda` MCP 服务的 Neo4j GraphRAG 语义层，检索受治理的业务知识：指标定义与口径、表归属、业务层级（业务线→板块→小点）、数据看板、维度、表关系、报告模板。这是全链路分析的第一环——**下数之前先查口径，写 SQL 之前先找对表**。
+把用户语言映射到最新、受治理的业务实体。此技能提供声明式知识：指标是什么、用什么表和时间字段、允许哪些维度与 JOIN。它不替代取数和分析。
 
-## 何时使用 / 何时不用
+核心纪律：
 
-**用**：
-- 用户问业务概念："复购人数是什么口径？"
-- 用户问数据来源："听课明细去哪张表查？"
-- 用户问业务结构 / 看板 / 维度归属。
-- 其他技能（querying-data、分析三技能、building-reports）需要业务上下文或报告模板时。
-- 语义层多维表结构变更后需要重灌图（sync）。
+- 下数前先定口径，写 SQL 前先定实体。
+- 运行时语义图是当前事实源；本地 Skill 只规定检索流程，不能替图谱保存易变定义。
+- 找不到或互相冲突时暴露缺口，不猜指标、字段、JOIN 或业务分类。
 
-**不用**：
-- 纯执行 SQL / 查 Power BI 模型 → querying-data。
-- 问具体数据值（"上月 GMV 多少"）→ 先本技能定位口径和表，再走 querying-data。
-- 已知飞书文档 token 且只要正文 → 直接 `retrieve_doc_read`，不必先检索。
+## 工具与职责
 
-## 决策流程
+| 工具 | 职责 |
+|---|---|
+| `retrieve_search` | 用自然语言发现候选实体；默认 `strategy="hybrid"` |
+| `retrieve_schema` | 从 Neo4j 实时内省节点属性与关系；写 Cypher 前先用 |
+| `retrieve_cypher` | 精确列举、计数或沿实时关系取完整上下文；默认只写只读 `MATCH` |
+| `retrieve_doc_read` | 读取语义表 SQL 文档或报告模板 docx 的最新 Markdown 正文 |
+| `retrieve_doc_update` | 覆盖更新 docx 完整正文；先读后改，写入前确认目标与全文 |
+| `sync` | 从飞书多维表全量重建图、约束、索引与向量；优先 `dry_run=true` 预检 |
 
-1. **受治理指标先查口径再下数**：凡问题涉及指标、表、维度等语义层实体，必须先 `retrieve_search` 拿到受治理定义，禁止凭名称猜测口径或表归属。
-2. **默认 hybrid 检索**：`retrieve_search` 默认 `strategy="hybrid"`（向量 + CJK 全文 + 精确命中，WRRF 融合）。仅在诊断检索质量问题、需要 A/B 基线时回退 `strategy="vector"`。
-3. **需要图上精确遍历**（上下游依赖、层级展开、"X 下有哪些 Y"、计数）→ 先 `retrieve_schema` 拿实时结构，再写 Cypher 走 `retrieve_cypher`。
-4. **语义表与 SQL 文档（取数前的关键一步）**：命中的「表」实体看 `实现方式` 字段——值为 `sql_query` 时这是**语义表（逻辑表）**：库中没有同名物理表，其数据由飞书「SQL 文档」里的查询定义产生。`SQL文档` 字段值为「显示文本\n文档URL」（第二行是 docx 链接）→ 剥出 token 用 `retrieve_doc_read` 读正文，查询定义交给 querying-data 按 CTE 组装（组装规则见该技能）。`实现方式` 为其他值或缺省 → 按物理表处理。**别对语义表跑 `sql_schema`**——`relation does not exist` 是预期行为，不是数据缺失。
-5. **报告模板（原 using-templates 的替代）**：模板 = 语义层「报告模板」多维表里的行（用 `retrieve_search` / `retrieve_cypher` 发现元数据）+ 其链接的 docx 正文（`retrieve_doc_read` 读、`retrieve_doc_update` 改）。
-6. **检索为空 / schema 报图为空** → 图未建或已变更，跑 `sync`（详见 [references/sync-and-maintenance.md](references/sync-and-maintenance.md)）。
+参数和返回结构以工具列表中的 schema 为准；本文件只补充如何组合使用。同步细节见 [sync-and-maintenance.md](references/sync-and-maintenance.md)。
 
-## 工具契约
+## 默认检索流程
 
-| 工具 | 输入指引 | 输出指引 |
-|---|---|---|
-| `retrieve_search` | `question: str` 必填（自然语言）；`top_k: int=5`（1-20；hybrid 为融合后**全局** top_k，vector 为每索引 top_k）；`targets?: list[str]` 限定实体标签（如 `["指标","表"]`，不传=全搜）；`strategy: "vector"\|"hybrid"` 默认 `hybrid` | `{question, strategy, results[]}`；每条含 `label`、`score`（向后兼容=vector cosine，仅全文召回时为 0）、`properties`（业务属性，内部属性已滤）、`context`（图邻居，按关联标签分组）。hybrid 额外有 `retrieval` evidence：`fusion_score`（WRRF 融合分，仅排序用、非概率）、`vector_score`/`fulltext_score`（量纲不同，**禁止直接比较**）、`exact_match`（受治理名称/ID/别名精确命中，未命中 null）、`vector_rank`/`lexical_rank`/`exact_rank`。下一步：读 properties 回答定义类问题，或顺 context 继续遍历 |
-| `retrieve_cypher` | `statement: str` 必填（**可写库**，非 readOnly） | `{cypher, rows[]}`；节点自动剥内部属性。写库前先 `retrieve_schema` 确认结构；优先只读 MATCH |
-| `retrieve_schema` | 无参 | `{nodes: {label: {properties: {名: 类型}, unique: [字段]}}, relationships: ["(:\`A\`)-[:\`R\`]->(:\`B\`)"]}`，全部来自 Neo4j 实时内省。图为空时返回可操作错误 → 先跑 `sync` |
-| `retrieve_doc_read` | `doc: str`（**只收 docx token**——代码不做 URL 解析，从链接里剥出 docx token 再传） | `{content, document_id}`，content 为 markdown。文档须已共享给飞书自建应用，权限报错按提示处理 |
-| `retrieve_doc_update` | `doc: str`（**只收 docx token**——代码不做 URL 解析，从链接里剥出 docx token 再传）+ `content: str`（markdown） | `{updated, document_id}`。**覆盖写**非追加（先清空正文块再重灌）；须给应用写权限。只改正文，不碰多维表 |
-| `sync` | `dry_run: bool=false`（true=只预检不写库） | 全量重建 飞书多维表 → Neo4j 图 → 向量。何时用：语义层多维表结构变更后、检索/schema 报图为空时。详细契约见 [references/sync-and-maintenance.md](references/sync-and-maintenance.md) |
+1. 从用户问题提取指标/概念、统计对象、时间、分组或筛选维度、业务范围与期望答案。
+2. 用 `retrieve_search` 做宽召回。默认 hybrid；有明确领域时用 `targets` 限定，但不确定就不传，避免漏掉跨实体答案。
+3. 比较候选的名称/ID、定义、范围、业务归属和图邻居。`retrieval.fusion_score` 只用于排序；不要把它解释为置信概率，也不要直接比较 vector/fulltext 两种分数。
+4. 若答案需要完整列表、精确关系或搜索结果的邻居被截断，先 `retrieve_schema`，再按实时 label/属性/关系写只读 Cypher。
+5. 对语义表或模板链接，剥出 docx token 后用 `retrieve_doc_read` 读最新正文；不要依赖对话中的旧副本。
+6. 返回已采用实体、定义、关键属性、来源层级和仍未解决的歧义。需要数值时把确定好的契约交给 querying-data。
 
-## 调用示例
+## 指标解析
 
-**例 1：查指标口径**
+命中指标后至少确认：
 
-调 `retrieve_search`：
+- 指标名称与 ID、定义、计算说明。
+- 分子/分母表达式或聚合表达式、指标过滤条件。
+- 默认时间字段及用户所问时间窗口。
+- 参与计算表、所需的直接 `使用表关系` ID。
+- 用户要求的分组/筛选维度，而不只看指标的“常用维度组”。
 
-```json
-{"question": "复购人数是什么口径", "targets": ["指标", "表", "表关系", "维度"]}
-```
+最新版语义层没有“表关系链”。指标的 `使用表关系` 直接引用“表关系”实体；每条关系自己提供参与表、别名、基数和 JOIN 表达式。不得递归寻找“前置链”“启用链”或凭同名字段补关系。完整实体字段与解析规则见 [ontology-contract.md](references/ontology-contract.md)。
 
-返回摘要：`results[0]` 为「指标」实体，`properties` 含指标名称、定义、计算说明、参与计算表；`context.表` / `context.表关系` 带出计算链；`retrieval.exact_match` 若非 null 说明精确命中了受治理名称。下一步：按定义向用户复述口径，或转 querying-data 按 `context` 中的表下数。
+若存在多个会产生不同数字的候选指标，先列出最小差异并请求确认；若唯一候选足够明确，继续执行并在交付时说明采用口径。
 
-**例 2：读报告模板正文**
+## 维度解析
 
-先调 `retrieve_search`（targets 限定「报告模板」标签；该标签以 graph-config 实际配置为准，若未配置则去掉 targets 全搜）：
+把用户用于分组、筛选、对比或展示的业务属性都当作待解析维度：
 
-```json
-{"question": "周报 模板", "targets": ["报告模板"]}
-```
+1. 检索用户原词及可能取值，取得维度 ID、维度组、来源字段/表、关联键、主键维度和取值特征。
+2. 先检查参与计算表是否已经输出语义一致的字段；一致则直接用。
+3. 若未输出，只有在事实表具备兼容且可验证的关联键时，才按维度契约补维表，默认 `LEFT JOIN`。
+4. 名称相似、枚举部分重合、字段顺序或 `CASE` 猜测都不能证明同一维度。
+5. 多个候选会改变结果时追问；没有可验证关联键时停止并说明缺口。
 
-从「报告模板」行的属性里拿 docx 链接，剥出 docx token；再调 `retrieve_doc_read`：
+## 表与文档
 
-```json
-{"doc": "docxcnXXXXXXXXXXXX"}
-```
+- `实现方式="sql_query"`：逻辑语义表，数据库中通常没有同名物理 relation。读取 `SQL文档` 的最新正文，由 querying-data 作为该表别名的 CTE/派生表使用。不要对它调用 `sql_schema`。
+- `实现方式="physical_table"` 或其他物理实现：可用 `sql_schema` 核对数据库真实列；图谱负责说明用途、粒度、别名和主键。
+- `SQL文档` 可能是“显示文本 + URL”的多行值；传给文档工具的只能是 docx token，不是完整 URL。
+- 报告模板由“报告模板”实体的元数据与链接 docx 正文组成。搜索模板后读正文；更新时先读原文、生成完整新正文，再调用覆盖写工具。
 
-返回 markdown 正文。下一步：按模板结构组装报告；需要改模板本身时用 `retrieve_doc_update`（覆盖写，先读后拼全量正文）。
+## 检索失败与陈旧性
 
-## 陷阱与注意
+不要一次空结果就放弃：
 
-- **精确命中只匹配受治理身份字段**（字段名以 ID 结尾 / 含"名称""别名" / name / alias），不扫定义等长文本——"定义里提到另一个指标"不会被误加权。
-- **换 embedding 模型或维度必须全量重算**（重跑 `sync`），新旧向量不可混用；索引维度不匹配会导致向量召回静默为空。
-- `retrieve_doc_update` 是**覆盖写**：会把文档正文整体替换，改模板须先 `retrieve_doc_read` 取回原文再拼改后全文。
-- 飞书多维表、目标文档、模板 docx 必须**共享给飞书自建应用**，否则 403/权限错误。
-- 检索结果 `context` 里邻居被截断（每命中每类关系最多 20 个）属正常现象，需完整邻居时改用 `retrieve_cypher`。
-- `score` 在 hybrid 下只是兼容字段，判断融合顺序看 `retrieval.fusion_score`。
+1. 换业务别名、指标 ID、字段名或相邻实体重搜。
+2. 去掉过窄的 `targets`，扩大到相关实体。
+3. 用 `retrieve_schema` 判断是“没有命中”还是“实体/关系尚未部署”。
+4. 工作簿已有实体但运行时 schema 缺失，视为部署或同步漂移；说明缺口，待配置部署后 `sync`，不要把暂时缺失写成长期架构事实。
+5. 图为空、结构变化或 embedding 配置变化时先 `sync(dry_run=true)`；确认预检无误后才执行写入式全量同步。
 
-## 深入参考
+## 回答格式
 
-- [references/sync-and-maintenance.md](references/sync-and-maintenance.md) —— sync 两段式流程、dry_run 预检清单、字段类型清洗范围、索引契约、embedding 审计字段。
-- [references/cypher-guide.md](references/cypher-guide.md) —— `retrieve_schema` 返回结构逐字段解读、中文 label 的 Cypher 写法、图扩展截断说明。
+按问题类型只返回必要字段：
+
+- 指标：定义、公式/分子分母、过滤、默认时间字段、参与表、直接关系 ID、可用维度。
+- 表：中文名、物理/逻辑实现、表名与别名、粒度、主键、SQL 文档。
+- 维度：ID/名称/维度组、来源字段与表、关联键、取值特征、直接使用或需 JOIN。
+- 业务层级：业务线 → 业务板块 → 业务小点。
+- 模板：类型、名称、说明、文档来源；正文按需读取，不整篇倾倒。
+
+结尾给简短来源说明，例如：
+
+> 来源：受治理语义层（指标 / 表 / 维度 / 表关系）· 运行时检索 · 未验证项：无
+
+仅在图谱实际提供时写数据新鲜度、所有者或文档修订信息；不要编造缺失元数据。
+
+## 安全边界
+
+- `retrieve_cypher` 支持写库，但日常检索只用只读语句。任何写操作先确认范围和影响。
+- `retrieve_doc_update` 是整体覆盖，不是追加；错误全文会直接替换原文。
+- `sync(dry_run=false)` 会清空并重建图，是运维操作，不因普通搜索分数低就执行。
+- 文档和表必须已共享给飞书应用；403 是权限问题，不是空内容。
+- 搜索 `context` 每类邻居可能截断；要完整集合改用 Cypher。
+
+## 参考
+
+- [ontology-contract.md](references/ontology-contract.md)：最新版语义层实体、直接表关系契约和各类问题的解析清单。
+- [cypher-guide.md](references/cypher-guide.md)：实时 schema、中文 label、安全 Cypher 与邻居截断。
+- [sync-and-maintenance.md](references/sync-and-maintenance.md)：同步预检、全量重建、索引和 embedding 维护。

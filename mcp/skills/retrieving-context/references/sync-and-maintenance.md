@@ -1,6 +1,6 @@
 # sync 与语义层维护
 
-真相源：`mcp/sda_mcp/skills/retrieving_context_sync.py`。`sync` 只有一个参数 `dry_run: bool=false`；schema 只暴露 `dry_run`，未知键会被静默忽略（拼错参数名不会报错，会按 `dry_run=false` 执行）——**先跑 `dry_run=true` 预检再全量**，不要裸调。
+真相源：`mcp/sda_mcp/skills/retrieving_context_sync.py`。`sync` 只有一个参数 `dry_run: bool=false`；不要传未声明字段。由于默认值会执行破坏性全量重建，**先明确传 `dry_run=true` 预检再全量**，不要裸调。
 
 ## 两段式流程：外部准备全部在清库前
 

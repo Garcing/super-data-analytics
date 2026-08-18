@@ -1,97 +1,97 @@
 ---
 name: visualizing-data
-description: 数据可视化。当用户要求画图、画图表、做可视化、趋势图、分布图、对比图、漏斗图、瀑布图，或需要一张数值准确、可直接分享的单图时使用；chart 工具按 JSON spec 确定性渲染 14 种图型并返回图片 + 公网 URL。
-metadata:
-  skill-series: super-data-analytics
-  chinese-name: 数据可视化
-  mcp-server: sda
-  mcp-tools:
-    owns:
-      - chart
-    uses: []
+description: 将结构化数据渲染为数值准确、可复现、可直接分享的静态单图。用户要求趋势图、对比图、分布图、漏斗图、瀑布图、热力图、帕累托图或精确数据表时使用；chart 接收声明式 JSON spec 并返回 PNG/SVG。视觉海报或 AI 配图交给 building-reports。
 ---
 
-# visualizing-data（数据可视化）
+# 数据可视化
 
-把数据变成一张**数值精确、可复现**的图表。通过 `sda` MCP 服务的 `chart` 工具，传一份声明式 JSON spec（type/title/subtitle/data/encoding/options），服务端确定性渲染并返回图片字节 + 可分享 URL。核心纪律：**图上每个数值标签必须与数据一致——本技能只做确定性图表，不做视觉海报**（要 AI 配图/海报风走 building-reports 的 `report_image_generate`）。
+用 `chart` 把已确认的数据渲染成确定性单图。图上数字、标签和排序必须与输入一致；本技能不负责取数、不生成营销海报，也不把图形替代分析结论。
 
-## 何时使用 / 何时不用
+## 工作流
 
-**用**：
-- 用户要"画个图"、"趋势图"、"分布"、"对比"、"漏斗"、"瀑布"、"帕累托"等单图。
-- 报告里需要嵌入一张数值准确的图表（配合 building-reports）。
-- 需要一条可直接发到飞书/企微的图片 URL。
+1. 明确图要回答的一个问题、受众、单位、时间范围和口径。
+2. 检查数据粒度、缺失值、重复、排序和数值类型；大表先聚合或 Top N + 其他。
+3. 按分析意图选图型，而不是按视觉偏好。
+4. 构造 `spec`：`type`、非空 `title`/`subtitle`、`data`、`encoding` 和可选 `options`。
+5. 调 `chart`，检查返回图片、尺寸、URL 和错误/提示。
+6. 对照输入抽查标题、单位、数据标签、排序、图例、正负方向和总计；正式报告还要检查最终嵌入态。
 
-**不用**：
-- 要 AI 生成的视觉化配图/封面 → building-reports 的 `report_image_generate`。
-- 只要数字、不要图 → querying-data 直接取数。
-- 交互式 dashboard → 不支持，本工具只出静态单图。
+具体 encoding/options 和全部图型示例见 [chart-spec.md](references/chart-spec.md)，参数校验以工具 schema 为准。
 
-## 决策流程
+## 图表选型
 
-1. **选图型**（数据形态 → 图型映射）：
-
-   | 分析意图 | 图型 |
-   |---|---|
-   | 时间/顺序趋势 | `line`（多系列用 encoding.series）、`area`（单系列强调量） |
-   | 构成占比 | `pie`（类别少）；类别多/需精确对比 → `bar` + `series_mode: stacked` |
-   | 类别对比 | `bar`；类别名长/类别多 → `horizontal_bar` |
-   | 分布形态 | `histogram`（单变量）、`boxplot`（分组分布对比） |
-   | 两变量相关 | `scatter` |
-   | 转化漏斗 | `funnel` |
-   | 变化贡献拆解 | `waterfall` |
-   | 二八/头部集中度 | `pareto` |
-   | 两维交叉的数值矩阵 | `heatmap` |
-   | 量与率双轴（如销量+转化率） | `combo` |
-   | 精确数值展示 | `table` |
-
-2. **选 format**：默认 `png`（飞书/企微兼容，自动上传 Vercel Blob 得公网 URL）；要无损缩放或后续矢量编辑 → `svg`（不上传 Blob）。
-3. **构造 spec**：`type` + 必填 `title`/`subtitle`（两者都必须是非空字符串；subtitle 写一句口径/单位说明）+ `data`（行数组）+ `encoding`（字段名映射）+ `options`（可选）。每种图型的必填通道和 options **逐字段见 [references/chart-spec.md](references/chart-spec.md)**。
-4. **调 `chart`**，返回图片块 + 文本块「图表已生成（WxH）。URL: …」。给用户交付时**优先转述 URL**；上传失败时文本块提示"未上传 Blob，仅返回图片字节"，此时不是错误，图片块仍然有效。
-5. 大表（几十行以上）先聚合/取 TopN 再画；`data_labels` 默认 `auto`（≤20 个标数值；仅部分图型 auto 生效，见 reference），点太密会自动省略，需要强开就显式传 `true`。
-
-## 工具契约
-
-| 工具 | 输入指引 | 输出指引 |
+| 问题 | 使用 | 避免 |
 |---|---|---|
-| `chart` | `spec: dict` 必填：`type`（14 种之一：area/bar/boxplot/combo/funnel/heatmap/histogram/horizontal_bar/line/pareto/pie/scatter/table/waterfall）；`title: str` 必填非空；`subtitle: str` 必填非空（写口径/单位说明）；`data: list[dict]` 必填非空，每行一个对象；`encoding: dict` 必填，把角色（x/y/series/label/value/stage/delta/bar/line 等）映射到 data 里的字段名，必填角色随图型（见 reference）；`options: dict` 可选（width/height/data_labels/axis_labels/bins/sort/series_mode/markers/smooth/strip/start_value 等，默认值见 reference）。数值通道字段必须是数字（bool/None/字符串都会校验报错）。`format: "png"（默认）|"svg"`；`dpi: int=144`（72–300） | 多 content 块：ImageContent（图片字节）+ 文本块「图表已生成（WxH）。URL: …」。png 自动上传 Vercel Blob（cache 1h）；**上传失败仅返回图片块并附提示，不算错误**；svg 不上传。spec 不合法时返回可操作的 ContractError（指出哪个字段、哪一行错），按提示补正后重试 |
+| 精确逐行查数 | `table` | 强行转成图形 |
+| 时间/有序趋势 | `line`；强调量级可用 `area` | 长时间序列柱图 |
+| 类别大小比较 | `bar`；长标签/类别多用 `horizontal_bar` | 多切片饼图 |
+| 少量局部-整体构成 | `pie`（通常 ≤5 类） | 需要精确比较或类别很多 |
+| 分段构成 | `bar` + stacked/percent_stacked | series 过多 |
+| 单变量分布 | `histogram` | 只用均值柱图 |
+| 分组分布与离散 | `boxplot` | 用柱图隐藏分布 |
+| 两个数值变量关系 | `scatter` | 没有顺序却连线 |
+| 同类目两个不同量纲 | `combo` | 用双轴暗示不存在的因果/比例 |
+| 转化阶段 | `funnel` | 饼图表达步骤 |
+| 起点到终点的正负贡献 | `waterfall` | 普通柱图隐藏桥接关系 |
+| 降序贡献与累计占比 | `pareto` | 未排序柱图 |
+| 两维交叉矩阵/cohort | `heatmap` | 3D 图或过密小字 |
 
-## 调用示例
+先按数据形态判断：单变量分布、两个数值关系、类别+数值、有序序列或二维矩阵。只有单张图确实能回答问题时才画；多问题拆多图，不把十个结论塞进一张图。
 
-各渠道月度 GMV 对比，柱上带数值标签。调 `chart`：
+## 标题与口径
 
-```json
-{
-  "spec": {
-    "type": "bar",
-    "title": "各渠道月度 GMV",
-    "subtitle": "单位：万元；2026-07；来源：dws_gmv_channel",
-    "data": [
-      {"channel": "自然流量", "gmv": 320.5},
-      {"channel": "广告投放", "gmv": 274.0},
-      {"channel": "私域", "gmv": 156.8}
-    ],
-    "encoding": {"x": "channel", "y": "gmv"},
-    "options": {"data_labels": true}
-  },
-  "format": "png",
-  "dpi": 144
-}
-```
+- `title` 写图回答的业务问题或事实，不写超出数据证据的因果标题。
+- `subtitle` 必填，至少说明单位、时间窗口和关键口径/来源，例如“单位：万元；2026-07；按支付日期”。
+- 观察值、预测值、目标值使用不同系列并清楚标注。
+- 比率变化同时标明百分点与相对变化时，不混淆 `+2pp` 与 `+20%`。
+- 截断轴、双轴或不完整周期必须在副标题/注释中显式说明。
 
-返回：图片块（PNG，默认 1200x720 逻辑尺寸 @144dpi）+ 文本块「图表已生成（1200x720）。URL: https://…」。下一步：把 URL 发给用户或嵌入报告；若某通道字段名写错（如 `gmv` 拼错），会收到指明 `data[i]` 缺字段的错误，按提示修正。
+## 生产约束
 
-## 陷阱与注意
+- `data_labels` 适合少量且需要精确读数的数据点；密集图关闭，避免遮挡。
+- 柱状图比较绝对大小时通常从 0 起；若必须截断轴，要明确标注。
+- 百分比堆积只表达构成，不表达绝对规模；需要规模时用绝对堆积或另配总量图。
+- `combo` 左右轴单位必须写清，双轴只用于并列阅读，不证明两个指标可直接比较。
+- 饼图切片过多改 bar；长标签改 horizontal bar，不依赖密集旋转。
+- 颜色用于区分/强调而非装饰；同一语义在同一交付中保持颜色一致。
+- 排序要服务问题：时间按时间、漏斗按阶段、Pareto/排名按值；不得通过任意排序制造趋势。
+- 缺失值要先解释并清洗；数值通道必须传 number，不能传数字字符串、bool 或 null。
 
-- **spec 校验失败是可操作的**：错误信息会指出具体字段与行号（如 `encoding.y field 'gmv' must contain numeric values; row 2 has "N/A"`），按提示改 spec 重试，不要瞎换图型。
-- **subtitle 必填且非空**：没有副标题就写口径（单位/时间范围/来源），既满足校验又让图自带说明。
-- **数值通道必须是数字**：从 SQL 取出的字符串数字要先转成 number；缺失值先清洗。
-- 中文渲染无需关心：服务端已内置 CJK 字体。
-- png 上传 Blob 失败**不算错误**：图片块仍有效，只是没有 URL；需要 URL 时重试一次。
-- 大表先聚合：heatmap/bar 类图型几十个类别以上可读性差，先 TopN + "其他"。
-- `pie` 类别多时不精确，改 `bar`；`percent_stacked` 要求数值非负；`smooth` 需每条线 ≥3 个不同 x 值。
-- 本技能产物数值精确但风格固定（统一主题/配色），不要试图用它做营销海报。
+## 格式选择与返回
 
-## 深入参考
+- 默认 `png`：适合飞书/企微和报告嵌入，会尝试上传 Vercel Blob 并返回 URL。
+- `svg`：用于无损缩放或后续矢量编辑，不上传 Blob。
+- `dpi` 范围按工具 schema；通常保留默认值即可。
 
-- [references/chart-spec.md](references/chart-spec.md) —— chart spec 完整契约：顶层五字段、14 种图型逐一的 encoding 必填/可选通道、options（含默认值）与最小示例 JSON。
+PNG 上传失败不代表渲染失败：图片内容块仍可交付；确实需要公网 URL 时再重试。SVG 没有 URL 是设计行为。
+
+## 交付前检查
+
+- 标题/副标题是否准确写出时间、单位、口径。
+- 每个 encoding 字段都存在于每一行，数值字段类型正确。
+- 图上抽查数值与输入一致；总计、比例、起点终点能对上。
+- 轴、刻度、排序和颜色没有夸大差异。
+- 标签、图例不遮挡，中文正常显示。
+- 图型回答了用户的问题；正文结论与图方向一致。
+- URL/图片块真实可访问，而不是只返回“已生成”。
+
+## 常见失败
+
+- ContractError 指向具体字段/行：按错误修 spec，不盲目换图型。
+- 类别太多导致不可读：Top N + 其他、分面为多图，或改 table。
+- 百分比堆积含负值：改绝对值图或拆开正负。
+- `smooth` 数据点不足：取消平滑，不伪造插值。
+- 数字来自 SQL 的字符串：显式转换为数值后再画。
+- 图与正文不一致：以已验证数据为准重建图，不能手改正文圆回来。
+
+## 与其他技能协作
+
+- 需要取数：querying-data。
+- 需要贡献瀑布、预测带或实验对比：先完成对应分析，再把结构化结果传入。
+- 需要在线报告：将图 URL/数据交给 building-reports。
+- 需要视觉海报/封面：用 `report_image_generate`，但精确坐标图仍由 `chart` 生成。
+- 正式发布前：validating-analyses 检查图表诚实性和最终渲染态。
+
+## 参考
+
+- [chart-spec.md](references/chart-spec.md)：14 种图型的 encoding、options、默认值和最小 JSON 示例。

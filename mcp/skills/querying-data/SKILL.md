@@ -1,120 +1,144 @@
 ---
 name: querying-data
-description: 从 Hologres 跑 SQL 取数或对 Power BI 语义模型执行 DAX 查询。适用于查数、取数、跑 SQL、看表结构、Power BI / DAX 查询等场景；是全链路「检索口径 → 取数 → 分析」中的执行环节。
-metadata:
-  skill-series: super-data-analytics
-  chinese-name: 数据查询
-  mcp-server: sda
-  mcp-tools:
-    owns:
-      - sql_query
-      - sql_schema
-      - powerbi_schema
-      - powerbi_query
-    uses:
-      - retrieve_search
-      - retrieve_doc_read
+description: 执行 SDA 数据查询。默认用只读 Hologres/PostgreSQL SQL 查数或查看物理表 schema；仅当用户明确要求 Power BI、DAX 或指定 Power BI 语义模型时走 Power BI。用于执行用户给出的查询，或执行由受治理语义层和 Query Spec 形成的查询；不自行发明业务指标口径。
 ---
 
-# querying-data（数据查询）
+# 查询数据
 
-通过 `sda` MCP 服务执行取数：默认路径是 Hologres（PostgreSQL 兼容）单条 SELECT SQL；Power BI 语义模型（DAX）是保留的显式分支，仅当用户明确点名时使用。取数是全链路分析的执行环节——**受治理指标先经 retrieving-context 查口径，再在这里下数**。
+可靠执行查询，并把结果连同口径、粒度和限制交给下游分析。业务问题尚未解析为明确指标、表、关系和过滤条件时，先用 retrieving-context；复杂请求先用 orchestrating-analytics。
 
-## 何时使用 / 何时不用
+## 数据源选择
 
-**用**：
-- 用户要具体数据值："上月 GMV 多少"、"拉一下近 30 天日活"。
-- 用户问表结构："orders 表有哪些字段？"
-- 用户明确给出 DAX、点名 Power BI / 语义模型 / artifactId。
-- 下游技能（分析三技能、visualizing-data、building-reports）需要数据输入。
+默认用 SQL，包括普通查数、指标计算、业务分析、Hologres/PostgreSQL、表 schema 和用户提供的 SQL。
 
-**不用**：
-- 问指标口径、哪张表、业务概念 → 先 retrieving-context（`retrieve_search`），拿到口径和表归属再来。
-- 改写语义层 / 灌图 → retrieving-context 的 `sync`。
-- 问题只是"表之间什么关系"且答案在语义层 → `retrieve_search` / `retrieve_cypher`，不必真的跑数。
+只有下列情况使用 Power BI：
 
-## 决策流程
+- 用户明确要求 Power BI 或 DAX。
+- 用户指定 semantic model / artifact ID。
+- 用户提供 DAX 并要求执行。
+- SQL 路径不可用，且用户确认改用 Power BI。
 
-1. **SQL 是默认入口**：凡能用 Hologres/PG 查的，一律 `sql_query`，不绕道 Power BI。
-2. **Power BI 只走显式分支**：用户明确给 DAX、点名 Power BI、或指定 PBI 语义模型（artifactId）时才用 `powerbi_*`；"从 SQL 降级到 Power BI"也须用户确认。
-3. **受治理业务指标先解析口径**：问题涉及语义层治理的指标/表时，先 `retrieve_search`（retrieving-context 技能）拿到受治理定义和表/字段归属，再写 SQL——禁止凭名称猜表猜字段。
-4. **写 SQL 前先 `sql_schema` 确认字段名**（列名/类型），尤其是没把握的表；schema 对了 SQL 才一次过。
-5. **写 DAX 前必须 `powerbi_schema`**：确认表/列/度量值的准确名称。artifactId 是 GUID，来自用户指定或 config.json 的模型清单（服务未提供 list 工具）。
+“指标、语义层、看板、报表、KPI”这些词本身不触发 Power BI。
 
-### 语义表 SQL 组装规则（受治理指标取数主链路）
+## 工具与职责
 
-语义层命中的「表」分两类，取数方式不同：
+| 工具 | 职责 |
+|---|---|
+| `sql_schema` | 内省一个或多个物理表的真实列和类型 |
+| `sql_query` | 在强制只读事务中执行一条 SQL；结果不自动截断 |
+| `powerbi_schema` | 获取指定 Power BI 语义模型的表、列和度量值 |
+| `powerbi_query` | 对同一模型批量执行 1–4 条 DAX，每条有行数上限 |
 
-- **语义表（逻辑表）**：表节点 `实现方式 = "sql_query"`（如 `semantic.fact_order`）。**库里没有同名物理表**——数据由飞书「SQL 文档」里的查询定义产生，`SQL文档` 字段值为「显示文本\n文档URL」。
-  1. 用 `retrieve_doc_read`（retrieving-context 技能）读 SQL 文档**最新正文**——不依赖对话中或记忆里的旧 SQL 副本。
-  2. 把文档 SQL 作为该表**别名**（表节点的 `表别名` 字段，如 `ord`）的 CTE 嵌入：
-     ```sql
-     WITH ord AS ( <SQL 文档正文中的查询定义> )
-     SELECT <指标表达式/维度/过滤> FROM ord ...
-     ```
-  3. **保留文档中的业务逻辑**，只做必要的别名和 Hologres 方言适配；Hologres 拒绝多层 CTE 时改用等价派生表（子查询），不改写逻辑。
-- **物理表**：严格按语义层**已启用的表关系链**连接（顺序、类型、条件都来自元数据），不因字段同名自行推断 JOIN；维度补充按维度契约的来源表和关联键 `LEFT JOIN`（除非口径明确要求缩小总体）。
+具体参数、枚举和返回结构以工具列表中的输入/输出 schema 为准。Power BI 细节见 [powerbi.md](references/powerbi.md)。
 
-**执行前校验**：字段与别名存在、JOIN 两侧类型与业务含义兼容、维表关联键唯一性足以保持粒度、一对多连接不放大结果。**执行后校验**：空结果/异常全零、关键字段 NULL、时间覆盖、行数与粒度符合预期。**SQL 跑通 ≠ 口径正确**。
+## SQL 前置契约
 
-## 工具契约
+业务取数开始前应已明确：
 
-| 工具 | 输入指引 | 输出指引 |
-|---|---|---|
-| `sql_query` | `sql: str` 必填（单条 SELECT，readOnly）；`max_rows?: int`（预留，内核未用） | `{columns, rows, row_count}`：columns 为 `[{name, dataTypeID}]`，rows 为按列名索引的对象数组，row_count 为行数。行多时先 COUNT 评估量级再决定是否收窄 |
-| `sql_schema` | `tables: list[str]` 必填（≥1，`schema.table` 形式，如 `["public.orders"]`） | `{tables: [{schema, table, columns[]}]}`，columns 含列名、类型等定义（来自 PG information_schema） |
-| `powerbi_schema` | `artifact_id: str` 必填（语义模型 GUID，格式校验严格） | 语义模型表/列 schema（Fabric MCP `GetSemanticModelSchema` 原始结构，微软 Preview API，字段按实际返回解析） |
-| `powerbi_query` | `artifact_id: str` 必填（GUID）；`dax_queries: list[str]` 必填（**1-4 条** DAX，多条批量一次调用）；`max_rows: int=250`（1-1000，每条上限） | 各 DAX 查询的结果（Fabric MCP `ExecuteQuery` 原始结构）。底层 msal 认证 + 202 异步轮询（≤60s），agent 无感；结果结构按实际返回解析，不要硬编码路径 |
+- 指标定义、表达式、过滤条件。
+- 统计实体、去重键和目标粒度。
+- 时间字段、范围、时区和完整周期。
+- 参与表、稳定别名、实现方式和最新 SQL 文档正文。
+- 指标直接引用的表关系 ID、基数与 JOIN 表达式。
+- 分组/筛选维度及其直接字段或维表 JOIN。
+- 输出列、排序/数量限制与必要检查。
 
-## 调用示例
+信息不足时返回 retrieving-context / orchestrating-analytics，不从数据库猜口径、表、字段或 JOIN。
 
-**例 1：sql_schema → sql_query 串联**
+## SQL 组装
 
-先调 `sql_schema` 确认字段名：
+### 逻辑语义表
 
-```json
-{"tables": ["public.orders"]}
+`实现方式="sql_query"` 的表是逻辑表：
+
+1. 从语义层取得 `表别名` 和 `SQL文档`。
+2. 用 `retrieve_doc_read` 读取文档最新正文。
+3. 将正文作为对应别名的 CTE：
+
+```sql
+WITH ord AS (
+  <SQL 文档中的完整查询定义>
+)
+SELECT ...
+FROM ord
 ```
 
-按返回的列名写 SQL，再调 `sql_query`：
+4. 保留业务逻辑，只做必要的别名和 Hologres 方言适配。多层 CTE 不兼容时改为等价派生表，不重写指标逻辑。
 
-```json
-{"sql": "SELECT date_trunc('day', created_at) AS day, count(DISTINCT user_id) AS dau FROM public.orders WHERE created_at >= now() - interval '30 days' GROUP BY 1 ORDER BY 1"}
-```
+不要对逻辑语义表调用 `sql_schema`；数据库报 relation does not exist 是预期现象，不是数据缺失。
 
-返回 `columns`（含每列名与类型 OID）、`rows`（对象数组）、`row_count`。下一步：结果交给分析/画图/报告技能，或按发现继续追查。
+### 物理表与 JOIN
 
-**例 2：powerbi_query 最小示例**（用户已给 artifactId，schema 已确认）
+- 不确定列名/类型时，先 `sql_schema`；入参是 `tables: ["schema.table"]`。
+- 普通事实表之间只使用指标 `使用表关系` 直接引用的受治理关系；最新版没有表关系链。
+- 严格采用关系实体中的参与表、别名、基数和 JOIN 表达式，不因同名字段推断连接。
+- 维度已经由事实/语义表输出时直接引用；否则按维度来源表与关联键补 JOIN，默认 `LEFT JOIN`。
+- 拉链表按业务日期约束生效/失效区间；只按 ID 连接会重复并使用错误历史状态。
+- `1:N` 或多表 JOIN 前先把右表聚合到目标粒度，或明确使用 distinct；不能靠最终 `GROUP BY` 掩盖行数爆炸。
 
-调 `powerbi_query`：
+### 指标表达式
 
-```json
-{"artifact_id": "11111111-2222-3333-4444-555555555555", "dax_queries": ["EVALUATE ROW(\"test\", 1)"]}
-```
+- 使用受治理分子/分母、过滤条件和默认时间字段。
+- 比率使用安全除法，如 `numerator / NULLIF(denominator, 0)`。
+- 人数/个数按 Query Spec 的稳定 ID 去重。
+- 不用 `CASE`、名称模式、枚举顺序或“非 A 即 B”发明业务维度。
+- 未完整周期不得和完整周期直接比较；周/月按已确认的日历口径截取。
 
-返回该 DAX 的查询结果。多条 DAX 一并放进 `dax_queries`（最多 4 条），不要拆成多次调用。
+## 执行策略
 
-**例 3：语义表取数（受治理指标主链路）**
+1. **先估规模**：明细或未知量级先 COUNT、抽样或限定时间；大结果在 SQL 中聚合/LIMIT，工具不会自动截断。
+2. **一条只读 SQL**：`sql_query` 强制只读事务；不要尝试 DDL/DML、临时表或多语句脚本。
+3. **渐进验证**：复杂查询先验证各 CTE 粒度与关键键，再组合最终查询。
+4. **保留实际查询**：高风险交付、复核或用户要求时提供实际执行 SQL；普通查数不默认倾倒长 SQL。
 
-`retrieve_search` 命中 GMV 指标，参与计算表 `semantic.fact_order`（`实现方式=sql_query`，`表别名=ord`，`SQL文档` 第二行是 docx URL）。先经 retrieving-context 的 `retrieve_doc_read` 读到查询定义（示意），再组装：
+## 查询前检查
 
-```json
-{"sql": "WITH ord AS (SELECT ... FROM dw_trade.... WHERE ...) SELECT date_trunc('day', ord.支付时间) AS day, sum(ord.订单金额) AS gmv FROM ord WHERE ord.支付时间 >= '2026-07-01' GROUP BY 1 ORDER BY 1"}
-```
+- 表别名、字段名和类型存在。
+- 指标表达式引用的别名都在 sources 中。
+- JOIN 两侧字段业务含义与类型兼容。
+- JOIN 基数和维表唯一性保持目标粒度。
+- 过滤、排除项、时间范围和时区完整。
+- 每个用户要求的维度都经过语义解析。
 
-CTE 内是文档原文（保留业务逻辑），外层套指标表达式/时间/维度。下一步：结果交分析/画图技能，交付时注明「口径来自语义层指标 gmv」。
+## 查询后检查
 
-## 陷阱与注意
+至少检查：
 
-- **Hologres 走 VPN，偶发握手慢**：connect_timeout 20s；连接报错先怀疑 VPN/白名单，超时可重试一次，连续失败再报用户。
-- **语义表不是物理表**：`实现方式=sql_query` 的表跑 `sql_schema`/直接 FROM 会 `relation does not exist`——先查表节点的 `SQL文档` 链接读查询定义（见上文组装规则），别把预期行为当数据缺失上报。
-- **SQL 文档永远读最新**：每次取数重新 `retrieve_doc_read`，文档可能已被治理方修改；对话历史里的旧 SQL 副本只作参考。
-- **空字段名兜底**：psycopg 对空列名返回空串，内核兜底成 `col_N`（按列序编号）——rows 里出现 `col_0` 这类键即此原因。
-- **多条 DAX 批量**：一次 `powerbi_query` 带 1-4 条，优于多次单条调用（每次都要重新认证 + 轮询）。
-- **Power BI 权限**：Application（Client Credentials）模式，需 Azure AD 应用已授 Power BI API 权限 + Admin Consent；401/403 按错误提示的三条检查项引导用户找管理员。
-- `sql_query` 只接受单条 SQL；写操作不在本技能范围（readOnly）。
-- Power BI 结果是 Preview API 原始 JSON，结构可能随微软更新变化，解析按实际字段取。
+- `columns`、`row_count` 与目标输出是否一致。
+- 是否空结果、异常全零、关键字段大量 NULL。
+- 明细行数、主实体 distinct 数、JOIN 前后放大率。
+- 结果粒度和分组是否符合 Query Spec。
+- 最小/最大日期及最新分区是否覆盖所问窗口。
+- 总计与分项、分子与分母、比例范围等数学约束。
 
-## 深入参考
+SQL 成功运行只说明语法和权限通过，不说明业务答案正确。异常时先缩小到单表/单期/单实体定位，再决定修 SQL、补语义或说明数据问题。
 
-- [references/powerbi.md](references/powerbi.md) —— DAX 编写方法论：schema 先行、度量值引用规范、常见错误模式、EVALUATE 语法要点、函数查阅策略。
+## Power BI 流程
+
+1. 从用户指定、语义层“数据看板”的 Power BI 模型 ID，或已确认配置取得 artifact ID；不得猜 GUID。
+2. 先调用 `powerbi_schema`，确认表、列和度量值的精确名称。
+3. 根据 schema 写 DAX；同一模型需要多个小查询时可在一次 `powerbi_query` 中批量提交 1–4 条。
+4. 使用 `max_rows` 控制每条结果；需要全量时优先在 DAX 中聚合，不盲目把上限调大。
+5. 返回结果时说明使用的模型 ID、度量值/字段和过滤上下文。
+
+不得凭 SQL 表结构猜 DAX 名称，也不得把 SQL 和 Power BI 的同名指标默认视为同一口径。
+
+## 结果交付
+
+轻量查数至少返回：结果、采用口径、时间范围、主要筛选、来源层级和数据最大日期（可查时）。
+
+下游接口：
+
+- 上涨/下跌原因 → diagnosing-anomalies。
+- 未来值/目标 → predicting-trends。
+- 实验/活动效果 → evaluating-impact。
+- 数值精确单图 → visualizing-data。
+- 正式报告 → building-reports；高风险交付前 validating-analyses。
+
+## 常见失败
+
+- 逻辑语义表 schema 报不存在：改为读取 SQL 文档并包装 CTE。
+- 物理表列不存在：用 `sql_schema` 获取真实名称，不连续猜字段。
+- 一对多 JOIN 放大：先聚合右表，复核 distinct 主键和覆盖率。
+- 空结果：先检查时间字段/时区、过滤值、数据新鲜度和 INNER JOIN 丢失。
+- Power BI schema/query 超时或失败：按工具错误修复身份、模型 ID 或 DAX；不要静默改走 SQL。

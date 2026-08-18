@@ -1,12 +1,12 @@
 # Seedream 图片报告提示词写法（report_image_generate）
 
-真相源：`mcp/sda_mcp/skills/building_reports/image_gen.py` + 2026-08-14 真实冒烟（见 `mcp/README.md` §2.1）。provider 为火山方舟 Seedream（默认 `doubao-seedream-5-0-pro-260628`，可经 config `VOLCENGINE_ARK_IMAGE_MODEL` 或 `model` 入参换），**同步单次 HTTP、无 task 轮询**。
+真相源：`mcp/sda_mcp/skills/building_reports/image_gen.py`。provider 为火山方舟 Seedream，默认模型由服务端 config 的 `VOLCENGINE_ARK_IMAGE_MODEL` 决定，也可通过 `model` 入参覆盖；调用是**同步单次 HTTP、无 task 轮询**。
 
-## 冒烟基线（写 prompt 前先知道边界）
+## 运行边界
 
-- `size=2K` + prompt 写「3:4」→ 实测出图 **1776x2368**（竖版），文字清晰。
-- 耗时约 **92 秒**（60-90s 区间都正常），客户端超时别设太短。
-- **中文 KPI、8 个趋势数值和结论均核对正确**——中文数值渲染可靠，前提是把数字写全喂进去。
+- `size=2K` + prompt 写「3:4」可作为竖版报告的常用起点；实际像素以模型返回为准。
+- 生图通常明显慢于普通工具调用，耗时受模型和负载影响；未得到明确失败前不要重复提交。
+- 中文和数字可能生成正确，也可能出现错字、漏字或数值变形；完整提供数据只能降低风险，不能替代逐项验收。
 - 返回 TOS 签名 URL 带 `X-Tos-Expires=86400`（24h），不上传 Blob。
 
 ## 提示词结构（照填）
@@ -50,13 +50,13 @@ Seedream 不会自己脑补数据，把以下信息全部写进 prompt：
 |---|---|
 | `size` | `"2K"` 或模型支持的 WxH；报告类建议 2K 保证文字清晰 |
 | `response_format` | `url`（默认，返回 24h 下载链接，适合转述/留存）/ `b64_json`（返回 MCP 图片块，适合直接给用户看图） |
-| `seed` | -1..2^31-1；固定 seed + 固定 prompt 可复现同图，微调 prompt 时保留 seed 更稳 |
+| `seed` | -1..2^31-1；固定 seed 可提高近似复现性，但不保证像确定性图表那样逐像素一致 |
 | `watermark` | 默认 false |
 | `model` | Model ID 或 Endpoint ID；缺省 config `VOLCENGINE_ARK_IMAGE_MODEL` |
 
 ## 生成后检查清单
 
-- [ ] 图上数值与提供数据**逐个核对**（中文数值实测可靠，但仍要核对）。
+- [ ] 图上数值与提供数据**逐个核对**；任何错字、漏字或数字变形都不能交付。
 - [ ] 每个图表都带数据标签。
 - [ ] 结论文字无错别字。
 - [ ] **需要留存的立即下载**：URL 24h 过期（`X-Tos-Expires=86400`），服务端不落盘、不上传 Blob；错过时效只能带原 seed 重生成（近似复现）。

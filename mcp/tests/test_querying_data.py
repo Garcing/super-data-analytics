@@ -55,9 +55,10 @@ class _FakeCursor:
     def __init__(self, descr, rows):
         self.description = descr
         self._rows = rows
+        self.executed = []
     def __enter__(self): return self
     def __exit__(self, *a): return False
-    def execute(self, *a, **k): pass
+    def execute(self, statement, *a, **k): self.executed.append(statement)
     def fetchall(self): return self._rows
     def fetchone(self): return self._rows[0] if self._rows else None
 
@@ -79,6 +80,7 @@ def test_sql_query_normalizes_empty_column_names(monkeypatch):
     assert r.columns[1]["name"] == "col_1"
     assert r.row_count == 2
     assert not hasattr(r, "ok")
+    assert cursor.executed == ["SET TRANSACTION READ ONLY", "SELECT 1"]
 
 
 def test_powerbi_query_rejects_bad_artifact():

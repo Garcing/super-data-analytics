@@ -14,7 +14,8 @@ Power BI 是 querying-data 的显式保留分支，不是默认查询路径：�
 `artifact_id` 是必填的语义模型 GUID，服务不做任何回落——没带就报格式错误。获取顺序：
 
 1. **上游上下文已给**（业务方明确指定了看板/模型）→ 直接用。
-2. **上游上下文没有** → 查 `~/.super-data-analytics/config.json` 的 `powerbi-semantic-models` 块（`id` / `name` / `is_default` / `description`），结合请求意图选对模型再填。服务未提供 list 工具。
+2. **未给 ID，但用户指定了业务看板** → 用 `retrieve_search` 检索「数据看板」实体，从其 `PowerBI语义模型ID` 取得候选，并核对看板名称/业务范围。
+3. **语义层也没有候选** → 请用户提供 artifact ID 或明确模型；服务没有 list 工具，客户端不能读取服务器本地 config，也不能猜 GUID。
 
 ## 调用形态
 
