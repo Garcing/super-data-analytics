@@ -206,9 +206,11 @@ python -m pytest -q
 首次发布代码：
 
 ```bash
-git clone --branch main --single-branch \
-  https://github.com/Garcing/super-data-analytics.git ~/sda-mcp
+git clone --depth 1 --branch main --single-branch \
+  git@github.com:Garcing/super-data-analytics.git ~/sda-mcp
 ```
+
+`hermes` 当前到 `github.com:443` 的 HTTPS Git 路径超时，但 GitHub SSH 22 端口和现有密钥认证正常，因此部署 remote 必须保持上述 SSH URL。浅克隆足以支持 main 的日常 fast-forward pull；需要回退到浅历史之外的提交时，先执行 `git fetch --unshallow origin` 或按目标提交加深历史。
 
 如果 `~/sda-mcp` 是旧 archive 解压目录，不要直接在其中 `git init`。先 clone 到同级新目录、复制 `.env`、完成 build 验证后再切换；旧目录保留一个发布周期用于回退。
 
