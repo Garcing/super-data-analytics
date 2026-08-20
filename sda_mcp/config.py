@@ -24,7 +24,10 @@ def load_config() -> dict[str, Any]:
 
 
 def get_env(*keys: str) -> dict[str, str]:
-    env = load_config().get("env", {})
+    config_env = load_config().get("env", {})
+    # 部署环境可以覆盖机器相关配置；空环境变量不遮蔽 config.json。
+    # 例如服务器通过 .env 覆盖 HOLOGRES_HOST/PORT，本机仍使用配置文件值。
+    env = {k: os.environ.get(k) or config_env.get(k) for k in keys}
     missing = [k for k in keys if not env.get(k)]
     if missing:
         raise ConfigError(f"配置缺少: {', '.join(missing)}（请在 config.json 的 env 块补全）")

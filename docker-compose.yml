@@ -7,6 +7,9 @@ services:
     environment:
       # 静态 Bearer token（hermes/笔记本经 Caddy 同一 token）。部署时在此填或用 .env
       SDA_MCP_TOKEN: ${SDA_MCP_TOKEN}
+      # 机器差异通过 .env 覆盖；留空时 get_env() 回退 config.json。
+      HOLOGRES_HOST: ${HOLOGRES_HOST:-}
+      HOLOGRES_PORT: ${HOLOGRES_PORT:-}
       # config.json 挂载点（宿主 ~/.super-data-analytics/config.json）
       SDA_CONFIG_PATH: /root/.super-data-analytics/config.json
     volumes:

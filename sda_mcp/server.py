@@ -1,4 +1,4 @@
-"""FastMCP(v2 MCPServer) 入口：stateless JSON HTTP，静态 Bearer 鉴权，注册 24 工具。
+"""FastMCP(v2 MCPServer) 入口：stateless JSON HTTP，静态 Bearer 鉴权，注册 19 个工具。
 
 运行：SDA_MCP_TOKEN=<token> python -m sda_mcp.server
 端点：http://0.0.0.0:3100/mcp
