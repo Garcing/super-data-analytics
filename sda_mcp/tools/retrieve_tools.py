@@ -50,7 +50,9 @@ def retrieve_search(
 
     返回 ``question``、``strategy``、``results[]``；每个结果含实体
     ``label``、业务 ``properties``、图 ``context``，hybrid 另含
-    ``retrieval`` 排序证据。
+    ``retrieval`` 排序证据。``context`` 按邻居实体类型分桶，桶为
+    ``{"items", "total", "truncated"}``；``truncated=true`` 表示邻居超过
+    保留上限被截断（``total`` 为真实总数），完整邻居改用 ``retrieve_cypher``。
     """
     return _search(question, top_k, targets, strategy)
 

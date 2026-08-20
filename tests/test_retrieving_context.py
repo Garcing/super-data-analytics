@@ -5,8 +5,8 @@ from sda_mcp.skills import retrieving_context as r
 
 GC = {
     "embedding": {"model": "BAAI/bge-small-zh-v1.5", "dimensions": 512},
-    "entities": {"指标": {"key_field": "指标ID", "table_id": "tbl1", "vector_index": True},
-                 "表": {"key_field": "表ID", "table_id": "tbl2", "vector_index": False}},
+    "entities": {"指标": {"key_field": "指标ID", "table_id": "tbl1"},
+                 "表": {"key_field": "表ID", "table_id": "tbl2"}},
     "relationships": [{"type": "属于", "from": "指标", "to": "表"}],
 }
 
@@ -190,19 +190,19 @@ def _make_client(monkeypatch):
     return client, fake_session
 
 
-def test_fetch_graph_context_self_loop_is_undirected(monkeypatch):
+def test_batch_context_self_loop_is_undirected(monkeypatch):
     """from == to == label：自环走无向 -[:T]-。"""
     client, session = _make_client(monkeypatch)
     rels = [{"type": "关联", "from": "指标", "to": "指标"}]
-    client.fetch_graph_context("指标", "node-1", rels)
+    client.fetch_graph_context_batch([{"id": "node-1", "label": "指标"}], rels)
     assert any("-[:`关联`]-" in c for c in session.captured_cyphers), session.captured_cyphers
 
 
-def test_fetch_graph_context_outgoing_is_directed(monkeypatch):
+def test_batch_context_outgoing_is_directed(monkeypatch):
     """from == label 且 to != label：出边走 -[:T]->。"""
     client, session = _make_client(monkeypatch)
     rels = [{"type": "属于", "from": "指标", "to": "表"}]
-    client.fetch_graph_context("指标", "node-1", rels)
+    client.fetch_graph_context_batch([{"id": "node-1", "label": "指标"}], rels)
     assert any("-[:`属于`]->" in c for c in session.captured_cyphers), session.captured_cyphers
 
 
@@ -300,3 +300,50 @@ def test_batch_context_groups_ids_by_relationship(monkeypatch):
     )
     assert len(session.captured_cyphers) == 1
     assert "elementId(n) IN $nodeIds" in session.captured_cyphers[0]
+
+
+class _RecordSession(_FakeSession):
+    """返回预置记录，用于验证 context 桶的截断标记。"""
+
+    def __init__(self, records):
+        super().__init__()
+        self.records = records
+
+    def run(self, cypher, **kwargs):
+        super().run(cypher, **kwargs)
+        return iter(self.records)
+
+
+def _make_record_client(monkeypatch, records):
+    client = r.Neo4jClient.__new__(r.Neo4jClient)
+    client._database = "neo4j"
+    session = _RecordSession(records)
+    monkeypatch.setattr(client, "_session", lambda: session)
+    return client
+
+
+def test_batch_context_marks_truncation_over_limit(monkeypatch):
+    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(25)]
+    client = _make_record_client(monkeypatch, records)
+    ctx = client.fetch_graph_context_batch(
+        [{"id": "m1", "label": "指标"}],
+        [{"type": "使用", "from": "指标", "to": "表"}],
+    )
+    bucket = ctx["m1"]["表"]
+    assert bucket["total"] == 25
+    assert len(bucket["items"]) == r.CONTEXT_NEIGHBOR_LIMIT
+    assert bucket["truncated"] is True
+
+
+def test_batch_context_under_limit_not_truncated(monkeypatch):
+    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(3)]
+    client = _make_record_client(monkeypatch, records)
+    ctx = client.fetch_graph_context_batch(
+        [{"id": "m1", "label": "指标"}],
+        [{"type": "使用", "from": "指标", "to": "表"}],
+    )
+    assert ctx["m1"]["表"] == {
+        "items": [{"表名称": "t0"}, {"表名称": "t1"}, {"表名称": "t2"}],
+        "total": 3,
+        "truncated": False,
+    }

@@ -31,16 +31,16 @@
 3. **只读优先**：`retrieve_cypher` 是**可写库**工具（非 readOnly）。日常问答只用 `MATCH ... RETURN`；任何写操作（MERGE/SET/DELETE）都要明确理由，且明确这是全量 sync 会清掉的临时数据。
 4. **参数化值**：能传参就传参（Neo4j 驱动支持），避免拼接引号地狱。
 5. **不要手扫全表算 cosine**：向量检索走 `retrieve_search`（内部用向量索引或 Cypher 25 `SEARCH`）；手写逐节点 cosine 全表扫描既慢又绕过索引。同理，全文检索走内置 CJK 索引，不要 `toLower(n.search_text) CONTAINS ...`。
-6. 邻居太多时先 `LIMIT`：检索结果的 context 已截断，完整遍历（如展开整棵业务层级）用 Cypher 并限制返回量。
+6. 邻居太多时先 `LIMIT`：检索结果的 context 桶带 `truncated` 标记，截断时完整遍历（如展开整棵业务层级）用 Cypher 并限制返回量。
 
 ## 图扩展与邻居截断
 
 `retrieve_search` 的图上下文扩展（`fetch_graph_context_batch`）有两个关键行为：
 
 - **发生在融合截断之后**：先 WRRF 融合各来源候选、截取全局 `top_k`，只对最终候选查邻居——所以不会为落选候选浪费查询。
-- **每命中、每类关系最多 20 个邻居**：按 graph-config 声明的关系及方向批量查询，同一命中同一邻居标签最多保留 20 条。自环关系（from=to）双向扩展且排除自身。
+- **每命中、每类关系最多 20 个邻居**：按 graph-config 声明的关系及方向批量查询，同一命中同一邻居标签最多保留 20 条。自环关系（from=to）双向扩展且排除自身。桶结构为 `{"items": [...], "total": 邻居总数, "truncated": 是否截断}`。
 
-因此检索结果 `context` 里邻居不全属正常现象：某指标关联 50 张表时只会看到前 20 张。需要完整邻居（计数、全量列举、递归层级）时，改用 `retrieve_schema` + `retrieve_cypher` 自己写遍历，例如：
+因此检索结果 `context` 里邻居不全属正常现象：某指标关联 50 张表时 `items` 只含前 20 张，但 `total=50`、`truncated=true`。需要完整邻居（全量列举、递归层级）时，改用 `retrieve_schema` + `retrieve_cypher` 自己写遍历，例如：
 
 ```cypher
 MATCH (m:`指标` {`指标ID`: $id})-[:`使用`]->(t:`表`)

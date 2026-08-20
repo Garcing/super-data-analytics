@@ -27,11 +27,6 @@ def _escape(label: str) -> str:
     return label.replace("`", "``")
 
 
-def _should_vectorize(cfg: dict) -> bool:
-    """判断实体是否参与检索；vector_index 默认为 True。"""
-    return (cfg or {}).get("vector_index", True) is not False
-
-
 def _format_value(value) -> str:
     """把属性值格式化为 search_text 片段。"""
     if isinstance(value, list):
@@ -500,9 +495,7 @@ def _build_relationships(client: Neo4jClient, relationships: list, entities: dic
 def _generate_search_text(client: Neo4jClient, entities: dict) -> dict[str, int]:
     """把节点属性拼成“字段名：值。”并写入 search_text。"""
     counts: dict[str, int] = {}
-    for label, cfg in entities.items():
-        if not _should_vectorize(cfg):
-            continue
+    for label in entities:
         esc_label = _escape(label)
         rows = client.run_cypher(
             f"MATCH (n:`{esc_label}`) "
@@ -535,9 +528,7 @@ def _generate_search_text(client: Neo4jClient, entities: dict) -> dict[str, int]
 def _create_vector_indexes(client: Neo4jClient, entities: dict, dimensions: int) -> list[str]:
     """为参与检索的实体创建 cosine 向量索引。"""
     index_names: list[str] = []
-    for label, cfg in entities.items():
-        if not _should_vectorize(cfg):
-            continue
+    for label in entities:
         esc_label = _escape(label)
         index_name = f"{label}_embedding_index"
         cypher = (
@@ -558,9 +549,7 @@ def _create_vector_indexes(client: Neo4jClient, entities: dict, dimensions: int)
 def _create_fulltext_indexes(client: Neo4jClient, entities: dict) -> list[str]:
     """按实体类型为 search_text 创建 CJK 全文索引。"""
     index_names: list[str] = []
-    for label, cfg in entities.items():
-        if not _should_vectorize(cfg):
-            continue
+    for label in entities:
         index_name = f"{label}_search_text_index"
         client.execute(
             f"CREATE FULLTEXT INDEX `{_escape(index_name)}` IF NOT EXISTS "
@@ -580,9 +569,7 @@ def _embed_nodes(
 ) -> dict[str, int]:
     """批量生成 L2 归一化向量，并写入模型、维度和更新时间。"""
     counts: dict[str, int] = {}
-    for label, cfg in entities.items():
-        if not _should_vectorize(cfg):
-            continue
+    for label in entities:
         esc_label = _escape(label)
         rows = client.run_cypher(
             f"MATCH (n:`{esc_label}`) WHERE n.search_text IS NOT NULL "
@@ -621,9 +608,6 @@ def sync_graph(dry_run: bool = False) -> dict[str, Any]:
     warnings = _validate_feishu_data(gc, feishu_data)
     embedder = _prepare_embedder(dimensions)
     fetch_counts = {label: len(records) for label, records in feishu_data.items()}
-    vector_entities = sum(
-        1 for entity in gc["entities"].values() if _should_vectorize(entity)
-    )
 
     client = Neo4jClient()
     try:
@@ -638,8 +622,8 @@ def sync_graph(dry_run: bool = False) -> dict[str, Any]:
                     "clear_graph": True,
                     "rebuild_constraints": len(gc["entities"]),
                     "rebuild_relationship_types": len(gc.get("relationships") or []),
-                    "rebuild_vector_indexes": vector_entities,
-                    "rebuild_fulltext_indexes": vector_entities,
+                    "rebuild_vector_indexes": len(gc["entities"]),
+                    "rebuild_fulltext_indexes": len(gc["entities"]),
                     "regenerate_embeddings": True,
                 },
             }

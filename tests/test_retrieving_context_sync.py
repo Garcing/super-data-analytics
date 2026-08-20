@@ -11,8 +11,8 @@ from sda_mcp.skills import retrieving_context_sync as s
 
 GC = {
     "embedding": {"model": "BAAI/bge-small-zh-v1.5", "dimensions": 512},
-    "entities": {"指标": {"key_field": "指标ID", "table_id": "tbl1", "vector_index": True},
-                 "表": {"key_field": "表ID", "table_id": "tbl2", "vector_index": False}},
+    "entities": {"指标": {"key_field": "指标ID", "table_id": "tbl1"},
+                 "表": {"key_field": "表ID", "table_id": "tbl2"}},
     "relationships": [{"type": "属于", "from": "指标", "to": "表",
                        "match": {"source_field": "表", "target_field": "表ID"}}],
 }
@@ -280,7 +280,7 @@ def test_sync_graph_orchestration(monkeypatch):
     ]
 
 
-def test_create_fulltext_indexes_uses_cjk_and_skips_disabled_entities():
+def test_create_fulltext_indexes_for_all_entities():
     class Client:
         def __init__(self):
             self.cyphers = []
@@ -290,8 +290,8 @@ def test_create_fulltext_indexes_uses_cjk_and_skips_disabled_entities():
     client = Client()
     names = s._create_fulltext_indexes(client, GC["entities"])
 
-    assert names == ["指标_search_text_index"]
-    assert len(client.cyphers) == 1
+    assert names == ["指标_search_text_index", "表_search_text_index"]
+    assert len(client.cyphers) == 2
     assert "CREATE FULLTEXT INDEX `指标_search_text_index` IF NOT EXISTS" in client.cyphers[0]
     assert "ON EACH [n.search_text]" in client.cyphers[0]
     assert "`fulltext.analyzer`: 'cjk'" in client.cyphers[0]
@@ -308,7 +308,7 @@ def test_sync_dry_run_no_write(monkeypatch):
     assert out["dry_run"] is True
     assert out["validated"] is True
     assert out["planned"]["rebuild_constraints"] == 2
-    assert out["planned"]["rebuild_vector_indexes"] == 1
+    assert out["planned"]["rebuild_vector_indexes"] == 2
     assert calls == ["fetch", "model"]
     assert client.closed is True
 
@@ -401,7 +401,7 @@ class _EmbedFakeClient:
     def close(self):
         pass
     def run_cypher(self, statement):
-        if "RETURN elementId(n)" in statement:
+        if "RETURN elementId(n)" in statement and "`指标`" in statement:
             return [{"id": "id-1", "text": "指标名：GMV。"}, {"id": "id-2", "text": "指标名：DAU。"}]
         return []
     def execute(self, cypher, **params):
@@ -426,8 +426,8 @@ def test_embed_uses_fastembed_batch(monkeypatch):
         model="BAAI/bge-small-zh-v1.5",
     )
 
-    # vector_index=False 的 "表" 被跳过，只有 "指标" 两个节点
-    assert counts == {"指标": 2}
+    # 无待 embed 节点的 "表" 计 0，不进批量调用
+    assert counts == {"指标": 2, "表": 0}
     # 批量一次性传入两条文本
     assert embed_calls == [["指标名：GMV。", "指标名：DAU。"]]
     # 写回语句数 == 节点数

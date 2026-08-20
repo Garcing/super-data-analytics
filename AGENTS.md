@@ -118,7 +118,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 - 融合后只对最终候选批量扩展图邻居，避免命中数乘关系数的往返。
 - `retrieve_schema` 从 Neo4j 实时内省，不用配置文件虚构 schema。
 
-更换 embedding 模型、维度、`search_fields`、索引策略或融合权重时：
+更换 embedding 模型、维度、索引策略或融合权重时：
 
 1. 先把真实失败问题加入 `tests/retrieval_gold.json`。
 2. 比较 vector 与 hybrid 的 Recall@1、Recall@5、MRR@5、平均延迟和 P95。
@@ -126,6 +126,13 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 4. 先执行 `sync(dry_run=true)`，确认数据源、模型和 Neo4j 均可用。
 5. 需要全量同步时再显式执行 `sync(dry_run=false)`。
 6. 跑完整测试和真实 Neo4j 冒烟，至少保留一个发布周期的 vector 回退。
+
+`sync` 的行为契约（真相源 `sda_mcp/skills/retrieving_context_sync.py`；字段清洗细节以该模块 docstring 为准）：
+
+- 两段式：先做零写库预检（config 校验、飞书拉数、主键唯一性校验、模型探测、Neo4j 连通），全部通过才开始清库；任一步失败时现有图保持原样。
+- 全量重建幂等：清空节点后按当前配置重建约束与索引，改配置不残留历史 schema 对象。
+- Neo4j 数据库仅供 SDA 使用：库内手工创建的约束和非 LOOKUP 索引会在全量 sync 时被删除。
+- 首次部署后图为空，必须执行一次 `sync` 才能检索。
 
 完整取舍见 [`docs/neo4j-graphrag-2026-research.md`](docs/neo4j-graphrag-2026-research.md)。
 
@@ -276,6 +283,7 @@ docker compose logs --tail=100
 - 改 `.env` 中的 `SDA_MCP_TOKEN`：执行 `docker compose up -d --force-recreate`。
 - 改本机 `config.json`：先本机 `sync(dry_run=true)`，再运行 `scripts/sync_server_config.py`；同步后重建容器以清掉进程缓存。
 - 改语义层数据或结构：先 `sync(dry_run=true)`，通过后才执行全量 sync。
+- `sync` 属长任务（分钟级），部分 MCP 客户端会超时中断但不代表失败；长调用可用 `scripts/mcp_debug.py call sync`（默认 180 秒超时）。
 - 公网入口可暂时使用 IP；域名和备案就绪后优先通过 Caddy 提供 HTTPS，不把 TLS 终止塞进 Python 服务。
 
 回退不要修改或强推 Git 历史。服务器切换到已知良好提交并重建：

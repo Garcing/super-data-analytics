@@ -16,6 +16,9 @@ _INTERNAL_PROPS = {
     "search_text", "embedding", "embedding_model", "embedding_dimensions", "embedding_updated_at",
 }
 
+# 检索结果 context 每命中、每类邻居标签的保留上限；超限截断并置 truncated。
+CONTEXT_NEIGHBOR_LIMIT = 20
+
 
 def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in (raw or {}).items() if k not in _INTERNAL_PROPS}
@@ -259,9 +262,13 @@ class Neo4jClient:
 
     def fetch_graph_context_batch(
         self, hits: list[dict[str, Any]], relationships: list[dict],
-    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-        """按关系方向批量扩展图上下文，并限制每个命中的邻居数量。"""
-        contexts: dict[str, dict[str, list[dict[str, Any]]]] = {
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """按关系方向批量扩展图上下文，限制每个命中每类邻居的数量。
+
+        每个桶为 ``{"items": [...], "total": 邻居总数, "truncated": 是否超限截断}``；
+        ``truncated=true`` 时完整邻居应改用 ``retrieve_cypher`` 遍历。
+        """
+        contexts: dict[str, dict[str, dict[str, Any]]] = {
             hit["id"]: {} for hit in hits
         }
         ids_by_label: dict[str, list[str]] = defaultdict(list)
@@ -287,9 +294,16 @@ class Neo4jClient:
                 bucket = contexts.get(rec["nodeId"])
                 if bucket is None:
                     continue
-                values = bucket.setdefault(other_label, [])
-                if len(values) < 20:
-                    values.append(_clean_properties(dict(rec["props"])))
+                entry = bucket.get(other_label)
+                if entry is None:
+                    entry = bucket[other_label] = {
+                        "items": [], "total": 0, "truncated": False,
+                    }
+                entry["total"] += 1
+                if len(entry["items"]) < CONTEXT_NEIGHBOR_LIMIT:
+                    entry["items"].append(_clean_properties(dict(rec["props"])))
+                else:
+                    entry["truncated"] = True
 
         for rel in relationships:
             from_label = rel.get("from")
@@ -318,12 +332,6 @@ class Neo4jClient:
                     self_loop=False,
                 )
         return contexts
-
-    def fetch_graph_context(self, label: str, node_id: str, relationships: list[dict]) -> dict:
-        """沿图中已有关系扩展单个节点的上下文。"""
-        return self.fetch_graph_context_batch(
-            [{"id": node_id, "label": label}], relationships,
-        ).get(node_id, {})
 
     def execute(self, cypher: str, **params) -> None:
         """通用写/DDL 执行（MERGE/SET/CREATE/CLEAR）。无返回。"""
@@ -450,8 +458,7 @@ def search(
     gc = load_config().get("graph-config", {})
     entities = gc.get("entities") or {}
     relationships = gc.get("relationships") or []
-    target_labels = [label for label, c in entities.items()
-                     if c.get("vector_index", True) and (not targets or label in targets)]
+    target_labels = [label for label in entities if not targets or label in targets]
     embedding_vec = embed(question)
     client = Neo4jClient()
     try:

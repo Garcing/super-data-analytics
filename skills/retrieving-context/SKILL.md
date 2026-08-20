@@ -24,7 +24,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 | `retrieve_doc_update` | 覆盖更新 docx 完整正文；先读后改，写入前确认目标与全文 |
 | `sync` | 从飞书多维表全量重建图、约束、索引与向量；优先 `dry_run=true` 预检 |
 
-参数和返回结构以工具列表中的 schema 为准；本文件只补充如何组合使用。同步细节见 [sync-and-maintenance.md](references/sync-and-maintenance.md)。
+参数和返回结构以工具列表中的 schema 为准；本文件只补充如何组合使用。不要传 schema 之外的字段——未知参数会被服务端静默忽略而不是报错。
 
 ## 默认检索流程
 
@@ -74,7 +74,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 2. 去掉过窄的 `targets`，扩大到相关实体。
 3. 用 `retrieve_schema` 判断是“没有命中”还是“实体/关系尚未部署”。
 4. 工作簿已有实体但运行时 schema 缺失，视为部署或同步漂移；说明缺口，待配置部署后 `sync`，不要把暂时缺失写成长期架构事实。
-5. 图为空、结构变化或 embedding 配置变化时先 `sync(dry_run=true)`；确认预检无误后才执行写入式全量同步。
+5. 图为空、结构变化或 embedding 配置变化时先 `sync(dry_run=true)`，核对返回的 `fetch` 各实体数量与 `warnings` 无意外后，才执行写入式全量同步。
 
 ## 回答格式
 
@@ -104,4 +104,3 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 
 - [ontology-contract.md](references/ontology-contract.md)：最新版语义层实体、直接表关系契约和各类问题的解析清单。
 - [cypher-guide.md](references/cypher-guide.md)：实时 schema、中文 label、安全 Cypher 与邻居截断。
-- [sync-and-maintenance.md](references/sync-and-maintenance.md)：同步预检、全量重建、索引和 embedding 维护。
