@@ -217,7 +217,7 @@ python -m pytest -q
 
 服务器前置条件：
 
-- Docker CE 与 Docker Compose 插件（apt 源用腾讯云内网镜像 `mirrors.cloud.tencent.com/docker-ce`，`/etc/docker/daemon.json` 配 registry mirror `mirror.ccs.tencentyun.com`）。
+- Docker CE 与 Docker Compose 插件（apt 源用腾讯云内网镜像 `mirrors.cloud.tencent.com/docker-ce`，`/etc/docker/daemon.json` 配 registry mirror `mirror.ccs.tencentyun.com` 和日志轮转 `{"log-opts": {"max-size": "20m", "max-file": 3}}`——容器日志默认无上限，是撑爆盘的已知成因之一，log-opts 在容器创建时固定，改后需 force-recreate）。
 - Neo4j 由 `deploy/neo4j/` 容器提供（host 网络，仅监听 `127.0.0.1:7687`）。
 - Git；私有仓库使用只读 SSH Deploy Key，不把 Token 写进 remote URL。
 - `~/.super-data-analytics/config.json` 已配置并限制文件权限。
@@ -337,6 +337,7 @@ cd ~/sda-mcp
 git status --short
 git pull --ff-only origin main
 docker compose up -d --build --force-recreate
+docker image prune -f    # 清掉重建产生的悬空旧层，防止镜像层只涨不跌
 docker compose ps
 docker compose logs --tail=100
 ```
@@ -408,16 +409,11 @@ mcp_servers:
 EOF
 ```
 
-同步 skills 到 Hermes 分类目录（`super-data-analytics` 分类下的 local 技能）：
+同步 skills 用符号链接指向仓库目录，`git pull` 即生效、无需手动再同步；分类描述符即仓库 `skills/DESCRIPTION.md`：
 
 ```bash
-mkdir -p ~/.hermes/skills/super-data-analytics
-cat > ~/.hermes/skills/super-data-analytics/DESCRIPTION.md <<'EOF'
----
-description: Super Data Analytics 工作流技能——查询、语义检索、异动诊断、预测、效果评估、可视化、报告与编排，经本机 sda MCP 服务执行。
----
-EOF
-rsync -a --delete --exclude="README.md" ~/sda-mcp/skills/ ~/.hermes/skills/super-data-analytics/
+rm -rf ~/.hermes/skills/super-data-analytics
+ln -s ~/sda-mcp/skills ~/.hermes/skills/super-data-analytics
 ```
 
 验证两步（都过才算就绪；交互式 shell 中 `hermes` 命令默认已注册）：
@@ -431,7 +427,7 @@ hermes skills list
 
 最后由用户在 Hermes 对话里执行 `/reload-mcp`，出现 `Added: sda` 才算接入完成；工具以 `mcp_sda_` 前缀注册。
 
-维护约定：更新 skills 时在服务器 `git pull --ff-only` 后重跑上面的 rsync；轮换 `SDA_MCP_TOKEN` 时同步更新 config.yaml 中的 Bearer 值并重新 `/reload-mcp`。
+维护约定：skills 经符号链接实时生效，服务器 `git pull --ff-only` 即完成更新；轮换 `SDA_MCP_TOKEN` 时同步更新 config.yaml 中的 Bearer 值并重新 `/reload-mcp`。
 
 ## 12. 文档职责
 
