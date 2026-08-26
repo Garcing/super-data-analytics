@@ -386,7 +386,56 @@ docker compose up -d --build --force-recreate
 5. 若修改语义检索，再运行受治理检索 gold case 或代表性真实问题。
 6. 若修改报告/图片能力，只在用户明确允许外部写入或费用时做真实冒烟。
 
-## 11. 文档职责
+## 11. Hermes Agent 接入（可选）
+
+本节不属于标准部署链路。仅当服务器同时运行 Hermes Agent（HERMES_HOME 为 `~/.hermes`，gateway 常驻）且用户在部署时明确要求接入时才执行。此配置属于服务器环境差异，不进本仓库 Git。
+
+接入 MCP（静态 Bearer，无需 OAuth 流程）：
+
+```bash
+ssh hermes
+cp -p ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-sda
+TOKEN=$(grep "^SDA_MCP_TOKEN=" ~/sda-mcp/.env | cut -d= -f2-)
+cat >> ~/.hermes/config.yaml <<EOF
+
+mcp_servers:
+  sda:
+    url: "http://127.0.0.1:3100/mcp"
+    headers:
+      Authorization: "Bearer $TOKEN"
+    timeout: 600        # sync 为分钟级长任务
+    connect_timeout: 60
+EOF
+```
+
+同步 skills 到 Hermes 分类目录（`super-data-analytics` 分类下的 local 技能）：
+
+```bash
+mkdir -p ~/.hermes/skills/super-data-analytics
+cat > ~/.hermes/skills/super-data-analytics/DESCRIPTION.md <<'EOF'
+---
+description: Super Data Analytics 工作流技能——查询、语义检索、异动诊断、预测、效果评估、可视化、报告与编排，经本机 sda MCP 服务执行。
+---
+EOF
+rsync -a --delete --exclude="README.md" ~/sda-mcp/skills/ ~/.hermes/skills/super-data-analytics/
+```
+
+验证两步（都过才算就绪）：
+
+```bash
+# MCP：initialize 冒烟，返回含 serverInfo 即通
+curl -sS -X POST http://127.0.0.1:3100/mcp -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"hermes-smoke","version":"1.0"}}}'
+# skills：应列出 9 个 super-data-analytics 分类的 enabled local 技能
+~/.hermes/hermes-agent/venv/bin/hermes skills list
+```
+
+最后由用户在 Hermes 对话里执行 `/reload-mcp`，出现 `Added: sda` 才算接入完成；工具以 `mcp_sda_` 前缀注册。
+
+维护约定：更新 skills 时在服务器 `git pull --ff-only` 后重跑上面的 rsync；轮换 `SDA_MCP_TOKEN` 时同步更新 config.yaml 中的 Bearer 值并重新 `/reload-mcp`。
+
+## 12. 文档职责
 
 - `README.md`：面向外部使用者，说明项目价值、能力、架构、快速开始和接入方式。
 - `AGENTS.md`：面向维护 Agent，说明代码边界、工具/Skill 映射、变更规则、配置、测试和部署运维。
