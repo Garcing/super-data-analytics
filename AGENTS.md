@@ -200,15 +200,23 @@ python -m pytest -q
 
 ## 9. 服务器部署
 
-当前部署目录约定为 `~/sda-mcp/`，服务监听 `0.0.0.0:3100/mcp`。`docker-compose.yml` 使用 host 网络，以便连接宿主机 Neo4j 和 VPN 内的 Hologres。单机部署以 Git checkout 为代码真相源；`git archive` 只保留为无 Git 环境的备用方式。
+当前部署目录约定为 `~/sda-mcp/`，服务监听 `0.0.0.0:3100/mcp`。`docker-compose.yml` 使用 host 网络，以便连接宿主机 Neo4j；Hologres 在公司 VPN 内网，经 VPN 转发器容器以 `127.0.0.1:15432` 暴露（见下节），宿主不再安装 OpenVPN。单机部署以 Git checkout 为代码真相源；`git archive` 只保留为无 Git 环境的备用方式。
+
+全新服务器（重装后）的部署顺序：
+
+1. 安装 Docker CE 与 Compose 插件。
+2. 生成 Deploy Key 并克隆仓库（或先用 bundle 引导）。
+3. 部署 VPN 转发器并验收数据通路。
+4. 同步 `config.json`、写 `.env`。
+5. 构建启动 MCP 服务并按验收清单检查。
 
 服务器前置条件：
 
-- Docker 与 Docker Compose。
+- Docker CE 与 Docker Compose 插件（apt 源用腾讯云内网镜像 `mirrors.cloud.tencent.com/docker-ce`，`/etc/docker/daemon.json` 配 registry mirror `mirror.ccs.tencentyun.com`）。
 - Neo4j 可从容器 host 网络访问，当前通常为 `127.0.0.1:7687`。
 - Git；私有仓库使用只读 SSH Deploy Key，不把 Token 写进 remote URL。
 - `~/.super-data-analytics/config.json` 已配置并限制文件权限。
-- 如 Hologres 仅内网可达，VPN/tun 路由已经连通。
+- VPN 转发器容器 `sda-vpn` 已部署且 healthy（见下节），Hologres 经 `127.0.0.1:15432` 可达。
 
 首次发布代码：
 
@@ -218,6 +226,33 @@ git clone --depth 1 --branch main --single-branch \
 ```
 
 `hermes` 当前到 `github.com:443` 的 HTTPS Git 路径超时，但 GitHub SSH 22 端口和现有密钥认证正常，因此部署 remote 必须保持上述 SSH URL。浅克隆足以支持 main 的日常 fast-forward pull；需要回退到浅历史之外的提交时，先执行 `git fetch --unshallow origin` 或按目标提交加深历史。
+
+新装服务器还没有 Deploy Key 时，先用 bundle 引导，不阻塞部署：本机 `git bundle create /tmp/sda.bundle main`，scp 到服务器后 `git clone -b main /tmp/sda.bundle ~/sda-mcp`（bundle 缺 HEAD 引用，必须显式 `-b main`），再 `git remote set-url origin git@github.com:Garcing/super-data-analytics.git`。Deploy Key（服务器 `~/.ssh/id_ed25519.pub`，在仓库 Settings → Deploy keys 添加只读 key）生效后 `git pull --ff-only` 即可正常更新。
+
+### VPN 转发器部署（重装或新服务器时执行一次）
+
+公司 Hologres 只在 VPN 内网可达。宿主不装 OpenVPN；`deploy/vpn/` 提供单容器方案（alpine + openvpn + socat）：容器内建 tun，把宿主 `127.0.0.1:15432` 转发到 `192.168.5.121:31223`。实测服务端只推送内网路由（`192.168.4.0/23` 等），不劫持默认路由，宿主路由表保持干净。
+
+密钥不进 Git。部署时把本机 `千聊-openVpn安装教程/openvpnkeys/` 下的 `ca.crt`、`ta.key` scp 到 `deploy/vpn/runtime/`（已 gitignore），账密文件手工生成：
+
+```bash
+cd ~/sda-mcp/deploy/vpn/runtime
+printf "%s\n%s\n" "<VPN用户名>" "<VPN密码>" > pass.txt
+chmod 600 pass.txt ca.crt ta.key
+cd ~/sda-mcp
+docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml up -d --build
+```
+
+验收三步缺一不可（"TCP 能连但数据不通"是宿主 VPN 时代的已知故障模式，必须用真实探测确认全双工）：
+
+```bash
+docker logs sda-vpn 2>&1 | grep -c "Initialization Sequence Completed"   # >=1
+docker ps --filter name=sda-vpn --format "{{.Status}}"                   # (healthy)
+python3 -c "import socket,struct;s=socket.create_connection(('127.0.0.1',15432),8);s.sendall(struct.pack('!II',8,80877103));print(s.recv(64))"
+# 输出 b'N' 表示 Hologres 真实应答（PostgreSQL No SSL），数据通路成立
+```
+
+容器 `restart: unless-stopped`，openvpn 断线由 keepalive/ping-restart 自动重连，openvpn 进程死亡时 entrypoint 看门狗终止容器整体拉起；`docker restart sda-vpn` 后重新探测应立即恢复。
 
 如果 `~/sda-mcp` 是旧 archive 解压目录，不要直接在其中 `git init`。先 clone 到同级新目录、复制 `.env`、完成 build 验证后再切换；旧目录保留一个发布周期用于回退。
 
@@ -232,9 +267,11 @@ python scripts/sync_server_config.py --host hermes
 
 ```dotenv
 SDA_MCP_TOKEN=replace-with-a-long-random-token
-HOLOGRES_HOST=192.168.5.121
-HOLOGRES_PORT=31223
+HOLOGRES_HOST=127.0.0.1
+HOLOGRES_PORT=15432
 ```
+
+`HOLOGRES_*` 指向 VPN 转发器（`deploy/vpn/`），不是 Hologres 真实地址；真实地址 `192.168.5.121:31223` 只在 VPN 转发器 compose 里维护。
 
 服务器差异只放在 `.env`。容器环境变量由 `get_env()` 覆盖同名 `config.json` 值，因此不维护第二份含密钥的 `config-server.json`。
 
