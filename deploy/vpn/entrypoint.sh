@@ -6,6 +6,12 @@ set -eu
 : "${LISTEN_PORT:=15432}"
 : "${TARGET_HOST:?TARGET_HOST required}"
 : "${TARGET_PORT:?TARGET_PORT required}"
+: "${VPN_USERNAME:?VPN_USERNAME required}"
+: "${VPN_PASSWORD:?VPN_PASSWORD required}"
+
+# 账密文件由环境变量生成（config.json -> compose 注入），容器保持无状态
+printf "%s\n%s\n" "$VPN_USERNAME" "$VPN_PASSWORD" > /run/pass.txt
+chmod 600 /run/pass.txt
 
 openvpn --config /etc/openvpn/corp.ovpn --verb 3 &
 VPN_PID=$!

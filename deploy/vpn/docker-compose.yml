@@ -3,9 +3,11 @@
 # MCP 服务（host 网络）把 .env 的 HOLOGRES_HOST/PORT 指向
 # 127.0.0.1:15432 即可，宿主路由表保持干净。
 #
-# 启动：cd ~/sda-mcp && docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml up -d --build
-# 密钥：ca.crt / ta.key / pass.txt 放在本目录 runtime/（gitignored），
-#       生成方式见 AGENTS.md 服务器部署章节。
+# 启动：cd ~/sda-mcp
+#   python3 deploy/vpn/generate_secrets.py   # 从 config.json 生成 runtime/ta.key 与 .env
+#   docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml up -d --build
+# 机密只有 runtime/ta.key（来自 config.json env.VPN_TA_KEY_B64）与
+# .env 账密（VPN_USERNAME/PASSWORD），均 gitignored；ca.crt 是公开 CA 证书随仓库。
 services:
   vpn-forwarder:
     build: .
@@ -21,6 +23,8 @@ services:
       LISTEN_PORT: "15432"
       TARGET_HOST: "192.168.5.121"
       TARGET_PORT: "31223"
+      VPN_USERNAME: ${VPN_USERNAME:?run generate_secrets.py first}
+      VPN_PASSWORD: ${VPN_PASSWORD:?run generate_secrets.py first}
     volumes:
       - ./runtime:/etc/openvpn/runtime:ro
     restart: unless-stopped

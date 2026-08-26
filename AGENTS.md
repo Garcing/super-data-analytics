@@ -148,6 +148,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 | Hologres | `HOLOGRES_HOST`、`HOLOGRES_PORT`、`HOLOGRES_DATABASE`、`HOLOGRES_USER`、`HOLOGRES_PASSWORD` |
 | Power BI | `POWERBI_CLIENT_ID`、`POWERBI_CLIENT_SECRET`、`POWERBI_TENANT_ID` 及语义模型配置 |
 | 飞书 | `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_GRAPH_BITABLE_APP_TOKEN` |
+| VPN 转发器 | `VPN_USERNAME`、`VPN_PASSWORD`、`VPN_TA_KEY_B64`（ta.key 的 base64，`deploy/vpn/generate_secrets.py` 落地） |
 | HTML 报告 | `BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL` |
 | 图片报告 | `VOLCENGINE_ARK_API_KEY`、`VOLCENGINE_ARK_BASE_URL`、`VOLCENGINE_ARK_IMAGE_MODEL` |
 | 语义图 | `graph-config.embedding`、`graph-config.entities`、`graph-config.relationships` |
@@ -238,15 +239,15 @@ git clone --depth 1 --branch main --single-branch \
 
 公司 Hologres 只在 VPN 内网可达。宿主不装 OpenVPN；`deploy/vpn/` 提供单容器方案（alpine + openvpn + socat）：容器内建 tun，把宿主 `127.0.0.1:15432` 转发到 `192.168.5.121:31223`。实测服务端只推送内网路由（`192.168.4.0/23` 等），不劫持默认路由，宿主路由表保持干净。
 
-密钥不进 Git。部署时把本机 `千聊-openVpn安装教程/openvpnkeys/` 下的 `ca.crt`、`ta.key` scp 到 `deploy/vpn/runtime/`（已 gitignore），账密文件手工生成：
+机密全部来自 config.json（`VPN_USERNAME`、`VPN_PASSWORD`、`VPN_TA_KEY_B64`，见 §7），由脚本落地为 gitignored 文件；`ca.crt` 是公开 CA 证书，随仓库分发。不依赖任何安装包目录或手工 scp：
 
 ```bash
-cd ~/sda-mcp/deploy/vpn/runtime
-printf "%s\n%s\n" "<VPN用户名>" "<VPN密码>" > pass.txt
-chmod 600 pass.txt ca.crt ta.key
 cd ~/sda-mcp
+python3 deploy/vpn/generate_secrets.py   # 生成 runtime/ta.key 与 .env（600，不打印内容）
 docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml up -d --build
 ```
+
+改 VPN 账密或 ta.key 的流程：本机改 config.json → `scripts/sync_server_config.py --host hermes` → 服务器重跑 `generate_secrets.py` → `docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml up -d --force-recreate`。
 
 验收三步缺一不可（"TCP 能连但数据不通"是宿主 VPN 时代的已知故障模式，必须用真实探测确认全双工）：
 
