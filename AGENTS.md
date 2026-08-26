@@ -420,15 +420,13 @@ EOF
 rsync -a --delete --exclude="README.md" ~/sda-mcp/skills/ ~/.hermes/skills/super-data-analytics/
 ```
 
-验证两步（都过才算就绪）：
+验证两步（都过才算就绪；交互式 shell 中 `hermes` 命令默认已注册）：
 
 ```bash
-# MCP：initialize 冒烟，返回含 serverInfo 即通
-curl -sS -X POST http://127.0.0.1:3100/mcp -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"hermes-smoke","version":"1.0"}}}'
+# MCP：应显示 Connected 且 Tools discovered: 19
+hermes mcp test sda
 # skills：应列出 9 个 super-data-analytics 分类的 enabled local 技能
-~/.hermes/hermes-agent/venv/bin/hermes skills list
+hermes skills list
 ```
 
 最后由用户在 Hermes 对话里执行 `/reload-mcp`，出现 `Added: sda` 才算接入完成；工具以 `mcp_sda_` 前缀注册。
