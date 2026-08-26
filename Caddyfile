@@ -1,5 +1,5 @@
 # 笔记本经公网接入：mcp.super-data-analytics.online -> localhost:3100
-# TLS-ALPN-01 自动签证书（80 被 hermes 占，Caddy 用 443 ALPN，不抢 80）
+# 证书 Let's Encrypt 自动签发：80 空闲时走 http-01，被占时 Caddy 自动改用 443 TLS-ALPN-01
 mcp.super-data-analytics.online {
 	reverse_proxy localhost:3100
 	# Bearer 由客户端（笔记本/hermes）自带；Caddy 仅做 TLS 转发

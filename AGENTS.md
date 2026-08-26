@@ -207,16 +207,21 @@ python -m pytest -q
 1. 安装 Docker CE 与 Compose 插件。
 2. 生成 Deploy Key 并克隆仓库（或先用 bundle 引导）。
 3. 部署 VPN 转发器并验收数据通路。
-4. 同步 `config.json`、写 `.env`。
-5. 构建启动 MCP 服务并按验收清单检查。
+4. `scripts/sync_server_config.py` 同步 `config.json`（Neo4j 密码取自其中）。
+5. 部署 Neo4j 容器（凭证从已同步的 config.json 提取）。
+6. 写 `.env`，构建启动 MCP 服务并按验收清单检查。
+7. 安装 Caddy 并部署仓库 `Caddyfile`，验证 HTTPS 域名。
+8. 执行 `sync(dry_run=true)` 预检、全量 sync 重建语义图、检索冒烟。
+9. 在云控制台关闭 3100 入站防火墙规则（公网只留 22/443/80）。
 
 服务器前置条件：
 
 - Docker CE 与 Docker Compose 插件（apt 源用腾讯云内网镜像 `mirrors.cloud.tencent.com/docker-ce`，`/etc/docker/daemon.json` 配 registry mirror `mirror.ccs.tencentyun.com`）。
-- Neo4j 可从容器 host 网络访问，当前通常为 `127.0.0.1:7687`。
+- Neo4j 由 `deploy/neo4j/` 容器提供（host 网络，仅监听 `127.0.0.1:7687`）。
 - Git；私有仓库使用只读 SSH Deploy Key，不把 Token 写进 remote URL。
 - `~/.super-data-analytics/config.json` 已配置并限制文件权限。
 - VPN 转发器容器 `sda-vpn` 已部署且 healthy（见下节），Hologres 经 `127.0.0.1:15432` 可达。
+- Caddy（apt 安装，systemd 管理），`/etc/caddy/Caddyfile` 取自仓库根目录。
 
 首次发布代码：
 
@@ -253,6 +258,30 @@ python3 -c "import socket,struct;s=socket.create_connection(('127.0.0.1',15432),
 ```
 
 容器 `restart: unless-stopped`，openvpn 断线由 keepalive/ping-restart 自动重连，openvpn 进程死亡时 entrypoint 看门狗终止容器整体拉起；`docker restart sda-vpn` 后重新探测应立即恢复。
+
+### Neo4j 容器部署（重装或新服务器时执行一次）
+
+语义图 Neo4j 由 `deploy/neo4j/` 提供（`neo4j:5.26-community`，host 网络但仅监听 `127.0.0.1` 的 7474/7687，公网不可达）。认证密码必须与 config.json `env.NEO4J_PASSWORD` 一致，部署时从已同步的 config.json 提取到 gitignored 的 `.env`：
+
+```bash
+cd ~/sda-mcp/deploy/neo4j
+python3 -c "import json; env=json.load(open('/home/ubuntu/.super-data-analytics/config.json'))['env']; open('.env','w').write('NEO4J_AUTH=%s/%s\n'%(env['NEO4J_USER'],env['NEO4J_PASSWORD']))"
+chmod 600 .env
+cd ~/sda-mcp
+docker compose -p sda-neo4j -f deploy/neo4j/docker-compose.yml up -d
+```
+
+验收：容器 healthy，且 `ss -tln | grep 7687` 只出现 `127.0.0.1:7687`。数据在 named volume `neo4j-data`；重装服务器后图为空属预期，按上节顺序执行全量 sync 重建。
+
+### Caddy HTTPS
+
+服务器 Caddy 走 apt（cloudsmith 源），systemd 管理。仓库根 `Caddyfile` 是唯一配置真相源，部署即拷贝：
+
+```bash
+sudo cp ~/sda-mcp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl restart caddy
+```
+
+证书由 Let's Encrypt 自动签发（80 空闲走 http-01，否则 TLS-ALPN-01 用 443）。验收：本机无 Token POST `https://mcp.super-data-analytics.online/mcp` 返回 401，`python scripts/mcp_debug.py list` 返回 19 个工具。完成后必须在云控制台关闭 3100 入站规则，公网只留 22/80/443。
 
 如果 `~/sda-mcp` 是旧 archive 解压目录，不要直接在其中 `git init`。先 clone 到同级新目录、复制 `.env`、完成 build 验证后再切换；旧目录保留一个发布周期用于回退。
 
@@ -342,6 +371,8 @@ docker compose up -d --build --force-recreate
 | 查看日志 | `docker compose logs -f` 或 `--tail=100` |
 | 重启 | `docker compose restart` |
 | 重建容器 | `docker compose up -d --force-recreate` |
+| VPN 转发器 | `docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml ps/logs/restart` |
+| Neo4j 容器 | `docker compose -p sda-neo4j -f deploy/neo4j/docker-compose.yml ps/logs/restart` |
 | 检查本地端点 | 无 Token POST 应为 401，再用 MCP Client tool list |
 | 重建语义图 | 先 `sync(dry_run=true)`，再显式 `sync(dry_run=false)` |
 
