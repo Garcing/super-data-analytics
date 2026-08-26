@@ -1,0 +1,26 @@
+# Neo4j 语义图数据库：host 网络但仅监听 127.0.0.1（公网服务器，不暴露 7474/7687）。
+# 数据在 named volume neo4j-data；首次部署后图为空，须执行一次全量 sync 重建。
+#
+# 启动：cd ~/sda-mcp && docker compose -p sda-neo4j -f deploy/neo4j/docker-compose.yml up -d
+# 密码：与 config.json env.NEO4J_PASSWORD 一致，部署时在本目录生成 .env（gitignored）：
+#   NEO4J_AUTH=neo4j/<config.json env.NEO4J_PASSWORD>
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: sda-neo4j
+    network_mode: host
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH}
+      # 公网服务器：http(7474)/bolt(7687) 只绑回环，外网不可达
+      NEO4J_server_default__listen__address: 127.0.0.1
+    volumes:
+      - neo4j-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+volumes:
+  neo4j-data:
