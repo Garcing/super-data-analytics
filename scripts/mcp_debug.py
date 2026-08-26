@@ -7,7 +7,7 @@
     python scripts/mcp_debug.py call chart '{"spec": {...}}'  # 图片块自动存成文件
 
 选项：
-    --url    默认 http://106.53.74.143:3100/mcp（或环境变量 SDA_MCP_URL）
+    --url    默认 https://mcp.super-data-analytics.online/mcp（或环境变量 SDA_MCP_URL）
     --token  默认读 ~/.sda_mcp_token.txt（或环境变量 SDA_MCP_TOKEN）
 
 原理：对 streamable-http 端点直接 POST JSON-RPC（服务端为 stateless JSON 模式），
@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-DEFAULT_URL = "http://106.53.74.143:3100/mcp"
+DEFAULT_URL = "https://mcp.super-data-analytics.online/mcp"
 TOKEN_FILE = Path.home() / ".sda_mcp_token.txt"
 ACCEPT = "application/json, text/event-stream"
 

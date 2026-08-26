@@ -284,7 +284,7 @@ docker compose logs --tail=100
 - 改本机 `config.json`：先本机 `sync(dry_run=true)`，再运行 `scripts/sync_server_config.py`；同步后重建容器以清掉进程缓存。
 - 改语义层数据或结构：先 `sync(dry_run=true)`，通过后才执行全量 sync。
 - `sync` 属长任务（分钟级），部分 MCP 客户端会超时中断但不代表失败；长调用可用 `scripts/mcp_debug.py call sync`（默认 180 秒超时）。
-- 公网入口可暂时使用 IP；域名和备案就绪后优先通过 Caddy 提供 HTTPS，不把 TLS 终止塞进 Python 服务。
+- 公网入口为 `https://mcp.super-data-analytics.online/mcp`：服务器 Caddy（systemd）终止 TLS 并 `reverse_proxy localhost:3100`，TLS 终止不进 Python 服务；容器内仍监听 `0.0.0.0:3100`。
 
 回退不要修改或强推 Git 历史。服务器切换到已知良好提交并重建：
 
