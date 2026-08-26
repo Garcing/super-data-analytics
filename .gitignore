@@ -8,3 +8,6 @@ dist/
 
 # 环境文件（compose 用，含 token，不进 git）
 .env
+
+# VPN 转发器运行时密钥（ca.crt / ta.key / pass.txt，部署时手工放置）
+deploy/vpn/runtime/

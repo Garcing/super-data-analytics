@@ -1,0 +1,32 @@
+# 公司 VPN 转发器：容器内跑 OpenVPN 建 tun，socat 把宿主
+# 127.0.0.1:15432 转发到 VPN 内网的 Hologres 192.168.5.121:31223。
+# MCP 服务（host 网络）把 .env 的 HOLOGRES_HOST/PORT 指向
+# 127.0.0.1:15432 即可，宿主路由表保持干净。
+#
+# 启动：cd ~/sda-mcp && docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml up -d --build
+# 密钥：ca.crt / ta.key / pass.txt 放在本目录 runtime/（gitignored），
+#       生成方式见 AGENTS.md 服务器部署章节。
+services:
+  vpn-forwarder:
+    build: .
+    image: sda-vpn-forwarder:latest
+    container_name: sda-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "127.0.0.1:15432:15432"
+    environment:
+      LISTEN_PORT: "15432"
+      TARGET_HOST: "192.168.5.121"
+      TARGET_PORT: "31223"
+    volumes:
+      - ./runtime:/etc/openvpn/runtime:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ip", "link", "show", "tun0"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
