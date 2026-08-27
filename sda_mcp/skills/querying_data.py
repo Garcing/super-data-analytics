@@ -121,7 +121,24 @@ class HologresClient:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql)
             cols = [c.name for c in cur.description]
-            return [dict(zip(cols, r)) for r in cur.fetchall()]
+            rows = cur.fetchall()
+            if not rows and not self._table_exists(conn, table, schema):
+                # QA 2026-08-26:不存在表/逻辑语义表静默返回空列,误导调用方
+                # "表存在但没结构"——必须显式报错并指引逻辑表的正确路径。
+                raise ValidationError(
+                    f"表 {schema}.{table} 在 Hologres 中不存在。请检查拼写；语义层"
+                    "“实现方式=sql_query”的逻辑表不落物理库，应通过 retrieve_doc_read "
+                    "读取其 SQL 文档获取底层物理表。")
+        return [dict(zip(cols, r)) for r in rows]
+
+    @staticmethod
+    def _table_exists(conn, table: str, schema: str) -> bool:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_name = %s LIMIT 1",
+                (schema, table))
+            return bool(cur.fetchone())
 
 
 def sql_query(sql: str) -> SqlResult:
@@ -143,6 +160,53 @@ def sql_schema(tables: list[str]) -> list[dict[str, Any]]:
 
 def sql_test_connection() -> None:
     HologresClient().test_connection()
+
+
+_DAX_ERROR_TEXT_RE = re.compile(r"(?i)^\s*dax query .*(error|failed)")
+
+
+def _normalize_powerbi_result(result: Any) -> Any:
+    """解码 Microsoft MCP 结果 content[].text 的内嵌 JSON,并统一错误信封。
+
+    QA 2026-08-26 发现:JSON-RPC 信封内 text 块再包一层 JSON 字符串(中文全
+    \\uXXXX 转义,费 token);错误信封三态不一致(协议 error 对象 / Answer JSON /
+    纯文本 DAX 错误)。统一为:
+    - 协议级 error 对象或 Answer.Status=error 或纯文本 DAX 错误 → DataSourceError;
+    - text 块可解析为 JSON 对象/数组 → 解码后替换,调用方免二次解析。
+    """
+    if not isinstance(result, dict):
+        return result
+    if "error" in result and "result" not in result:
+        err = result["error"] or {}
+        raise DataSourceError(f"Power BI 调用失败: {err.get('message') or err}")
+    content = (result.get("result") or {}).get("content")
+    if not isinstance(content, list):
+        return result
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if not isinstance(text, str):
+            continue
+        stripped = text.strip()
+        if stripped[:1] in "{[":
+            try:
+                decoded = json.loads(stripped)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, dict):
+                answer = decoded.get("Answer")
+                if isinstance(answer, dict) and str(answer.get("Status", "")).lower() == "error":
+                    inner = answer.get("Error") or {}
+                    raise DataSourceError(
+                        f"Power BI 执行失败: "
+                        f"{answer.get('Message') or inner.get('Message') or stripped[:300]}")
+                block["text"] = decoded
+            elif decoded is not None:
+                block["text"] = decoded
+        elif _DAX_ERROR_TEXT_RE.match(stripped):
+            raise DataSourceError(f"DAX 查询失败: {stripped[:500]}")
+    return result
 
 
 class PowerBIClient:
@@ -236,7 +300,8 @@ class PowerBIClient:
 
     def get_schema(self, artifact_id: str) -> dict[str, Any]:
         _require_guid(artifact_id)
-        return self._mcp_call("tools/call", {"name": "GetSemanticModelSchema", "arguments": {"artifactId": artifact_id}})
+        return _normalize_powerbi_result(self._mcp_call(
+            "tools/call", {"name": "GetSemanticModelSchema", "arguments": {"artifactId": artifact_id}}))
 
     def query(self, artifact_id: str, dax_queries: list[str], max_rows: int = 250) -> dict[str, Any]:
         _require_guid(artifact_id)
@@ -244,8 +309,9 @@ class PowerBIClient:
             raise ValidationError("至少需要 1 条 DAX 查询")
         if len(dax_queries) > 4:
             raise ValidationError("批量查询最多支持 4 条 DAX 语句")
-        return self._mcp_call("tools/call", {"name": "ExecuteQuery",
-                            "arguments": {"artifactId": artifact_id, "maxRows": max_rows, "daxQueries": dax_queries}})
+        return _normalize_powerbi_result(self._mcp_call(
+            "tools/call", {"name": "ExecuteQuery",
+                           "arguments": {"artifactId": artifact_id, "maxRows": max_rows, "daxQueries": dax_queries}}))
 
 
 def powerbi_list_tools() -> list[dict[str, Any]]:

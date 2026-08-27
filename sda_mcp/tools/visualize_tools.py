@@ -40,6 +40,9 @@ def chart(
             "声明式图表：必含 type、title、subtitle、非空 data[]、encoding；可选 options。"
             "type 支持 area/bar/boxplot/combo/funnel/heatmap/histogram/horizontal_bar/"
             "line/pareto/pie/scatter/table/waterfall。数值通道必须传 number。"
+            "复杂图型关键字段：waterfall 用 encoding={label,delta(带符号增减量)}"
+            "+options={start_value,start_label,end_label}；funnel={stage,value}；"
+            "combo={x,bar,line}；pareto={x,y}；heatmap={x,y,value}；histogram={x}；boxplot={x,y}。"
         ),
     )],
     format: Annotated[Literal["png", "svg"], Field(

@@ -77,8 +77,8 @@ def powerbi_schema(
 ) -> dict[str, Any]:
     """通过 Fabric MCP 读取语义模型的表、列和度量值结构。
 
-    返回 Microsoft ``GetSemanticModelSchema`` 的原始 JSON-RPC 结果；
-    写 DAX 前用它确认准确名称。
+    返回 Microsoft ``GetSemanticModelSchema`` 的结果；content 内嵌的 JSON
+    字符串已解码为对象。写 DAX 前用它确认准确名称。
     """
     return _powerbi_schema(artifact_id)
 
@@ -109,7 +109,8 @@ def powerbi_query(
 ) -> dict[str, Any]:
     """通过 Fabric MCP 批量执行 1-4 条只读 DAX。
 
-    返回 Microsoft ``ExecuteQuery`` 的原始 JSON-RPC 结果。服务端会处理
-    202 异步轮询，最长约 60 秒。
+    返回 Microsoft ``ExecuteQuery`` 的结果；content 内嵌的 JSON 字符串已
+    解码为对象，执行失败（含 DAX 语法错误）统一以工具错误抛出。服务端会
+    处理 202 异步轮询，最长约 60 秒。
     """
     return _powerbi_query(artifact_id, dax_queries, max_rows)

@@ -27,7 +27,9 @@ def test_get_doc_markdown_decodes_entities(monkeypatch):
 
 
 def test_get_doc_markdown_decodes_legacy_stored_entities(monkeypatch):
-    """旧管线写入的文档，存储里就是实体文本（如平台治理模板）——单遍解码改善。"""
+    """防御性语义:若实体文本以字面量存在(极端情形),单遍解码只剥一层。
+    实测(2026-08-27 探针)所有文档存储层干净,该情形未出现——锁定
+    html.unescape 单遍行为,避免有人误改成递归解码。"""
     from sda_mcp.feishu import FeishuClient
     raw = r'按\&amp;\#34;训练营类型\&amp;\#34;（体验营 / 正式营）'
     _patch_request(monkeypatch, raw)

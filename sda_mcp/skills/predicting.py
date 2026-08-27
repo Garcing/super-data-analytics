@@ -108,6 +108,27 @@ def _require_int(value, label):
     return int(value)
 
 
+# 各 grain 对应的序列日期中位间隔(天)合理区间;月/季度取宽边界覆盖 28-31/89-93 天。
+_GRAIN_INTERVAL_DAYS = {
+    "day": (0, 2),
+    "week": (5.5, 8.5),
+    "month": (26, 32.5),
+    "quarter": (85, 97),
+}
+
+
+def _median_interval_days(series) -> float | None:
+    """序列相邻日期间隔的中位数(天);点数不足返回 None。"""
+    gaps = sorted((series[i + 1]["date"] - series[i]["date"]).days
+                  for i in range(len(series) - 1))
+    if not gaps:
+        return None
+    mid = len(gaps) // 2
+    if len(gaps) % 2:
+        return float(gaps[mid])
+    return (gaps[mid - 1] + gaps[mid]) / 2
+
+
 def validate_payload(payload):
     for field_name in ["metric", "grain", "horizon", "model", "series"]:
         if field_name not in payload:
@@ -367,6 +388,18 @@ def forecast(payload: Mapping[str, Any]) -> ForecastResult:
     warnings = []
     if len(values) < 6:
         warnings.append("Series has limited history; treat the forecast as low confidence.")
+    # QA 2026-08-26:月度数据标 grain=day 曾静默输出逐日日期,数值单位口径失真无警告。
+    interval = _median_interval_days(validated["series"])
+    low, high = _GRAIN_INTERVAL_DAYS[validated["grain"]]
+    if interval is not None and not low <= interval <= high:
+        warnings.append(
+            f"声明的 grain='{validated['grain']}' 与序列日期实际间隔（约 {interval:.1f} 天）不符；"
+            "预测日期将按声明的 grain 生成，数值的单位口径可能有误导，请核对 grain 或日期序列。")
+    # QA 2026-08-26:12 点历史 horizon=200 照跑且 confidence 仍 high——长程外推须降级。
+    if validated["horizon"] > len(values):
+        warnings.append(
+            f"horizon={validated['horizon']} 超过历史点数（{len(values)}）；"
+            "长程外推可靠性低，远端点值与区间不足以支撑决策。")
 
     selected_model = validated["model"]
     precomputed_backtest = None

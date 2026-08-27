@@ -65,7 +65,7 @@ FROM ord
 
 4. 保留业务逻辑，只做必要的别名和 Hologres 方言适配。多层 CTE 不兼容时改为等价派生表，不重写指标逻辑。
 
-不要对逻辑语义表调用 `sql_schema`；数据库报 relation does not exist 是预期现象，不是数据缺失。
+不要对逻辑语义表调用 `sql_schema`——物理库中不存在该表，工具会报 ValidationError 并提示改读其 SQL 文档；拼写错误的表名同样会显式报错，不会静默返回空列。
 
 ### 物理表与 JOIN
 

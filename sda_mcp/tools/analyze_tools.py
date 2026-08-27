@@ -91,7 +91,8 @@ def impact(
         description=(
             "类型参数。ab_rate: control/treatment={n,success}; ab_mean: {n,mean,stddev}; "
             "did: treatment_before/after 与 control_before/after；roi: benefit,cost；"
-            "sample_size_rate: baseline_rate,minimum_detectable_effect。可选 alpha/power 等。"
+            "sample_size_rate: baseline_rate,minimum_detectable_effect(绝对百分点差，"
+            "假设处理组率=p0+MDE)。可选 alpha/power 等。"
         ),
     )] = None,
 ) -> dict[str, Any]:

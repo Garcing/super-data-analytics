@@ -260,10 +260,17 @@ def analyze_sample_size_rate(payload):
         "analysis_type": "sample_size_rate",
         "baseline_rate": rounded(baseline),
         "minimum_detectable_effect": rounded(mde),
+        # QA 2026-08-26:MDE 语义(绝对百分点差)未披露也不回显 p1,按相对提升
+        # 理解样本量会差约 93 倍——显式回显推导用处理组率并在 warnings 说明口径。
+        "assumed_treatment_rate": rounded(treatment),
         "alpha": alpha,
         "power": power,
         "sample_size_per_group": sample_size,
-        "warnings": ["样本量估算为近似值；真实实验还需考虑分流、触达率、周期性和护栏指标。"],
+        "warnings": [
+            "样本量估算为近似值；真实实验还需考虑分流、触达率、周期性和护栏指标。",
+            f"minimum_detectable_effect 按绝对百分点差解释：假设处理组率 = baseline_rate + "
+            f"minimum_detectable_effect = {rounded(treatment)}。",
+        ],
     }
 
 
