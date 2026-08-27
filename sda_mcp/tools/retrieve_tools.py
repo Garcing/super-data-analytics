@@ -9,7 +9,7 @@ from pydantic import Field
 from sda_mcp.skills.retrieving_context import (
     search as _search, cypher as _cypher, schema as _schema, doc as _doc, update_doc as _update_doc,
 )
-from sda_mcp.tools._common import mcp, tool_annotations
+from sda_mcp.tools._common import mcp, map_tool_errors, tool_annotations
 from sda_mcp.tools._schemas import (
     DocReadOutput,
     DocUpdateOutput,
@@ -26,6 +26,7 @@ from sda_mcp.tools._schemas import (
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def retrieve_search(
     question: Annotated[str, Field(
         description="要在受治理业务语义层中检索的自然语言问题，例如“复购人数是什么口径”。",
@@ -64,6 +65,7 @@ def retrieve_search(
         read_only=False, destructive=True, idempotent=False, open_world=True,
     ),
 )
+@map_tool_errors
 def retrieve_cypher(
     statement: Annotated[str, Field(
         description="要直接执行的 Cypher。支持读写语句；写入会修改 SDA Neo4j，执行前必须确认范围。",
@@ -85,6 +87,7 @@ def retrieve_cypher(
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def retrieve_schema() -> RetrieveSchemaOutput:
     """实时内省 SDA Neo4j 的节点属性、唯一字段和有向关系路径。
 
@@ -101,6 +104,7 @@ def retrieve_schema() -> RetrieveSchemaOutput:
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def retrieve_doc_read(
     doc: Annotated[str, Field(
         description="飞书 docx 文档 token，例如 SaQ5dDqWfox5DWxLGp5cRPSwnhg；只传 token，不支持完整 URL。",
@@ -122,6 +126,7 @@ def retrieve_doc_read(
         read_only=False, destructive=True, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def retrieve_doc_update(
     doc: Annotated[str, Field(
         description="飞书 docx 文档 token；只传 token，不支持完整 URL。",
@@ -147,6 +152,7 @@ def retrieve_doc_update(
         read_only=False, destructive=True, idempotent=False, open_world=True,
     ),
 )
+@map_tool_errors
 def sync(
     dry_run: Annotated[bool, Field(
         default=False,

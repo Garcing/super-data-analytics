@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from functools import lru_cache
 import re
 from typing import Any
@@ -22,6 +23,30 @@ CONTEXT_NEIGHBOR_LIMIT = 20
 
 def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in (raw or {}).items() if k not in _INTERNAL_PROPS}
+
+
+def _to_jsonable(value: Any) -> Any:
+    """把 Cypher 查询结果递归转成 JSON 安全结构。
+
+    neo4j driver 6.x 的 Node/Relationship 是 Mapping（不再有 ``.properties``
+    属性），5.x 同样实现 Mapping 协议，故按 Mapping 统一取属性并清洗内部字段；
+    Path 按 nodes/relationships 鸭子判定；neo4j temporal/spatial 标量字符串化
+    兜底。否则 ``RETURN n`` 原样穿透，MCP 序列化崩成裸错误。
+    """
+    if value is None or isinstance(value, (str, bytes, bool, int, float)):
+        return value
+    if isinstance(value, Mapping):
+        return _clean_properties({k: _to_jsonable(v) for k, v in value.items()})
+    if hasattr(value, "nodes") and hasattr(value, "relationships"):
+        return {
+            "nodes": [_to_jsonable(n) for n in value.nodes],
+            "relationships": [_to_jsonable(r) for r in value.relationships],
+        }
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_to_jsonable(v) for v in value]
+    if type(value).__module__.split(".")[0] == "neo4j":
+        return str(value)
+    return value
 
 
 def _format_schema_pattern(source: str, rel_type: str, target: str) -> str:
@@ -341,18 +366,10 @@ class Neo4jClient:
     def run_cypher(self, statement: str) -> list[dict]:
         with self._session() as s:
             result = s.run(statement)
-            rows = []
-            for rec in result:
-                obj = {}
-                for key in rec.keys():
-                    val = rec[key]
-                    if hasattr(val, "properties"):
-                        val = _clean_properties(dict(val.properties))
-                    elif isinstance(val, list):
-                        val = [_clean_properties(dict(v.properties)) if hasattr(v, "properties") else v for v in val]
-                    obj[key] = val
-                rows.append(obj)
-            return rows
+            return [
+                {key: _to_jsonable(rec[key]) for key in rec.keys()}
+                for rec in result
+            ]
 
 
 def _fuse_ranked_sources(

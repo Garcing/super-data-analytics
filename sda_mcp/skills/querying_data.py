@@ -24,6 +24,10 @@ _SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 _POLL_TIMEOUT_MS = 60_000
 _POLL_INTERVAL_S = 1.0
 _GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+# 建连失败重试一次：吸收 VPN 转发器随 openvpn 微重置产生的瞬断（查询只读且
+# 每次新建连接，建连期重试安全；2026-08-26 QA 实测 ~11% sql_query 因此抖动）。
+_CONNECT_RETRIES = 1
+_RETRY_DELAY_S = 0.5
 
 
 @dataclass
@@ -77,10 +81,15 @@ class HologresClient:
             f"password={env['HOLOGRES_PASSWORD']} connect_timeout=20")
 
     def _connect(self) -> psycopg.Connection:
-        try:
-            return psycopg.connect(self._dsn)
-        except psycopg.OperationalError as exc:
-            raise DataSourceError(f"无法连接 Hologres（检查 VPN/白名单/凭证）: {exc}") from exc
+        last_exc: psycopg.OperationalError | None = None
+        for attempt in range(_CONNECT_RETRIES + 1):
+            try:
+                return psycopg.connect(self._dsn)
+            except psycopg.OperationalError as exc:
+                last_exc = exc
+                if attempt < _CONNECT_RETRIES:
+                    time.sleep(_RETRY_DELAY_S)
+        raise DataSourceError(f"无法连接 Hologres（检查 VPN/白名单/凭证）: {last_exc}") from last_exc
 
     def test_connection(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:

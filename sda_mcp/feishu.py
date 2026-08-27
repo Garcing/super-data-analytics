@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import html as _html
+import re
 import time
 from typing import Any
 
@@ -56,6 +58,17 @@ def _reset_token_cache() -> None:
     """仅供测试：清 token 缓存。"""
     _token_cache["token"] = None
     _token_cache["expires_at"] = 0.0
+
+
+# 导出管线（docs/v1/content?content_type=markdown）会先把 " & < > 实体化
+# （&#34; &amp; &lt; &gt;）再做 markdown 反斜杠转义。探针实证（2026-08-26）：
+# docx 存储层文本干净，污染只发生在导出侧——读取时先剥 &/# 前的反斜杠再
+# html.unescape 还原；\+ \. \( 等装饰性转义保留（渲染等价）。
+_EXPORT_ENTITY_BACKSLASH = re.compile(r"\\([&#])")
+
+
+def _decode_export_markdown(content: str) -> str:
+    return _html.unescape(_EXPORT_ENTITY_BACKSLASH.sub(r"\1", content))
 
 
 def _get_tenant_token() -> str:
@@ -129,7 +142,7 @@ class FeishuClient:
         content = (data.get("data") or {}).get("content")
         if content is None:
             raise ExternalAPIError(f"飞书文档 {doc_token} 返回缺 content")
-        return content
+        return _decode_export_markdown(content)
 
     # --- drive 文件列表（读）---
     def list_folder_files(self, folder_token: str) -> list[dict[str, Any]]:

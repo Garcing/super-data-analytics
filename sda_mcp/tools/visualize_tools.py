@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from sda_mcp.skills.visualizing import render as _render
-from sda_mcp.tools._common import mcp, tool_annotations
+from sda_mcp.tools._common import mcp, map_tool_errors, tool_annotations
 
 try:
     from mcp.server.mcpserver import Image
@@ -33,6 +33,7 @@ def _safe_name(spec: dict[str, Any]) -> str:
         read_only=False, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def chart(
     spec: Annotated[dict[str, Any], Field(
         description=(

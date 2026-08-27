@@ -16,7 +16,7 @@ from pydantic import Field
 from sda_mcp.skills.diagnosing import contribute as _contribute
 from sda_mcp.skills.predicting import forecast as _forecast
 from sda_mcp.skills.evaluating import evaluate as _evaluate
-from sda_mcp.tools._common import mcp, to_dict, tool_annotations
+from sda_mcp.tools._common import mcp, map_tool_errors, to_dict, tool_annotations
 from sda_mcp.tools._schemas import ContributionOutput, ForecastOutput
 
 
@@ -27,6 +27,7 @@ from sda_mcp.tools._schemas import ContributionOutput, ForecastOutput
         read_only=True, destructive=False, idempotent=True, open_world=False,
     ),
 )
+@map_tool_errors
 def contribute(
     method: Annotated[Literal["add", "multiply", "ratio"], Field(
         description="分解方法：add=加法指标；multiply=连乘/LMDI；ratio=分子分母比率的组内、结构和交叉贡献。",
@@ -54,6 +55,7 @@ def contribute(
         read_only=True, destructive=False, idempotent=True, open_world=False,
     ),
 )
+@map_tool_errors
 def forecast(
     payload: Annotated[dict[str, Any], Field(
         description=(
@@ -79,6 +81,7 @@ def forecast(
         read_only=True, destructive=False, idempotent=True, open_world=False,
     ),
 )
+@map_tool_errors
 def impact(
     analysis_type: Annotated[
         Literal["ab_rate", "ab_mean", "did", "roi", "sample_size_rate"],

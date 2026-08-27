@@ -13,7 +13,7 @@ from sda_mcp.skills.building_reports import (
     publish_report as _publish, list_reports as _list, get_report as _get,
     delete_report as _delete, generate_image as _gen,
 )
-from sda_mcp.tools._common import mcp, tool_annotations
+from sda_mcp.tools._common import mcp, map_tool_errors, tool_annotations
 from sda_mcp.tools._schemas import (
     ReportDeleteOutput,
     ReportListOutput,
@@ -33,6 +33,7 @@ except ImportError:  # 旧版 SDK
         read_only=False, destructive=True, idempotent=False, open_world=True,
     ),
 )
+@map_tool_errors
 def report_html_publish(
     id: Annotated[str, Field(
         description="报告唯一 ID；建议使用日期+主题 slug，例如 2026-08-weekly-gmv。同 ID 会覆盖已有报告。",
@@ -58,6 +59,7 @@ def report_html_publish(
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def report_html_list() -> ReportListOutput:
     """读取已发布报告索引。
 
@@ -74,6 +76,7 @@ def report_html_list() -> ReportListOutput:
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def report_html_get(
     id: Annotated[str, Field(
         description="要读取的报告 ID，来自 report_html_list 或发布时使用的 ID。",
@@ -95,6 +98,7 @@ def report_html_get(
         read_only=False, destructive=True, idempotent=False, open_world=True,
     ),
 )
+@map_tool_errors
 def report_html_delete(
     id: Annotated[str, Field(
         description="要永久删除的报告 ID。删除报告 JSON 并从索引移除，不可恢复。",
@@ -115,6 +119,7 @@ def report_html_delete(
         read_only=False, destructive=False, idempotent=False, open_world=True,
     ),
 )
+@map_tool_errors
 def report_image_generate(
     prompt: Annotated[str, Field(
         description="完整生图提示词；应明确版式比例、标题、KPI 数值、趋势结论和视觉风格。调用会产生外部模型费用。",

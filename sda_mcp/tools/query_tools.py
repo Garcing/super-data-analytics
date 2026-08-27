@@ -10,7 +10,7 @@ from sda_mcp.skills.querying_data import (
     sql_query as _sql_query, sql_schema as _sql_schema,
     powerbi_schema as _powerbi_schema, powerbi_query as _powerbi_query,
 )
-from sda_mcp.tools._common import mcp, to_dict, tool_annotations
+from sda_mcp.tools._common import mcp, map_tool_errors, to_dict, tool_annotations
 from sda_mcp.tools._schemas import SqlQueryOutput, SqlSchemaOutput
 
 
@@ -24,6 +24,7 @@ _GUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def sql_query(
     sql: Annotated[str, Field(
         description="一条 Hologres/PostgreSQL SQL；事务强制只读。结果不会自动截断，大结果请在 SQL 中聚合或 LIMIT。",
@@ -45,6 +46,7 @@ def sql_query(
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def sql_schema(
     tables: Annotated[list[str], Field(
         description='要内省的物理表列表；每项必须为 schema.table，例如 ["public.orders"]。',
@@ -66,6 +68,7 @@ def sql_schema(
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def powerbi_schema(
     artifact_id: Annotated[str, Field(
         description="Power BI 语义模型 artifact GUID，例如 11111111-2222-3333-4444-555555555555。",
@@ -87,6 +90,7 @@ def powerbi_schema(
         read_only=True, destructive=False, idempotent=True, open_world=True,
     ),
 )
+@map_tool_errors
 def powerbi_query(
     artifact_id: Annotated[str, Field(
         description="Power BI 语义模型 artifact GUID。",
