@@ -130,6 +130,8 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 
 ## 修复优先级
 
+> **修复进度(2026-08-27)**:第 1-4 项已修复部署(commit c4b2fba);第 5 项中的 sql_schema 护栏、forecast grain/horizon 护栏、heatmap 默认格式、图型契约披露、MDE 披露、powerbi 解码/信封、两处 Skill 漂移已修复部署(commit 3476387,基线 204 passed)。剩余 P2 长尾见各节。
+
 1. **错误透出**(P0-2):tools 层 catch `SkillError` → 结构化错误。一处模式,19 工具受益,让后续所有问题可诊断。
 2. **publish 修复**(P0-1):summary 兼容字符串 + 索引读取绕开 CDN 陈旧缓存;清理孤儿 Blob。
 3. **retrieve_cypher 图元素序列化**(P1-1)与**飞书导出实体化污染**(P1-2,后经探针更正为导出侧而非写入侧)。
