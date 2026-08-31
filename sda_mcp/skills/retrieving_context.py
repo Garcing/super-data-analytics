@@ -26,6 +26,7 @@ _INTERNAL_PROPS = {
 
 # 检索结果 context 每命中、每类邻居标签的保留上限；超限截断并置 truncated。
 CONTEXT_NEIGHBOR_LIMIT = 20
+DOC_READ_MAX_ATTEMPTS = 3
 
 
 def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
@@ -555,35 +556,65 @@ def cypher(statement: str) -> dict[str, Any]:
         client.close()
 
 
+def _document_revision(doc_id: str, document: dict[str, Any]) -> int:
+    revision_id = document.get("revision_id")
+    if not isinstance(revision_id, int):
+        raise ExternalAPIError(f"飞书文档 {doc_id} 元数据响应缺 revision_id")
+    return revision_id
+
+
+def _read_latest_consistent(
+    client: FeishuClient, doc_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
+    """读取 latest blocks，并用单调 revision 的前后元数据检查排除混合快照。"""
+    warnings: list[str] = []
+    for attempt in range(1, DOC_READ_MAX_ATTEMPTS + 1):
+        before = client.get_document(doc_id)
+        before_revision = _document_revision(doc_id, before)
+        raw_blocks = client.list_blocks(doc_id, document_revision_id=-1)
+        after = client.get_document(doc_id)
+        after_revision = _document_revision(doc_id, after)
+        if before_revision == after_revision:
+            return after, raw_blocks, warnings
+        warnings.append(
+            f"读取 blocks 期间文档 revision 从 {before_revision} 变为 {after_revision}；"
+            f"已丢弃该结果并重试（{attempt}/{DOC_READ_MAX_ATTEMPTS}）"
+        )
+    raise ExternalAPIError(
+        f"飞书文档 {doc_id} 在 {DOC_READ_MAX_ATTEMPTS} 次读取期间持续发生变化；请稍后重试"
+    )
+
+
 def doc(
     doc_id: str, root_block_id: str | None = None, max_depth: int = -1,
+    detail: str = "compact",
 ) -> dict[str, Any]:
     """读取飞书 docx 为带 revision 与父子 ID 的结构化块快照。"""
     if not isinstance(doc_id, str) or not doc_id.strip():
         raise ValidationError("doc 不能为空")
     if max_depth < -1:
         raise ValidationError("max_depth 必须为 -1 或非负整数")
+    if detail not in {"compact", "full"}:
+        raise ValidationError("detail 必须是 compact 或 full")
     client = FeishuClient()
-    document = client.get_document(doc_id)
-    revision_id = document.get("revision_id")
-    if not isinstance(revision_id, int):
-        raise ExternalAPIError(f"飞书文档 {doc_id} 元数据响应缺 revision_id")
-    raw_blocks = client.list_blocks(doc_id, document_revision_id=revision_id)
+    document, raw_blocks, consistency_warnings = _read_latest_consistent(client, doc_id)
+    revision_id = _document_revision(doc_id, document)
     page = next((block for block in raw_blocks if block.get("block_type") == 1), None)
     if page is None or not page.get("block_id"):
         raise ExternalAPIError(f"飞书文档 {doc_id} 块响应缺 page 根块")
 
     selected_root = root_block_id or page["block_id"]
     selected, traversal_warnings = select_subtree(raw_blocks, selected_root, max_depth)
-    blocks, normalization_warnings = normalize_blocks(selected)
+    blocks, normalization_warnings = normalize_blocks(selected, detail=detail)
     return {
         "document_id": document.get("document_id") or doc_id,
         "title": document.get("title") or "",
         "revision_id": revision_id,
+        "detail": detail,
         "root_block_id": selected_root,
         "blocks": blocks,
         "total_blocks": len(raw_blocks),
-        "warnings": traversal_warnings + normalization_warnings,
+        "warnings": consistency_warnings + traversal_warnings + normalization_warnings,
     }
 
 
@@ -612,7 +643,14 @@ def update_doc(
             f"文档 revision 冲突：读取时为 {expected_revision_id}，当前为 {current_revision_id}；"
             "请重新调用 retrieve_doc_read 并基于最新块重新生成操作"
         )
-    raw_blocks = client.list_blocks(doc_id, document_revision_id=expected_revision_id)
+    raw_blocks = client.list_blocks(doc_id, document_revision_id=-1)
+    verified_document = client.get_document(doc_id)
+    verified_revision_id = _document_revision(doc_id, verified_document)
+    if verified_revision_id != expected_revision_id:
+        raise ValidationError(
+            f"文档 revision 冲突：读取时为 {expected_revision_id}，当前为 {verified_revision_id}；"
+            "请重新调用 retrieve_doc_read 并基于最新块重新生成操作"
+        )
     by_id = {block.get("block_id"): block for block in raw_blocks}
     if not raw_blocks:
         raise ExternalAPIError(f"飞书文档 {doc_id} 在 revision={expected_revision_id} 未返回块")

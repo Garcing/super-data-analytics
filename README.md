@@ -11,7 +11,7 @@ Super Data Analytics（SDA）是一个面向 AI Agent 的数据分析 MCP 服务
 | SQL 查询 | `sql_query`、`sql_schema` | 查询 Hologres/PostgreSQL 数据与物理表结构 |
 | Power BI | `powerbi_query`、`powerbi_schema` | 查询指定 Power BI 语义模型与模型 schema |
 | 业务语义层 | `retrieve_search`、`retrieve_cypher`、`retrieve_schema` | 检索指标、维度、数据资产、业务层级和报告模板 |
-| 语义层维护 | `retrieve_doc_read`、`retrieve_doc_update`、`sync` | 读取带 revision 的飞书结构化块、按 block ID 精确更新，并同步飞书多维表到 Neo4j |
+| 语义层维护 | `retrieve_doc_read`、`retrieve_doc_update`、`sync` | 默认紧凑读取经过 revision 一致性校验的飞书结构化块，按需读取完整行内元素并按 block ID 精确更新，再同步飞书多维表到 Neo4j |
 | 分析计算 | `contribute`、`forecast`、`impact` | 贡献度归因、趋势预测、A/B、DID、ROI 与样本量计算 |
 | 数据可视化 | `chart` | 将声明式 JSON 图表规格渲染为准确的 PNG/SVG |
 | 报告交付 | `report_html_publish`、`report_html_list`、`report_html_get`、`report_html_delete`、`report_image_generate` | 发布 HTML 报告或生成单张图片报告 |
@@ -106,7 +106,7 @@ docker compose up -d
 python -m pytest -q
 ```
 
-当前测试基线为 218 项通过、8 项真实服务集成测试默认跳过。配置好外部服务后，可设置 `SDA_INTEGRATION=1` 执行集成验证。
+当前测试基线为 221 项通过、10 项真实服务集成测试默认跳过。配置好外部服务后，可设置 `SDA_INTEGRATION=1` 执行集成验证。
 
 ## 项目维护
 

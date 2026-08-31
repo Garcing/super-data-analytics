@@ -60,7 +60,6 @@ class DocBlockOutput(TypedDict):
     type: str
     children: list[str]
     content: NotRequired[dict[str, Any]]
-    elements: NotRequired[list[dict[str, Any]]]
     text: NotRequired[str]
     raw: NotRequired[dict[str, Any]]
 
@@ -69,6 +68,7 @@ class DocReadOutput(TypedDict):
     document_id: str
     title: str
     revision_id: int
+    detail: str
     root_block_id: str
     blocks: list[DocBlockOutput]
     total_blocks: int

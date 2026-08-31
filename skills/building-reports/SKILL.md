@@ -41,7 +41,7 @@ HTML 报告可引用 `chart` 生成的精确图表；不要用生成式图片替
 
 1. `retrieve_search` 搜模板类型/名称；必要时用 `retrieve_schema`/`retrieve_cypher` 精确列举。
 2. 排除占位符、测试模板和不匹配的报告类型。
-3. 从 URL 中剥出 docx token，用 `retrieve_doc_read` 获取最新结构化块快照；按 `type`、`parent_id`、`children` 和文本块 `text/elements` 还原章节与嵌套结构，不假设返回 Markdown 字符串。
+3. 从 URL 中剥出 docx token，用 `retrieve_doc_read` 默认 compact 获取最新结构化块快照；按 `type`、`parent_id`、`children` 和文本块 `text` 还原章节与嵌套结构，不假设返回 Markdown 字符串。只有需要保留富文本样式进行更新时才对目标子树读取 full，并使用 `content.elements`。
 4. 只继承章节、必填项和表达要求；指标定义仍以语义层受治理口径为准。
 5. 运行时暂缺“报告模板”实体时，说明部署/同步缺口；无阻塞时可按内置 HTML 合约组织，不把暂缺写成永久架构。
 

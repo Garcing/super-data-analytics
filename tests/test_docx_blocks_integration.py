@@ -13,6 +13,7 @@ from sda_mcp.skills import retrieving_context as r
 
 
 TEST_DOC = os.environ.get("SDA_TEST_DOC_TOKEN", "V6TYdWScDoms5axrSmkcM5FHn0b")
+READ_ONLY_DOC = os.environ.get("SDA_READ_ONLY_TEST_DOC_TOKEN", "A5S1dw2YMoFnw9xPzbUcVjSDnWe")
 _INTEGRATION = pytest.mark.skipif(
     not os.environ.get("SDA_INTEGRATION"),
     reason="集成测试默认跳过；设 SDA_INTEGRATION=1 启用真实飞书读写",
@@ -35,6 +36,16 @@ def test_structured_read_has_nested_table_and_list_blocks():
     code = next(block for block in snapshot["blocks"] if block["type"] == "code")
     assert isinstance(code["text"], str)
     assert "```" not in code["text"]
+
+
+@_INTEGRATION
+def test_compact_latest_read_supports_document_that_forbids_explicit_revision():
+    snapshot = r.doc(READ_ONLY_DOC)
+    assert snapshot["title"] == "learn｜用户期数听课聚合表"
+    assert snapshot["revision_id"] >= 5
+    code = next(block for block in snapshot["blocks"] if block["type"] == "code")
+    assert "group by period_id, user_id" in code["text"].lower()
+    assert "elements" not in code.get("content", {})
 
 
 @_INTEGRATION
@@ -79,11 +90,11 @@ def test_insert_update_read_delete_nested_subtree_roundtrip():
         updated = r.update_doc(TEST_DOC, inserted["revision_id"], [{
             "op": "replace_text", "block_id": real_code_id, "text": sql,
         }])
-        subtree = r.doc(TEST_DOC, root_block_id=real_parent_id)
+        subtree = r.doc(TEST_DOC, root_block_id=real_parent_id, detail="full")
         assert subtree["revision_id"] == updated["revision_id"]
         code = next(block for block in subtree["blocks"] if block["block_id"] == real_code_id)
         assert code["text"] == sql
-        assert code["elements"][0]["text_run"]["content"] == sql
+        assert code["content"]["elements"][0]["text_run"]["content"] == sql
     finally:
         latest = r.doc(TEST_DOC)
         page = next(block for block in latest["blocks"] if block["type"] == "page")

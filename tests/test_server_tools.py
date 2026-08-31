@@ -326,6 +326,35 @@ def test_retrieve_doc_update(monkeypatch):
     assert sc["affected_block_ids"] == ["B1"]
 
 
+def test_retrieve_doc_read_passes_detail(monkeypatch):
+    captured = {}
+
+    def _read(doc, root_block_id, max_depth, detail):
+        captured.update(
+            doc=doc, root_block_id=root_block_id, max_depth=max_depth, detail=detail,
+        )
+        return {
+            "document_id": doc,
+            "title": "标题",
+            "revision_id": 7,
+            "detail": detail,
+            "root_block_id": root_block_id or doc,
+            "blocks": [],
+            "total_blocks": 0,
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(retrieve_tools, "_doc", _read)
+    sc, err, _ = _call("retrieve_doc_read", {
+        "doc": "DOC", "root_block_id": "B1", "max_depth": 0, "detail": "full",
+    })
+    assert not err
+    assert sc["detail"] == "full"
+    assert captured == {
+        "doc": "DOC", "root_block_id": "B1", "max_depth": 0, "detail": "full",
+    }
+
+
 def test_retrieve_doc_tools_advertise_structured_revision_contract():
     tools = _tools()
     read = tools["retrieve_doc_read"]
@@ -333,6 +362,9 @@ def test_retrieve_doc_tools_advertise_structured_revision_contract():
     assert "content" not in read.output_schema["properties"]
     for field in ("revision_id", "root_block_id", "blocks", "warnings"):
         assert field in read.output_schema["properties"]
+    detail = read.input_schema["properties"]["detail"]
+    assert detail["default"] == "compact"
+    assert set(detail["enum"]) == {"compact", "full"}
     assert "expected_revision_id" in update.input_schema["required"]
     assert "operations" in update.input_schema["required"]
     assert "content" not in update.input_schema["properties"]

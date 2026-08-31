@@ -1,6 +1,6 @@
 """retrieving_context 内核 mock 单元测试（离线）。"""
 import pytest
-from sda_mcp.errors import DataSourceError, ValidationError
+from sda_mcp.errors import DataSourceError, ExternalAPIError, ValidationError
 from sda_mcp.skills import retrieving_context as r
 
 GC = {
@@ -131,16 +131,18 @@ def test_cypher_empty():
         r.cypher("  ")
 
 
-def test_doc_returns_revision_pinned_structured_blocks(monkeypatch):
-    monkeypatch.setattr(
-        r.FeishuClient,
-        "get_document",
-        lambda self, tok: {"document_id": tok, "title": "标题", "revision_id": 7},
-    )
-    captured = {}
+def test_doc_returns_compact_consistent_structured_blocks(monkeypatch):
+    metadata_calls = []
+
+    def _metadata(self, tok):
+        metadata_calls.append(tok)
+        return {"document_id": tok, "title": "标题", "revision_id": 7}
+
+    monkeypatch.setattr(r.FeishuClient, "get_document", _metadata)
+    captured = []
 
     def _list(self, tok, document_revision_id=None):
-        captured["revision"] = document_revision_id
+        captured.append(document_revision_id)
         return [
             {"block_id": tok, "block_type": 1, "page": {}, "children": ["C1"]},
             {"block_id": "C1", "parent_id": tok, "block_type": 14,
@@ -150,13 +152,78 @@ def test_doc_returns_revision_pinned_structured_blocks(monkeypatch):
 
     monkeypatch.setattr(r.FeishuClient, "list_blocks", _list)
     out = r.doc("DOCTOKEN")
-    assert captured["revision"] == 7
+    assert captured == [-1]
+    assert metadata_calls == ["DOCTOKEN", "DOCTOKEN"]
     assert out["revision_id"] == 7
+    assert out["detail"] == "compact"
     assert out["title"] == "标题"
     assert out["root_block_id"] == "DOCTOKEN"
     assert out["blocks"][1]["type"] == "code"
     assert out["blocks"][1]["text"] == "select * from t"
+    assert out["blocks"][1]["content"] == {"style": {"language": 56}}
+    assert "elements" not in out["blocks"][1]
     assert out["document_id"] == "DOCTOKEN"
+
+
+def test_doc_full_returns_content_elements_without_top_level_duplicate(monkeypatch):
+    monkeypatch.setattr(
+        r.FeishuClient,
+        "get_document",
+        lambda self, tok: {"document_id": tok, "title": "标题", "revision_id": 7},
+    )
+    monkeypatch.setattr(
+        r.FeishuClient,
+        "list_blocks",
+        lambda self, tok, document_revision_id=None: [
+            {"block_id": tok, "block_type": 1, "page": {}, "children": ["C1"]},
+            {"block_id": "C1", "parent_id": tok, "block_type": 14,
+             "code": {"elements": [{"text_run": {"content": "select 1"}}],
+                      "style": {"language": 56}}},
+        ],
+    )
+    out = r.doc("DOCTOKEN", detail="full")
+    code = out["blocks"][1]
+    assert out["detail"] == "full"
+    assert code["content"]["elements"][0]["text_run"]["content"] == "select 1"
+    assert "elements" not in code
+
+
+def test_doc_retries_when_revision_changes_during_latest_block_read(monkeypatch):
+    revisions = iter([7, 8, 8, 8])
+    monkeypatch.setattr(
+        r.FeishuClient,
+        "get_document",
+        lambda self, tok: {"document_id": tok, "title": "标题", "revision_id": next(revisions)},
+    )
+    calls = []
+
+    def _list(self, tok, document_revision_id=None):
+        calls.append(document_revision_id)
+        return [{"block_id": tok, "block_type": 1, "page": {}, "children": []}]
+
+    monkeypatch.setattr(r.FeishuClient, "list_blocks", _list)
+    out = r.doc("DOCTOKEN")
+    assert calls == [-1, -1]
+    assert out["revision_id"] == 8
+    assert any("重试" in warning for warning in out["warnings"])
+
+
+def test_doc_fails_when_revision_never_stabilizes(monkeypatch):
+    revisions = iter([1, 2, 2, 3, 3, 4])
+    monkeypatch.setattr(
+        r.FeishuClient,
+        "get_document",
+        lambda self, tok: {"document_id": tok, "title": "标题", "revision_id": next(revisions)},
+    )
+    monkeypatch.setattr(
+        r.FeishuClient,
+        "list_blocks",
+        lambda self, tok, document_revision_id=None: [
+            {"block_id": tok, "block_type": 1, "page": {}, "children": []},
+        ],
+    )
+    with pytest.raises(ExternalAPIError, match="持续发生变化"):
+        r.doc("DOCTOKEN")
 
 
 def test_doc_empty_id_raises():
@@ -164,20 +231,35 @@ def test_doc_empty_id_raises():
         r.doc("")
 
 
+def test_doc_invalid_detail_raises():
+    with pytest.raises(ValidationError, match="detail"):
+        r.doc("DOC", detail="verbose")
+
+
 def test_update_doc_batches_text_operations_at_expected_revision(monkeypatch):
     captured = {}
+    metadata_calls = []
+
+    def _metadata(self, did):
+        metadata_calls.append(did)
+        return {"document_id": did, "revision_id": 7}
+
     monkeypatch.setattr(
-        r.FeishuClient, "get_document",
-        lambda self, did: {"document_id": did, "revision_id": 7},
+        r.FeishuClient, "get_document", _metadata,
     )
-    monkeypatch.setattr(
-        r.FeishuClient,
-        "list_blocks",
-        lambda self, did, document_revision_id=None: [
+
+    def _list(self, did, document_revision_id=None):
+        captured["list_revision"] = document_revision_id
+        return [
             {"block_id": did, "block_type": 1, "children": ["T1", "C1"]},
             {"block_id": "T1", "block_type": 2, "parent_id": did, "text": {}},
             {"block_id": "C1", "block_type": 14, "parent_id": did, "code": {}},
-        ],
+        ]
+
+    monkeypatch.setattr(
+        r.FeishuClient,
+        "list_blocks",
+        _list,
     )
 
     def _update(self, did, revision, requests):
@@ -192,6 +274,8 @@ def test_update_doc_batches_text_operations_at_expected_revision(monkeypatch):
         ]},
     ])
     assert captured["revision"] == 7
+    assert captured["list_revision"] == -1
+    assert metadata_calls == ["DOC", "DOC"]
     assert captured["requests"][0]["update_text_elements"]["elements"][0]["text_run"]["content"] == "select * from t"
     assert out["previous_revision_id"] == 7
     assert out["revision_id"] == 8

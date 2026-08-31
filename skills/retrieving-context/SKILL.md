@@ -20,7 +20,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 | `retrieve_search` | 用自然语言发现候选实体；默认 `strategy="hybrid"` |
 | `retrieve_schema` | 从 Neo4j 实时内省节点属性与关系；写 Cypher 前先用 |
 | `retrieve_cypher` | 精确列举、计数或沿实时关系取完整上下文；默认只写只读 `MATCH` |
-| `retrieve_doc_read` | 读取 SQL 文档或报告模板的结构化块快照；返回 revision、block ID、父子关系、逐字文本与原始行内元素 |
+| `retrieve_doc_read` | 读取 SQL 文档或报告模板的结构化块快照；默认 compact 返回 revision、block ID、父子关系与逐字文本，full 才返回原始行内元素 |
 | `retrieve_doc_update` | 在读取时的 revision 上精确更新文本块、插入一棵子树或删除一段直接子块；不经过 Markdown、不覆盖全文 |
 | `sync` | 从飞书多维表全量重建图、约束、索引与向量；优先 `dry_run=true` 预检 |
 
@@ -32,7 +32,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 2. 用 `retrieve_search` 做宽召回。默认 hybrid；有明确领域时用 `targets` 限定，但不确定就不传，避免漏掉跨实体答案。
 3. 比较候选的名称/ID、定义、范围、业务归属和图邻居。`retrieval.fusion_score` 只用于排序；不要把它解释为置信概率，也不要直接比较 vector/fulltext 两种分数。
 4. 若答案需要完整列表、精确关系或搜索结果的邻居被截断，先 `retrieve_schema`，再按实时 label/属性/关系写只读 Cypher。
-5. 对语义表或模板链接，剥出 docx token 后用 `retrieve_doc_read` 读最新结构化块；不要依赖对话中的旧副本。SQL 使用 code 块的逐字 `text`，模板按 block ID 与父子关系理解结构。
+5. 对语义表或模板链接，剥出 docx token 后用 `retrieve_doc_read` 默认 compact 读取最新结构化块；不要依赖对话中的旧副本。SQL 使用 code 块的逐字 `text`，模板按 block ID 与父子关系理解结构。只有需要无损修改富文本时，才对目标子树用 `detail="full"` 重读。
 6. 返回已采用实体、定义、关键属性、来源层级和仍未解决的歧义。需要数值时把确定好的契约交给 querying-data。
 
 ## 指标解析
@@ -64,15 +64,17 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 - `实现方式="sql_query"`：逻辑语义表，数据库中通常没有同名物理 relation。读取 `SQL文档` 的最新块快照，按文档顺序定位 `type="code"` 的块并使用其逐字 `text`，由 querying-data 作为该表别名的 CTE/派生表使用。不要给代码补 Markdown 围栏，也不要对逻辑表调用 `sql_schema`。若有多个代码块且组合方式不明确，先根据相邻说明块判断或暴露歧义，不要盲目拼接。
 - `实现方式="physical_table"` 或其他物理实现：可用 `sql_schema` 核对数据库真实列；图谱负责说明用途、粒度、别名和主键。
 - `SQL文档` 可能是“显示文本 + URL”的多行值；传给文档工具的只能是 docx token，不是完整 URL。
-- 报告模板由“报告模板”实体的元数据与链接 docx 块组成。搜索模板后读取结构化快照；标题、段落、列表、表格等通过 `type`、`parent_id`、`children` 和 `content/elements` 理解，不再转换为 Markdown。
+- 报告模板由“报告模板”实体的元数据与链接 docx 块组成。搜索模板后默认读取 compact 结构化快照；标题、段落、列表、表格等通过 `type`、`parent_id`、`children`、`text` 与非行内 `content` 理解，不再转换为 Markdown。确需富文本细节时再读取 full 的 `content.elements`。
 
 ## 文档读取与更新
 
-`retrieve_doc_read` 返回固定 revision 的扁平块快照：
+`retrieve_doc_read` 返回经过一致性校验的扁平块快照：
 
-- `revision_id` 是后续写入的版本前置条件，更新时原样传为 `expected_revision_id`；服务端会先与最新元数据 revision 显式比较。飞书 API 自身实测会接受某些旧 revision，不能只依赖其请求参数充当严格乐观锁。
+- 读取 blocks 使用飞书 latest revision（`-1`）；服务端在读取前后各取一次轻量元数据，revision 不同就丢弃结果并有界重试，避免分页期间混入不同版本。某些只读文档可读 latest、却会对相同数字的显式 revision 返回 403，不能用指定 revision 固定普通读取。
+- 返回的 `revision_id` 是后续写入的版本前置条件，更新时原样传为 `expected_revision_id`；服务端会在读取目标块前后与最新元数据 revision 显式比较。飞书 API 自身实测会接受某些旧 revision，不能只依赖其写请求参数充当严格乐观锁。
 - `blocks[]` 中 `block_id` 是精确更新地址，`parent_id` 与有序 `children[]` 表达任意层级；无需递归调用飞书。
-- 文本类块的 `text` 只逐字拼接 `text_run.content`，适合直接执行 SQL；`elements` 保留样式、链接、评论 ID 等完整行内结构。
+- 默认 `detail="compact"`：文本类块的 `text` 逐字拼接 `text_run.content`，适合直接执行 SQL；`content` 仍保留语言、表格属性等非行内结构，但省略冗长的 `content.elements`。
+- `detail="full"`：在 compact 字段之外于 `content.elements` 原样保留样式、链接、评论 ID 等完整行内结构；不会再把 elements 重复到块顶层。只对需要无损富文本编辑的目标块或子树使用 full。
 - 未规范化的新块类型以 `type="block_type_N"`、`raw` 和 `warnings` 显式返回，不因无关资源块让整篇读取失败，也不能假装已理解该块。
 - 只需某个嵌套部分时传 `root_block_id`；`max_depth=0` 只取该块，`-1` 展开完整子树。
 
@@ -81,7 +83,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 1. 读取最新快照并记录 `revision_id`。
 2. 用 `block_id` 定位最小修改范围；不要用显示文本猜位置。
 3. SQL、普通段落等纯文本整体替换用 `replace_text`。它会把内容重置成一个纯文本 run，清掉该块原有行内样式与评论锚点；仅在这是预期行为时使用。
-4. 要保留或精确调整富文本时，复制 read 返回的完整 `elements`，只修改目标 run，再用 `replace_elements`。
+4. 要保留或精确调整富文本时，用 `detail="full"` 重读最小目标子树，复制目标块的完整 `content.elements`，只修改目标 run，再用 `replace_elements`。SQL 等无需样式的整块文本直接用 `replace_text`，不受原始 run 数量影响。
 5. 新增嵌套内容用 `insert_subtree`：`blocks` 是以 `local_id` 和 `children` 连接的扁平规格，`root_ids` 指定插入根；服务一次写入整棵子树。
 6. 删除用 `delete_children`，区间是父块 `children` 的半开区间 `[start_index, end_index)`。确认父块及顺序后再删。
 7. 多个 `replace_text/replace_elements` 可在一次调用中批量提交；结构操作必须单独调用，避免多步部分成功。

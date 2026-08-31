@@ -42,14 +42,30 @@ def test_select_subtree_honors_max_depth():
     assert [block["block_id"] for block in selected] == ["PAGE", "B1", "TB"]
 
 
-def test_normalize_keeps_exact_text_and_native_elements():
-    normalized, warnings = normalize_blocks(_nested_blocks())
+def test_normalize_full_keeps_exact_text_and_native_elements_without_duplicate_alias():
+    normalized, warnings = normalize_blocks(_nested_blocks(), detail="full")
     by_id = {block["block_id"]: block for block in normalized}
     assert by_id["B2"]["type"] == "bullet"
     assert by_id["B2"]["text"] == "子项"
-    assert by_id["B2"]["elements"][0]["text_run"]["text_element_style"]["italic"] is True
+    assert "elements" not in by_id["B2"]
+    assert by_id["B2"]["content"]["elements"][0]["text_run"]["text_element_style"]["italic"] is True
     assert by_id["TB"]["content"]["property"]["column_size"] == 1
     assert warnings == []
+
+
+def test_normalize_compact_omits_native_elements_but_keeps_text_and_style():
+    normalized, warnings = normalize_blocks(_nested_blocks(), detail="compact")
+    by_id = {block["block_id"]: block for block in normalized}
+    assert by_id["B2"]["text"] == "子项"
+    assert "content" not in by_id["B2"]
+    assert "elements" not in by_id["B2"]
+    assert by_id["TB"]["content"]["property"]["column_size"] == 1
+    assert warnings == []
+
+
+def test_normalize_rejects_unknown_detail():
+    with pytest.raises(ValidationError, match="detail"):
+        normalize_blocks(_nested_blocks(), detail="verbose")
 
 
 def test_normalize_unknown_block_is_opaque_not_fatal():

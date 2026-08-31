@@ -1,9 +1,9 @@
 """飞书 Docx 原始块的确定性规范化、局部选择与写入规格转换。
 
 本模块不感知 MCP，也不把块转换成 Markdown。飞书原始块是事实源；对外读取仅把
-动态属性键规范化为 ``type/content``，同时保留 block_id、parent_id、children 和
-原始行内 elements。写入只支持 SDA 当前需要的文本类块与 divider，复杂资源块保持
-只读，避免伪造不完整结构。
+动态属性键规范化为 ``type/content``，同时保留 block_id、parent_id、children；
+compact 模式省略原始行内 elements，full 模式在 ``content.elements`` 原样保留。
+写入只支持 SDA 当前需要的文本类块与 divider，复杂资源块保持只读，避免伪造不完整结构。
 """
 from __future__ import annotations
 
@@ -65,8 +65,12 @@ def validate_elements(elements: Any, *, field: str = "elements") -> list[dict[st
 
 def normalize_blocks(
     blocks: list[dict[str, Any]],
+    *,
+    detail: str = "compact",
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """把飞书动态块属性规范化为稳定的扁平块数组；未知类型显式保留 raw。"""
+    if detail not in {"compact", "full"}:
+        raise ValidationError("detail 必须是 compact 或 full")
     normalized: list[dict[str, Any]] = []
     warnings: list[str] = []
     for block in blocks:
@@ -82,10 +86,17 @@ def normalize_blocks(
         }
         if known:
             content = block.get(known[1]) or {}
-            out["content"] = content
+            if detail == "full":
+                out["content"] = content
+            else:
+                compact_content = {
+                    key: value for key, value in content.items()
+                    if key != "elements" and not (key == "style" and not value)
+                }
+                if compact_content:
+                    out["content"] = compact_content
             if is_text_block(block_type):
                 elements = content.get("elements") or []
-                out["elements"] = elements
                 parts: list[str] = []
                 for index, element in enumerate(elements):
                     run = element.get("text_run") if isinstance(element, dict) else None
@@ -95,7 +106,7 @@ def normalize_blocks(
                         kind = next(iter(element), "unknown") if isinstance(element, dict) else "unknown"
                         warnings.append(
                             f"块 {block_id} 的行内元素 {index} 为 {kind}；text 仅拼接 text_run，"
-                            "完整内容见 elements"
+                            "完整内容需用 detail=full 读取 content.elements"
                         )
                 out["text"] = "".join(parts)
         else:

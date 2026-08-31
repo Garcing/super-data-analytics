@@ -33,7 +33,10 @@ class DocReplaceElementsOperation(_DocOperationBase):
     op: Literal["replace_elements"]
     block_id: str = Field(min_length=1, description="要替换全部行内元素的已有块 ID。")
     elements: list[dict[str, Any]] = Field(
-        description="新的飞书原生 TextElement 数组；可从 read 返回的 elements 修改后传回。",
+        description=(
+            "新的飞书原生 TextElement 数组；先用 retrieve_doc_read(detail='full')，"
+            "从目标块 content.elements 复制修改后传回。"
+        ),
     )
 
 
@@ -198,15 +201,22 @@ def retrieve_doc_read(
         ge=-1,
         description="从 root_block_id 向下展开的最大层数；-1=不限，0=仅根块。",
     )] = -1,
+    detail: Annotated[Literal["compact", "full"], Field(
+        default="compact",
+        description=(
+            "返回详细度。compact（默认）保留块结构、逐字 text 与非行内 content，"
+            "省略 content.elements；full 在 content.elements 原样返回富文本行内元素。"
+        ),
+    )] = "compact",
 ) -> DocReadOutput:
     """按 docx token 读取飞书文档的结构化块快照。
 
-    返回标题、``revision_id``、局部根块、扁平 ``blocks[]`` 和警告；每块含
-    ``block_id``、``parent_id``、``children``、规范化 ``type/content``，文本类
-    另含逐字 ``text`` 与原始 ``elements``。不经过 Markdown。目标文档必须已共享
-    给服务端飞书自建应用。更新时必须把本次 ``revision_id`` 传给更新工具。
+    返回标题、稳定 ``revision_id``、详细度、局部根块、扁平 ``blocks[]`` 和警告。
+    默认 compact 适合读取 SQL/模板并省略冗长行内元素；需要无损富文本更新时对目标
+    子树使用 full，原始元素只位于 ``content.elements``，不会重复到块顶层。不经过
+    Markdown。更新时必须把本次 ``revision_id`` 传给更新工具。
     """
-    return _doc(doc, root_block_id, max_depth)
+    return _doc(doc, root_block_id, max_depth, detail)
 
 
 @mcp.tool(
@@ -238,7 +248,7 @@ def retrieve_doc_update(
     """在指定文档 revision 上精确更新已有块或修改一处子块结构。
 
     ``replace_text`` 适合 SQL 等纯文本块并会重置行内样式；需要保留富文本时从
-    read 的 ``elements`` 修改后使用 ``replace_elements``。``insert_subtree``
+    read(detail="full") 的 ``content.elements`` 修改后使用 ``replace_elements``。``insert_subtree``
     接受临时 ID 扁平块图并一次插入嵌套子树；``delete_children`` 删除父块直接
     children 的半开区间。所有操作都执行 revision 前置校验，不再清空全文或经过 Markdown。
     返回前后 revision、受影响 block ID、临时 ID 映射与警告。

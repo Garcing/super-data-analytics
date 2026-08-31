@@ -52,7 +52,7 @@ description: 执行 SDA 数据查询。默认用只读 Hologres/PostgreSQL SQL �
 `实现方式="sql_query"` 的表是逻辑表：
 
 1. 从语义层取得 `表别名` 和 `SQL文档`。
-2. 用 `retrieve_doc_read` 读取文档最新结构化块快照，按文档顺序定位 `type="code"` 的块并使用其逐字 `text`；不要把 `elements` 样式或 Markdown 围栏带入 SQL。多个代码块的组合方式不明确时先回到 retrieving-context 判断相邻说明，不盲目拼接。
+2. 用 `retrieve_doc_read` 默认 compact 读取文档最新结构化块快照，按文档顺序定位 `type="code"` 的块并使用其逐字 `text`；SQL 读取不需要 full 的 `content.elements`，也不要补 Markdown 围栏。多个代码块的组合方式不明确时先回到 retrieving-context 判断相邻说明，不盲目拼接。
 3. 将确认后的完整查询定义作为对应别名的 CTE：
 
 ```sql
