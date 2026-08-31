@@ -68,7 +68,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 | `querying-data` | `powerbi_query`、`powerbi_schema` | 仅用于显式 Power BI/DAX；先确认模型 schema |
 | `retrieving-context` | `retrieve_search` | 默认 Hybrid 检索；返回检索证据和受控图上下文 |
 | `retrieving-context` | `retrieve_cypher`、`retrieve_schema` | 受约束 Cypher 与 Neo4j 实时 schema |
-| `retrieving-context` | `retrieve_doc_read`、`retrieve_doc_update` | 读取或覆盖飞书文档正文；更新属于外部写入 |
+| `retrieving-context` | `retrieve_doc_read`、`retrieve_doc_update` | 读取带 revision 的飞书扁平块快照；按 block ID 批量改文本、插入子树或删除子块；更新属于外部写入 |
 | `retrieving-context` | `sync` | `dry_run=false` 会全量重建语义图，必须先预检 |
 | `diagnosing-anomalies` | `contribute` | 加法、乘法/LMDI、比率贡献度分解 |
 | `predicting-trends` | `forecast` | 可解释基线预测、回测和区间 |
@@ -189,7 +189,7 @@ python -m sda_mcp.server
 python -m pytest -q
 ```
 
-当前基线：218 passed、8 skipped。真实外部服务测试默认跳过；配置完备后设置 `SDA_INTEGRATION=1`。不要为了让 CI 通过而把真实服务测试改成隐式联网。
+当前基线：214 passed、9 skipped。真实外部服务测试默认跳过；配置完备后设置 `SDA_INTEGRATION=1`。不要为了让 CI 通过而把真实服务测试改成隐式联网。
 
 提交前至少执行 `python -m pytest -q` 和 `git diff --check`，并确认：
 

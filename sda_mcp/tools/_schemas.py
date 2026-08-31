@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 class SqlColumn(TypedDict):
@@ -53,9 +53,26 @@ class RetrieveSchemaOutput(TypedDict):
     relationships: list[str]
 
 
+class DocBlockOutput(TypedDict):
+    block_id: str
+    parent_id: str
+    block_type: int
+    type: str
+    children: list[str]
+    content: NotRequired[dict[str, Any]]
+    elements: NotRequired[list[dict[str, Any]]]
+    text: NotRequired[str]
+    raw: NotRequired[dict[str, Any]]
+
+
 class DocReadOutput(TypedDict):
-    content: str
     document_id: str
+    title: str
+    revision_id: int
+    root_block_id: str
+    blocks: list[DocBlockOutput]
+    total_blocks: int
+    warnings: list[str]
 
 
 class ChartOutput(TypedDict):
@@ -68,6 +85,11 @@ class ChartOutput(TypedDict):
 class DocUpdateOutput(TypedDict):
     updated: bool
     document_id: str
+    previous_revision_id: int
+    revision_id: int
+    affected_block_ids: list[str]
+    block_id_relations: list[dict[str, Any]]
+    warnings: list[str]
 
 
 class ContributionOutput(TypedDict):

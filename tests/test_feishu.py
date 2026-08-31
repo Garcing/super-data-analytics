@@ -100,9 +100,15 @@ def test_request_returns_data_on_success(monkeypatch):
     assert f.FeishuClient()._request("GET", "/x") == {"code": 0, "data": {"ok": True}}
 
 
-# --- get_doc_markdown ---
-# 读路径已切换为"元数据标题 + 原始块自序列化"（2026-08-31 根治官方导出三类污染）。
-# 端点序列、翻页、序列化行为、错误路径的测试统一在 test_feishu_blocks_markdown.py。
+def test_get_document_returns_metadata(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _Resp({
+        "code": 0, "data": {"document": {
+            "document_id": "DOC", "title": "标题", "revision_id": 23,
+        }},
+    }))
+    assert f.FeishuClient().get_document("DOC")["revision_id"] == 23
 
 
 # --- list_folder_files ---
@@ -323,26 +329,6 @@ def test_list_folder_files_breaks_when_has_more_but_no_token(monkeypatch):
     assert len(calls) == 1   # 只调一次即 break，未陷入死循环
 
 
-# --- 写端点 ---
-
-def test_convert_strips_table_merge_info(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    captured = {}
-    table_block = {"block_id": "b1", "block_type": 31, "children": ["c1"],
-                   "table": {"cells": ["c1"], "property": {"row_size": 1, "column_size": 1,
-                                                            "merge_info": [{"col_span": 1, "row_span": 1}]}}}
-    def _req(method, url, json=None, **k):
-        captured["body"] = json
-        return _Resp({"code": 0, "data": {"blocks": [table_block], "first_level_block_ids": ["b1"]}})
-    monkeypatch.setattr(f.httpx, "request", _req)
-    blocks, fl = f.FeishuClient().convert_markdown_to_blocks("# x\n")
-    assert fl == ["b1"]
-    assert captured["body"] == {"content_type": "markdown", "content": "# x\n"}
-    # merge_info 已被剥
-    assert "merge_info" not in blocks[0]["table"]["property"]
-
-
 def test_create_doc_returns_document_id(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
@@ -376,35 +362,59 @@ def test_list_blocks_returns_items(monkeypatch):
     assert items[0]["block_type"] == 1
 
 
-def test_delete_all_children_uses_root_child_count(monkeypatch):
+def test_list_blocks_pins_every_page_to_revision(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    calls = []
-    def _req(method, url, params=None, json=None, **k):
-        calls.append((method, url, json))
-        if url.endswith("/blocks"):
-            return _Resp({"code": 0, "data": {"items": [
-                {"block_id": "DOC", "block_type": 1, "children": ["a", "b", "c"]}]}})
-        return _Resp({"code": 0})
+    pages = [
+        _Resp({"code": 0, "data": {"items": [{"block_id": "P", "block_type": 1}],
+                                        "has_more": True, "page_token": "NEXT"}}),
+        _Resp({"code": 0, "data": {"items": [{"block_id": "T", "block_type": 2}],
+                                        "has_more": False}}),
+    ]
+    params_seen = []
+
+    def _req(method, url, params=None, **kwargs):
+        params_seen.append(params)
+        return pages.pop(0)
+
     monkeypatch.setattr(f.httpx, "request", _req)
-    f.FeishuClient().delete_all_children("DOC")
-    # 第二次调用应是 batch_delete，end_index=3
-    assert calls[1][0] == "DELETE"
-    assert "batch_delete" in calls[1][1]
-    assert calls[1][2] == {"start_index": 0, "end_index": 3}
+    f.FeishuClient().list_blocks("DOC", document_revision_id=23)
+    assert [params["document_revision_id"] for params in params_seen] == [23, 23]
 
 
-def test_delete_all_children_noop_when_empty(monkeypatch):
+def test_batch_update_blocks_uses_revision_and_native_requests(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    calls = []
-    def _req(method, url, params=None, json_body=None, **k):
-        calls.append(url)
-        if url.endswith("/blocks"):
-            return _Resp({"code": 0, "data": {"items": [
-                {"block_id": "DOC", "block_type": 1, "children": []}]}})
-        return _Resp({"code": 0})
+    captured = {}
+
+    def _req(method, url, params=None, json=None, **kwargs):
+        captured.update(method=method, url=url, params=params, body=json)
+        return _Resp({"code": 0, "data": {"document_revision_id": 24, "blocks": []}})
+
     monkeypatch.setattr(f.httpx, "request", _req)
-    f.FeishuClient().delete_all_children("DOC")
-    assert len(calls) == 1  # 根无子块 → 不调 batch_delete
+    requests = [{"block_id": "B", "update_text_elements": {"elements": []}}]
+    out = f.FeishuClient().batch_update_blocks("DOC", 23, requests)
+    assert captured["method"] == "PATCH"
+    assert captured["url"].endswith("/documents/DOC/blocks/batch_update")
+    assert captured["params"]["document_revision_id"] == 23
+    assert captured["params"]["client_token"]
+    assert captured["body"] == {"requests": requests}
+    assert out["data"]["document_revision_id"] == 24
+
+
+def test_delete_children_uses_revision_and_half_open_range(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    captured = {}
+
+    def _req(method, url, params=None, json=None, **kwargs):
+        captured.update(method=method, url=url, params=params, body=json)
+        return _Resp({"code": 0, "data": {"document_revision_id": 25}})
+
+    monkeypatch.setattr(f.httpx, "request", _req)
+    f.FeishuClient().delete_children("DOC", "PARENT", 24, 1, 3)
+    assert captured["method"] == "DELETE"
+    assert "/blocks/PARENT/children/batch_delete" in captured["url"]
+    assert captured["params"]["document_revision_id"] == 24
+    assert captured["body"] == {"start_index": 1, "end_index": 3}
 

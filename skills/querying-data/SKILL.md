@@ -38,7 +38,7 @@ description: 执行 SDA 数据查询。默认用只读 Hologres/PostgreSQL SQL �
 - 指标定义、表达式、过滤条件。
 - 统计实体、去重键和目标粒度。
 - 时间字段、范围、时区和完整周期。
-- 参与表、稳定别名、实现方式和最新 SQL 文档正文。
+- 参与表、稳定别名、实现方式和最新 SQL 文档 code 块逐字文本。
 - 指标直接引用的表关系 ID、基数与 JOIN 表达式。
 - 分组/筛选维度及其直接字段或维表 JOIN。
 - 输出列、排序/数量限制与必要检查。
@@ -52,8 +52,8 @@ description: 执行 SDA 数据查询。默认用只读 Hologres/PostgreSQL SQL �
 `实现方式="sql_query"` 的表是逻辑表：
 
 1. 从语义层取得 `表别名` 和 `SQL文档`。
-2. 用 `retrieve_doc_read` 读取文档最新正文。
-3. 将正文作为对应别名的 CTE：
+2. 用 `retrieve_doc_read` 读取文档最新结构化块快照，按文档顺序定位 `type="code"` 的块并使用其逐字 `text`；不要把 `elements` 样式或 Markdown 围栏带入 SQL。多个代码块的组合方式不明确时先回到 retrieving-context 判断相邻说明，不盲目拼接。
+3. 将确认后的完整查询定义作为对应别名的 CTE：
 
 ```sql
 WITH ord AS (
@@ -137,7 +137,7 @@ SQL 成功运行只说明语法和权限通过，不说明业务答案正确。�
 
 ## 常见失败
 
-- 逻辑语义表 schema 报不存在：改为读取 SQL 文档并包装 CTE。
+- 逻辑语义表 schema 报不存在：改为读取 SQL 文档的 code 块 `text` 并包装 CTE。
 - 物理表列不存在：用 `sql_schema` 获取真实名称，不连续猜字段。
 - 一对多 JOIN 放大：先聚合右表，复核 distinct 主键和覆盖率。
 - 空结果：先检查时间字段/时区、过滤值、数据新鲜度和 INNER JOIN 丢失。

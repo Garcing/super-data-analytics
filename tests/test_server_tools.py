@@ -303,11 +303,39 @@ def test_report_image_b64_returns_image_block(monkeypatch):
 
 
 def test_retrieve_doc_update(monkeypatch):
-    monkeypatch.setattr(retrieve_tools, "_update_doc",
-                        lambda doc, content: {"updated": True, "document_id": doc})
-    sc, err, _ = _call("retrieve_doc_update", {"doc": "DOC1", "content": "# 新"})
+    monkeypatch.setattr(
+        retrieve_tools,
+        "_update_doc",
+        lambda doc, revision, operations: {
+            "updated": True,
+            "document_id": doc,
+            "previous_revision_id": revision,
+            "revision_id": revision + 1,
+            "affected_block_ids": [operations[0]["block_id"]],
+            "block_id_relations": [],
+            "warnings": [],
+        },
+    )
+    sc, err, _ = _call("retrieve_doc_update", {
+        "doc": "DOC1",
+        "expected_revision_id": 7,
+        "operations": [{"op": "replace_text", "block_id": "B1", "text": "select *"}],
+    })
     assert not err
-    assert sc == {"updated": True, "document_id": "DOC1"}
+    assert sc["revision_id"] == 8
+    assert sc["affected_block_ids"] == ["B1"]
+
+
+def test_retrieve_doc_tools_advertise_structured_revision_contract():
+    tools = _tools()
+    read = tools["retrieve_doc_read"]
+    update = tools["retrieve_doc_update"]
+    assert "content" not in read.output_schema["properties"]
+    for field in ("revision_id", "root_block_id", "blocks", "warnings"):
+        assert field in read.output_schema["properties"]
+    assert "expected_revision_id" in update.input_schema["required"]
+    assert "operations" in update.input_schema["required"]
+    assert "content" not in update.input_schema["properties"]
 
 
 def test_retrieve_doc_inputs_only_advertise_docx_token():
