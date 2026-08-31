@@ -11,8 +11,11 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
+from mcp.types import CallToolResult, TextContent
+
 from sda_mcp.skills.visualizing import render as _render
 from sda_mcp.tools._common import mcp, map_tool_errors, tool_annotations
+from sda_mcp.tools._schemas import ChartOutput
 
 try:
     from mcp.server.mcpserver import Image
@@ -55,11 +58,12 @@ def chart(
         ge=72,
         le=300,
     )] = 144,
-):
+) -> Annotated[CallToolResult, ChartOutput]:
     """按 JSON spec 确定性渲染一张数值准确的静态图表。
 
-    返回 MCP ImageContent 与尺寸/URL 文本块。PNG 会尝试上传 Blob；上传失败
-    仍返回图片且不算工具失败。此工具不生成 AI 海报。
+    返回 MCP ImageContent 与尺寸/URL 文本块；structuredContent 另给
+    ``{format,width,height,url}``（url 为 None 表示无公网地址，如 svg）。
+    PNG 会尝试上传 Blob；上传失败仍返回图片且不算工具失败。此工具不生成 AI 海报。
     """
     res = _render(spec, format=format, dpi=dpi)
     url = ""
@@ -72,7 +76,13 @@ def chart(
             url = info.url
         except Exception:
             url = ""
-    blocks: list = [Image(data=res.data, format=format)]
+    structured: ChartOutput = {
+        "format": format,
+        "width": res.width,
+        "height": res.height,
+        "url": url or None,
+    }
+    content: list = [Image(data=res.data, format=format).to_image_content()]
     text = f"图表已生成（{res.width}x{res.height}）。" + (f" URL: {url}" if url else "（未上传 Blob，仅返回图片字节）")
-    blocks.append(text)
-    return blocks
+    content.append(TextContent(type="text", text=text))
+    return CallToolResult(content=content, structuredContent=structured)

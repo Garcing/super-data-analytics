@@ -119,6 +119,10 @@ def test_stable_tools_advertise_structured_output_schema():
         "metric", "model", "model_reason", "forecast", "summary", "backtest",
         "confidence", "assumptions", "warnings",
     }
+    # chart 是混合内容（image+text 块），但元数据仍走结构化通道（形态③）
+    assert set(tools["chart"].output_schema["properties"]) == {
+        "format", "width", "height", "url",
+    }
 
 
 def test_sql_query_tool(monkeypatch):
@@ -181,9 +185,57 @@ def test_chart_returns_image_block(monkeypatch):
                             data=b"\x89PNG\r\n\x1a\n", warnings=[]))
     sc, err, content = _call("chart", {"spec": {"type": "bar", "title": "T"}, "format": "png"})
     assert not err
-    # 至少有一个 image 内容块（Blob 上传会失败因无凭证，不影响图片块）
+    # 至少有一个 image 内容块（Blob 上传成败不影响图片块；本机可能配了真凭证）
     types = [getattr(c, "type", "") for c in content]
     assert "image" in types
+
+
+def test_chart_returns_structured_content(monkeypatch):
+    """chart 元数据走 structuredContent：尺寸/格式/URL 程序侧可直接取。"""
+    from sda_mcp.skills.visualizing import ChartResult
+    monkeypatch.setattr(visualize_tools, "_render",
+                        lambda spec, format="png", dpi=144: ChartResult(
+                            format="png", dpi=144, width=10, height=20,
+                            data=b"\x89PNG\r\n\x1a\n", warnings=[]))
+
+    class _NoBlob:
+        def __init__(self):
+            raise RuntimeError("无凭证，强制走上传失败分支")
+
+    import sda_mcp.skills.building_reports.blob_store as blob_store
+    monkeypatch.setattr(blob_store, "VercelBlobClient", _NoBlob)
+
+    sc, err, content = _call("chart", {"spec": {"type": "bar", "title": "T"}, "format": "png"})
+    assert not err
+    # 上传失败 → url 为 None，尺寸/格式照给（测试不依赖本机是否配了真凭证）
+    assert sc == {"format": "png", "width": 10, "height": 20, "url": None}
+    # image 块 + 原有散文 text 块保持不变（模型侧行为零变化）
+    types = [getattr(c, "type", "") for c in content]
+    assert types == ["image", "text"]
+    assert "图表已生成（10x20）" in content[1].text
+
+
+def test_chart_structured_url_when_blob_upload_succeeds(monkeypatch):
+    """PNG 上传 Blob 成功时 structuredContent.url 给公网地址。"""
+    from sda_mcp.skills.visualizing import ChartResult
+    monkeypatch.setattr(visualize_tools, "_render",
+                        lambda spec, format="png", dpi=144: ChartResult(
+                            format="png", dpi=144, width=10, height=20,
+                            data=b"\x89PNG\r\n\x1a\n", warnings=[]))
+
+    class _FakeInfo:
+        url = "https://blob.example/charts/x.png"
+
+    class _FakeBlob:
+        def put(self, *args, **kwargs):
+            return _FakeInfo()
+
+    import sda_mcp.skills.building_reports.blob_store as blob_store
+    monkeypatch.setattr(blob_store, "VercelBlobClient", _FakeBlob)
+
+    sc, err, _ = _call("chart", {"spec": {"type": "bar", "title": "T"}, "format": "png"})
+    assert not err
+    assert sc["url"] == "https://blob.example/charts/x.png"
 
 
 def test_report_publish(monkeypatch):

@@ -58,6 +58,13 @@ class DocReadOutput(TypedDict):
     document_id: str
 
 
+class ChartOutput(TypedDict):
+    format: str
+    width: int
+    height: int
+    url: str | None
+
+
 class DocUpdateOutput(TypedDict):
     updated: bool
     document_id: str
