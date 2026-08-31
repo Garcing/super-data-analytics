@@ -123,6 +123,11 @@ def test_stable_tools_advertise_structured_output_schema():
     assert set(tools["chart"].output_schema["properties"]) == {
         "format", "width", "height", "url",
     }
+    # report_image_generate 同为形态③：provider/model/usage/images 契约可被客户端发现
+    assert set(tools["report_image_generate"].output_schema["properties"]) == {
+        "provider", "model", "response_format", "status", "created",
+        "request_id", "usage", "images",
+    }
 
 
 def test_sql_query_tool(monkeypatch):

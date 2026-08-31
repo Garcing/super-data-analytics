@@ -132,7 +132,7 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 
 > **修复进度(2026-08-27)**:第 1-4 项已修复部署(commit c4b2fba);第 5 项中的 sql_schema 护栏、forecast grain/horizon 护栏、heatmap 默认格式、图型契约披露、MDE 披露、powerbi 解码/信封、两处 Skill 漂移已修复部署(commit 3476387,基线 204 passed)。剩余 P2 长尾见各节。
 >
-> **修复进度(2026-08-31)**:chart 元数据已补结构化通道——工具改为 `Annotated[CallToolResult, ChartOutput]`,structuredContent 返回 `{format,width,height,url}` 并在 tools/list 广告 outputSchema(此前尺寸/URL 只埋在散文 text 块里,程序侧需正则抠取,即 P2 长尾 ③ 的元数据半边;maas-log-prod 那个 URL 是客户端 harness 对 image 块的中转托管,属客户端行为,不在服务端修复范围)。模型侧行为零变化(image 块+散文 text 块原样保留)。
+> **修复进度(2026-08-31)**:chart 元数据已补结构化通道——工具改为 `Annotated[CallToolResult, ChartOutput]`,structuredContent 返回 `{format,width,height,url}` 并在 tools/list 广告 outputSchema(此前尺寸/URL 只埋在散文 text 块里,程序侧需正则抠取,即 P2 长尾 ③ 的元数据半边;maas-log-prod 那个 URL 是客户端 harness 对 image 块的中转托管,属客户端行为,不在服务端修复范围)。模型侧行为零变化(image 块+散文 text 块原样保留)。同日 report_image_generate 同样从裸 `-> CallToolResult` 升级为 `Annotated[CallToolResult, ReportImageOutput]`,获得 outputSchema 广播与运行时校验(TypedDict 按内核 dataclass 真实可空性建模:created/request_id/url/size/error 可空,usage 开放 dict)。
 
 1. **错误透出**(P0-2):tools 层 catch `SkillError` → 结构化错误。一处模式,19 工具受益,让后续所有问题可诊断。
 2. **publish 修复**(P0-1):summary 兼容字符串 + 索引读取绕开 CDN 陈旧缓存;清理孤儿 Blob。

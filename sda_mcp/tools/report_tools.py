@@ -16,6 +16,7 @@ from sda_mcp.skills.building_reports import (
 from sda_mcp.tools._common import mcp, map_tool_errors, tool_annotations
 from sda_mcp.tools._schemas import (
     ReportDeleteOutput,
+    ReportImageOutput,
     ReportListOutput,
     ReportPublishOutput,
 )
@@ -147,11 +148,12 @@ def report_image_generate(
         default=False,
         description="是否请求模型添加水印，默认 false。",
     )] = False,
-) -> CallToolResult:
+) -> Annotated[CallToolResult, ReportImageOutput]:
     """调用火山方舟 Seedream 同步生成一张图片报告。
 
-    structuredContent 返回 provider/model/usage/images 等；url 模式给出约 24h
-    有效下载链接，b64_json 另返回 ImageContent。失败不自动重试，避免重复计费。
+    structuredContent 返回 provider/model/usage/images 等（契约见 tools/list
+    的 outputSchema）；url 模式给出约 24h 有效下载链接，b64_json 另返回
+    ImageContent。失败不自动重试，避免重复计费。
     """
     opts = {
         k: v for k, v in {

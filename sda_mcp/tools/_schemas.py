@@ -102,3 +102,21 @@ class ReportListOutput(TypedDict):
 class ReportDeleteOutput(TypedDict):
     success: bool
     report_id: str
+
+
+class GeneratedImageOutput(TypedDict):
+    url: str | None
+    size: str | None
+    format: str
+    error: str | None
+
+
+class ReportImageOutput(TypedDict):
+    provider: str
+    model: str
+    response_format: str
+    status: str
+    created: int | None
+    request_id: str | None
+    usage: dict[str, Any]
+    images: list[GeneratedImageOutput]
