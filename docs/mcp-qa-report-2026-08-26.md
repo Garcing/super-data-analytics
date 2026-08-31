@@ -56,7 +56,7 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 | # | 问题 | 证据/根因 |
 |---|---|---|
 | 1 | `retrieve_cypher` 只要 RETURN 图元素(`RETURN n`、`properties(n)`)必挂,`LIMIT 10` 也挂,与体积无关 | 对照实验:标量/逐属性/labels()/type()/count()/字面量 map/list 全正常;错误一律 `Error executing tool retrieve_cypher` 零细节。Cypher 最标准写法不可用且无文档警示 |
-| 2 | 飞书 docx **导出接口**把 `"` `&` `<` `>` HTML 实体化(勘误:初版误判为写入路径) | 探针实证(2026-08-27):docx 存储层干净(list_blocks 文本原样),`docs/v1/content` 导出时先实体化(`&#34; &amp; &lt; &gt;`)再做 markdown 反斜杠转义 → 机器读取通道拿到 `\&\#34;` 残留;SQL 模板 `>=` 变 `&gt;=` 不可执行。已修复:读取侧解码,读写往返幂等 |
+| 2 | 飞书 docx **导出接口**把 `"` `&` `<` `>` HTML 实体化(勘误:初版误判为写入路径) | 探针实证(2026-08-27):docx 存储层干净(list_blocks 文本原样),`docs/v1/content` 导出时先实体化(`&#34; &amp; &lt; &gt;`)再做 markdown 反斜杠转义 → 机器读取通道拿到 `\&\#34;` 残留;SQL 模板 `>=` 变 `&gt;=` 不可执行。已修复:读取侧解码,读写往返幂等。**(2026-08-31 根治:发现第三类污染——代码围栏内斜体 run 被序列化为 `*` 定界符,读路径整体弃用导出端点改为原始块自序列化,旧防御已删,见修复进度)** |
 | 3 | `sda-vpn` 转发器间歇断连 → sql_query ~11% 抖动(4/36 次健康路径失败,重试即恢复) | 日志多次 `psycopg.OperationalError: connection to server at "127.0.0.1", port 15432 failed: server closed the connection unexpectedly`;容器却显示 healthy,看门狗失明 |
 | 4 | `sql_schema` 对不存在表/逻辑语义表静默返回 `columns:[]` 不报错 | 两个 agent 独立踩中(`public.no_such_table_xyz` 与 `semantic.fact_user_period_lifecycle`);与 querying-data Skill"会报 relation does not exist"描述相反(文档漂移);宽表输出无裁剪,4 表一次 78,435 字符溢出转存 |
 | 5 | forecast 不校验 grain 与日期间隔 | 月度数据标 grain=day 静默输出逐日日期(2025-12-02/03/04),"每月+3"被标成"每日+3",结论失真无警告 |
@@ -133,6 +133,8 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 > **修复进度(2026-08-27)**:第 1-4 项已修复部署(commit c4b2fba);第 5 项中的 sql_schema 护栏、forecast grain/horizon 护栏、heatmap 默认格式、图型契约披露、MDE 披露、powerbi 解码/信封、两处 Skill 漂移已修复部署(commit 3476387,基线 204 passed)。剩余 P2 长尾见各节。
 >
 > **修复进度(2026-08-31)**:chart 元数据已补结构化通道——工具改为 `Annotated[CallToolResult, ChartOutput]`,structuredContent 返回 `{format,width,height,url}` 并在 tools/list 广告 outputSchema(此前尺寸/URL 只埋在散文 text 块里,程序侧需正则抠取,即 P2 长尾 ③ 的元数据半边;maas-log-prod 那个 URL 是客户端 harness 对 image 块的中转托管,属客户端行为,不在服务端修复范围)。模型侧行为零变化(image 块+散文 text 块原样保留)。同日 report_image_generate 同样从裸 `-> CallToolResult` 升级为 `Annotated[CallToolResult, ReportImageOutput]`,获得 outputSchema 广播与运行时校验(TypedDict 按内核 dataclass 真实可空性建模:created/request_id/url/size/error 可空,usage 开放 dict)。
+>
+> **修复进度(2026-08-31,P1-2 根治)**:读路径整体弃用官方导出端点 `docs/v1/content?content_type=markdown`。根因链实测定案——文档代码块内隐藏斜体 run(投诉表文档实测 24 个,飞书 UI 不可见,疑为粘贴带入)+ 导出端点在代码围栏内把 `<em>` 序列化成 `*` 定界符(`<em>*</em>` 变 `***`、`select * from` 变 `select ** *from`、`round(` 变 `*round*(`),叠加此前已知的实体化与 `&#` 前反斜杠两类污染(三者共同点:面向人渲染而非机器逐字消费)。修复:`feishu.py` 新增块级自序列化 `blocks_to_markdown`(代码围栏逐字拼接 run 文本、无视样式;围栏外渲染 bold/italic/inline_code/link,存储层链接 URL 百分号编码实测需解码;不支持块类型/行内元素硬报错拒绝静默降级),`get_doc_markdown` 改为"文档元数据标题 + `docx/v1/blocks` 原始块(自动翻页,page_size=500)";**删除 `_decode_export_markdown` 旧防御**及其测试(前两类污染随导出端点一起消失)。行为变化:表格读回从 HTML `<table>` 变为 markdown 管道表格;已实测验证的 CodeLanguage 枚举仅 56=SQL,其余语言围栏标记暂缺,按需增补。次生风险同步消除:agent 不再读到伪影 SQL,`retrieve_doc_update` 回写不会把 `*` 固化为字面字符。验证:新增 16 项单元测试(`tests/test_feishu_blocks_markdown.py`,fixture 镜像真实块结构,含原始 bug 形态的斜体星号 run)+ SQL 围栏字节级真实往返集成测试(含 `*`、`&`、`<`、`>`、`"`);真实文档现场回归——原始污染文档(投诉工单事实表 `GJBWd9uProPovzxiEvyctBVKnFf`)读回 8 项关键片段全过,含表格/引用/列表的报告模板文档读回正常。基线 **218 passed / 8 skipped**。
 
 1. **错误透出**(P0-2):tools 层 catch `SkillError` → 结构化错误。一处模式,19 工具受益,让后续所有问题可诊断。
 2. **publish 修复**(P0-1):summary 兼容字符串 + 索引读取绕开 CDN 陈旧缓存;清理孤儿 Blob。

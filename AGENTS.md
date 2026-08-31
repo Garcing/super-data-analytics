@@ -189,7 +189,7 @@ python -m sda_mcp.server
 python -m pytest -q
 ```
 
-当前基线：206 passed、7 skipped。真实外部服务测试默认跳过；配置完备后设置 `SDA_INTEGRATION=1`。不要为了让 CI 通过而把真实服务测试改成隐式联网。
+当前基线：218 passed、8 skipped。真实外部服务测试默认跳过；配置完备后设置 `SDA_INTEGRATION=1`。不要为了让 CI 通过而把真实服务测试改成隐式联网。
 
 提交前至少执行 `python -m pytest -q` 和 `git diff --check`，并确认：
 

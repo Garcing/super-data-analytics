@@ -101,33 +101,8 @@ def test_request_returns_data_on_success(monkeypatch):
 
 
 # --- get_doc_markdown ---
-
-def test_get_doc_markdown_returns_content(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    captured = {}
-
-    def _req(method, url, params=None, **k):
-        captured["method"] = method
-        captured["url"] = url
-        captured["params"] = params
-        return _Resp({"code": 0, "data": {"content": "# 标题\n正文"}, "msg": "success"})
-
-    monkeypatch.setattr(f.httpx, "request", _req)
-    assert f.FeishuClient().get_doc_markdown("DOCTOKEN") == "# 标题\n正文"
-    assert captured["method"] == "GET"
-    assert captured["url"].endswith("/open-apis/docs/v1/content")
-    assert captured["params"] == {"doc_token": "DOCTOKEN", "doc_type": "docx",
-                                  "content_type": "markdown"}
-
-
-def test_get_doc_markdown_missing_content_raises(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    monkeypatch.setattr(f.httpx, "request",
-                        lambda *a, **k: _Resp({"code": 0, "data": {}}))
-    with pytest.raises(ExternalAPIError):
-        f.FeishuClient().get_doc_markdown("DOC")
+# 读路径已切换为"元数据标题 + 原始块自序列化"（2026-08-31 根治官方导出三类污染）。
+# 端点序列、翻页、序列化行为、错误路径的测试统一在 test_feishu_blocks_markdown.py。
 
 
 # --- list_folder_files ---

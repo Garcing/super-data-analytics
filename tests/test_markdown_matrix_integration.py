@@ -4,8 +4,9 @@
   update_doc 会把整份 md 交给 convert（mock）。
 - 集成测试（SDA_INTEGRATION=1）：真实 md → docx → md 往返，断言各格式语义存活。
   需 config.json 飞书凭证 + 一个可建临时文档的文件夹（环境变量 SDA_TEST_DOC_FOLDER）。
-  Feishu convert/get_doc_markdown 是飞书侧解析，读回会规范化（表格→HTML、语言名大写、
-  列表项间多空行），故只断言关键文本/结构存在，不断言逐字符一致。
+  get_doc_markdown 读路径为原始块自序列化（2026-08-31 起，不再走官方导出）：
+  表格读回为 markdown 管道表格、代码围栏逐字保真、无实体化/样式定界符污染；
+  列表编号等仍会规范化，故格式矩阵断言关键文本/结构存在，SQL 围栏断言逐字节一致。
 """
 import os
 from pathlib import Path
@@ -64,8 +65,9 @@ def test_update_doc_passes_full_md_to_convert(monkeypatch):
 def test_matrix_roundtrip_survives_formats():
     """真实往返：建临时文档 → convert+insert → get_doc_markdown → 各格式语义存活。
 
-    读回会被飞书规范化（表格变 HTML、Python 大写、列表项间多空行、+/- 转义），
-    故断言关键文本存在而非逐字符一致。需 SDA_TEST_DOC_FOLDER 指向一个应用可写的文件夹。"""
+    读回为原始块自序列化（表格→markdown 管道表格、无实体转义污染），但列表编号、
+    语言名映射仍会规范化，故断言关键文本存在而非逐字符一致。
+    需 SDA_TEST_DOC_FOLDER 指向一个应用可写的文件夹。"""
     folder = os.environ.get("SDA_TEST_DOC_FOLDER")
     if not folder:
         pytest.skip("设 SDA_TEST_DOC_FOLDER 为可建临时文档的文件夹 token 以跑此往返")
@@ -100,5 +102,36 @@ def test_matrix_roundtrip_survives_formats():
         assert "def hello(name: str)" in back
         # 引用、分隔
         assert "这是一段引用文字" in back
+    finally:
+        fc.delete_file(doc_id, "docx")
+
+
+@_INTEGRATION
+def test_sql_fence_roundtrip_byte_exact():
+    """SQL 围栏字节级往返（2026-08-31 读路径根治回归）。
+
+    围栏内含 *、&、<、>、" 与函数调用——旧官方导出路径会把它们污染成
+    ``*round*(``、``\\&\\#34;``、``&gt;=``；块自序列化路径必须逐字节还原。"""
+    folder = os.environ.get("SDA_TEST_DOC_FOLDER")
+    if not folder:
+        pytest.skip("设 SDA_TEST_DOC_FOLDER 为可建临时文档的文件夹 token 以跑此往返")
+
+    from sda_mcp.feishu import FeishuClient
+
+    fence_body = (
+        "select * from t\n"
+        "where a >= '&' and b < 'x' and c = \"q\"\n"
+        "    ,round(extract(epoch from ts) / 3600.0, 2)\n"
+    )
+    md = f"# SQL围栏往返\n\n```SQL\n{fence_body}```\n"
+    fc = FeishuClient()
+
+    doc_id = fc.create_doc(folder, "SQL围栏往返-集成")
+    try:
+        blocks, first_level = fc.convert_markdown_to_blocks(md)
+        fc.insert_descendants(doc_id, blocks, first_level)
+
+        back = fc.get_doc_markdown(doc_id)
+        assert f"```SQL\n{fence_body}```" in back
     finally:
         fc.delete_file(doc_id, "docx")
