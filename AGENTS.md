@@ -338,14 +338,14 @@ git status --short
 git pull --ff-only origin main
 docker compose up -d --build --force-recreate
 docker image prune -f    # 清理悬空镜像；不会清理 BuildKit 构建缓存
-docker builder prune -af --max-used-space 1GB    # 以 1 GB 为 GC 目标淘汰旧缓存；共享层可能使显示值更高
+docker builder prune -af --filter "until=24h"    # 清理 24 小时前未使用的缓存，保留最近构建链
 docker compose ps
 docker compose logs --tail=100
 ```
 
 `git status --short` 必须没有受跟踪文件改动；若不为空或 `pull --ff-only` 失败，停止部署并检查，不要在服务器上执行 `reset --hard` 或自动合并。`.env` 被 Git 忽略，不影响干净状态。
 
-BuildKit 会为不同的 Dockerfile、依赖文件和基础镜像输入保留多条缓存分支；`docker image prune -f` 只删除悬空镜像，不能阻止构建缓存随部署累积。常规更新在新容器成功启动后用 `docker builder prune -af --max-used-space 1GB` 以 1 GB 为垃圾回收目标淘汰旧缓存：它不删除运行中的容器、当前镜像或 named volume，但被淘汰的旧层下次需要重新构建。该参数不是 `docker system df` 显示值的硬上限；当前镜像共享层、最近仍被使用的缓存及 BuildKit 内容统计可能使显示值高于 1 GB，应同时以根分区 `df -h /` 的实际变化判断回收效果。排查磁盘增长时先看 `docker system df -v` 和 `docker builder du`，不要把 Neo4j named volume 当构建缓存删除。
+BuildKit 会为不同的 Dockerfile、依赖文件和基础镜像输入保留多条缓存分支；`docker image prune -f` 只删除悬空镜像，不能阻止构建缓存随部署累积。常规更新在新容器成功启动后用 `docker builder prune -af --filter "until=24h"` 删除 24 小时前未使用的缓存，保留刚完成部署所依赖的热构建链；不要用低于完整镜像构建链体积的 `--max-used-space`，实测会淘汰仍需复用的系统包、Python 依赖和 embedding 模型层，导致下次完整重建。时间策略不删除运行中的容器、当前镜像或 named volume；24 小时内若多次产生不同缓存分支，显示值可暂时增长，超过窗口后在下一次部署中淘汰。排查磁盘增长时同时看 `docker system df -v`、`docker builder du` 和根分区 `df -h /`，不要把 Neo4j named volume 当构建缓存删除。
 
 更新注意事项：
 
@@ -377,7 +377,7 @@ docker compose up -d --build --force-recreate
 | 查看 Docker 磁盘 | `docker system df -v`；构建缓存明细用 `docker builder du` |
 | 重启 | `docker compose restart` |
 | 重建容器 | `docker compose up -d --force-recreate` |
-| 限制构建缓存 | 新容器验收后执行 `docker builder prune -af --max-used-space 1GB`；1 GB 是 GC 目标而非共享层显示硬上限，不要删除 named volume |
+| 清理旧构建缓存 | 新容器验收后执行 `docker builder prune -af --filter "until=24h"`；保留最近构建链，不要删除 named volume |
 | VPN 转发器 | `docker compose -p sda-vpn -f deploy/vpn/docker-compose.yml ps/logs/restart` |
 | Neo4j 容器 | `docker compose -p sda-neo4j -f deploy/neo4j/docker-compose.yml ps/logs/restart` |
 | 检查本地端点 | 无 Token POST 应为 401，再用 MCP Client tool list |
