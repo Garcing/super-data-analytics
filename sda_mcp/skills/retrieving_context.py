@@ -12,13 +12,6 @@ from neo4j import GraphDatabase
 from sda_mcp.config import load_config
 from sda_mcp.errors import ConfigError, DataSourceError, ExternalAPIError, ValidationError
 from sda_mcp.feishu import FeishuClient
-from sda_mcp.skills.docx_blocks import (
-    build_descendants,
-    is_text_block,
-    normalize_blocks,
-    select_subtree,
-    update_request,
-)
 
 _INTERNAL_PROPS = {
     "search_text", "embedding", "embedding_model", "embedding_dimensions", "embedding_updated_at",
@@ -26,7 +19,6 @@ _INTERNAL_PROPS = {
 
 # 检索结果 context 每命中、每类邻居标签的保留上限；超限截断并置 truncated。
 CONTEXT_NEIGHBOR_LIMIT = 20
-DOC_READ_MAX_ATTEMPTS = 3
 
 
 def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
@@ -556,187 +548,9 @@ def cypher(statement: str) -> dict[str, Any]:
         client.close()
 
 
-def _document_revision(doc_id: str, document: dict[str, Any]) -> int:
-    revision_id = document.get("revision_id")
-    if not isinstance(revision_id, int):
-        raise ExternalAPIError(f"飞书文档 {doc_id} 元数据响应缺 revision_id")
-    return revision_id
-
-
-def _read_latest_consistent(
-    client: FeishuClient, doc_id: str,
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
-    """读取 latest blocks，并用单调 revision 的前后元数据检查排除混合快照。"""
-    warnings: list[str] = []
-    for attempt in range(1, DOC_READ_MAX_ATTEMPTS + 1):
-        before = client.get_document(doc_id)
-        before_revision = _document_revision(doc_id, before)
-        raw_blocks = client.list_blocks(doc_id, document_revision_id=-1)
-        after = client.get_document(doc_id)
-        after_revision = _document_revision(doc_id, after)
-        if before_revision == after_revision:
-            return after, raw_blocks, warnings
-        warnings.append(
-            f"读取 blocks 期间文档 revision 从 {before_revision} 变为 {after_revision}；"
-            f"已丢弃该结果并重试（{attempt}/{DOC_READ_MAX_ATTEMPTS}）"
-        )
-    raise ExternalAPIError(
-        f"飞书文档 {doc_id} 在 {DOC_READ_MAX_ATTEMPTS} 次读取期间持续发生变化；请稍后重试"
-    )
-
-
-def doc(
-    doc_id: str, root_block_id: str | None = None, max_depth: int = -1,
-    detail: str = "compact",
-) -> dict[str, Any]:
-    """读取飞书 docx 为带 revision 与父子 ID 的结构化块快照。"""
+def doc(doc_id: str) -> dict[str, Any]:
+    """读取飞书 docx 文档纯文本正文（官方 raw_content 接口）。"""
     if not isinstance(doc_id, str) or not doc_id.strip():
         raise ValidationError("doc 不能为空")
-    if max_depth < -1:
-        raise ValidationError("max_depth 必须为 -1 或非负整数")
-    if detail not in {"compact", "full"}:
-        raise ValidationError("detail 必须是 compact 或 full")
     client = FeishuClient()
-    document, raw_blocks, consistency_warnings = _read_latest_consistent(client, doc_id)
-    revision_id = _document_revision(doc_id, document)
-    page = next((block for block in raw_blocks if block.get("block_type") == 1), None)
-    if page is None or not page.get("block_id"):
-        raise ExternalAPIError(f"飞书文档 {doc_id} 块响应缺 page 根块")
-
-    selected_root = root_block_id or page["block_id"]
-    selected, traversal_warnings = select_subtree(raw_blocks, selected_root, max_depth)
-    blocks, normalization_warnings = normalize_blocks(selected, detail=detail)
-    return {
-        "document_id": document.get("document_id") or doc_id,
-        "title": document.get("title") or "",
-        "revision_id": revision_id,
-        "detail": detail,
-        "root_block_id": selected_root,
-        "blocks": blocks,
-        "total_blocks": len(raw_blocks),
-        "warnings": consistency_warnings + traversal_warnings + normalization_warnings,
-    }
-
-
-def update_doc(
-    doc_id: str, expected_revision_id: int, operations: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """在读取时的 revision 上执行一次批量文本更新或一个结构变更。"""
-    if not isinstance(doc_id, str) or not doc_id.strip():
-        raise ValidationError("doc 不能为空")
-    if not isinstance(expected_revision_id, int) or expected_revision_id < 0:
-        raise ValidationError("expected_revision_id 必须是非负整数")
-    if not isinstance(operations, list) or not operations:
-        raise ValidationError("operations 不能为空")
-    if len(operations) > 200:
-        raise ValidationError("operations 一次最多 200 项")
-    if any(not isinstance(operation, dict) for operation in operations):
-        raise ValidationError("operations 每一项都必须是对象")
-
-    client = FeishuClient()
-    current_document = client.get_document(doc_id)
-    current_revision_id = current_document.get("revision_id")
-    if not isinstance(current_revision_id, int):
-        raise ExternalAPIError(f"飞书文档 {doc_id} 元数据响应缺 revision_id")
-    if current_revision_id != expected_revision_id:
-        raise ValidationError(
-            f"文档 revision 冲突：读取时为 {expected_revision_id}，当前为 {current_revision_id}；"
-            "请重新调用 retrieve_doc_read 并基于最新块重新生成操作"
-        )
-    raw_blocks = client.list_blocks(doc_id, document_revision_id=-1)
-    verified_document = client.get_document(doc_id)
-    verified_revision_id = _document_revision(doc_id, verified_document)
-    if verified_revision_id != expected_revision_id:
-        raise ValidationError(
-            f"文档 revision 冲突：读取时为 {expected_revision_id}，当前为 {verified_revision_id}；"
-            "请重新调用 retrieve_doc_read 并基于最新块重新生成操作"
-        )
-    by_id = {block.get("block_id"): block for block in raw_blocks}
-    if not raw_blocks:
-        raise ExternalAPIError(f"飞书文档 {doc_id} 在 revision={expected_revision_id} 未返回块")
-
-    kinds = [operation.get("op") if isinstance(operation, dict) else None
-             for operation in operations]
-    text_ops = {"replace_text", "replace_elements"}
-    structural = [kind for kind in kinds if kind not in text_ops]
-    if structural and len(operations) != 1:
-        raise ValidationError("insert_subtree/delete_children 必须单独调用，不能与其他操作混用")
-
-    affected_ids: list[str] = []
-    block_id_relations: list[dict[str, Any]] = []
-    if not structural:
-        requests: list[dict[str, Any]] = []
-        seen_block_ids: set[str] = set()
-        for operation in operations:
-            block_id = operation.get("block_id")
-            if block_id in seen_block_ids:
-                raise ValidationError(f"同一批次不能重复更新 block_id={block_id}")
-            seen_block_ids.add(block_id)
-            block = by_id.get(block_id)
-            if block is None:
-                raise ValidationError(f"文档中不存在 block_id={block_id}")
-            if not is_text_block(block.get("block_type")):
-                raise ValidationError(
-                    f"block_id={block_id} 的类型 {block.get('block_type')} 不是可更新文本块"
-                )
-            requests.append(update_request(operation))
-            affected_ids.append(block_id)
-        response = client.batch_update_blocks(doc_id, expected_revision_id, requests)
-    else:
-        operation = operations[0]
-        op = operation.get("op")
-        parent_block_id = operation.get("parent_block_id")
-        parent = by_id.get(parent_block_id)
-        if parent is None:
-            raise ValidationError(f"文档中不存在 parent_block_id={parent_block_id}")
-        children = list(parent.get("children") or [])
-        if op == "insert_subtree":
-            index = operation.get("index")
-            if not isinstance(index, int) or index < 0 or index > len(children):
-                raise ValidationError(
-                    f"insert_subtree.index 必须位于 0..{len(children)}（当前父块 children 数）"
-                )
-            root_ids, descendants = build_descendants(operation)
-            response = client.insert_descendants(
-                doc_id,
-                descendants,
-                root_ids,
-                parent_block_id=parent_block_id,
-                revision_id=expected_revision_id,
-                index=index,
-            )
-        elif op == "delete_children":
-            start = operation.get("start_index")
-            end = operation.get("end_index")
-            if (not isinstance(start, int) or not isinstance(end, int)
-                    or start < 0 or end <= start or end > len(children)):
-                raise ValidationError(
-                    f"delete_children 必须满足 0 <= start_index < end_index <= {len(children)}"
-                )
-            affected_ids = children[start:end]
-            response = client.delete_children(
-                doc_id, parent_block_id, expected_revision_id, start, end,
-            )
-        else:
-            raise ValidationError(f"不支持的文档操作 {op}")
-
-    payload = response.get("data") or {}
-    revision_id = payload.get("document_revision_id")
-    if not isinstance(revision_id, int):
-        raise ExternalAPIError("飞书文档更新响应缺 document_revision_id")
-    block_id_relations = payload.get("block_id_relations") or []
-    if block_id_relations:
-        affected_ids = [relation.get("block_id") for relation in block_id_relations
-                        if relation.get("block_id")]
-    elif not affected_ids:
-        affected_ids = [block.get("block_id") for block in payload.get("children") or []
-                        if block.get("block_id")]
-    return {
-        "updated": True,
-        "document_id": doc_id,
-        "previous_revision_id": expected_revision_id,
-        "revision_id": revision_id,
-        "affected_block_ids": affected_ids,
-        "block_id_relations": block_id_relations,
-        "warnings": [],
-    }
+    return {"document_id": doc_id, "content": client.get_raw_content(doc_id)}

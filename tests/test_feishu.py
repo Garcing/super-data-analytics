@@ -100,104 +100,44 @@ def test_request_returns_data_on_success(monkeypatch):
     assert f.FeishuClient()._request("GET", "/x") == {"code": 0, "data": {"ok": True}}
 
 
-def test_get_document_returns_metadata(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _Resp({
-        "code": 0, "data": {"document": {
-            "document_id": "DOC", "title": "标题", "revision_id": 23,
-        }},
-    }))
-    assert f.FeishuClient().get_document("DOC")["revision_id"] == 23
+# --- get_raw_content ---
 
-
-# --- list_folder_files ---
-
-def test_list_folder_files_single_page(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _Resp({
-        "code": 0, "data": {"files": [
-            {"token": "d1", "name": "日报", "type": "docx", "url": "u1"},
-            {"token": "f1", "name": "销售", "type": "folder"}],
-            "has_more": False}}))
-    files = f.FeishuClient().list_folder_files("ROOT")
-    assert len(files) == 2
-    assert files[0]["token"] == "d1"
-
-
-def test_list_folder_files_paginates(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    pages = [
-        _Resp({"code": 0, "data": {"files": [{"token": "d1", "name": "a", "type": "docx"}],
-                                   "has_more": True, "next_page_token": "PG2"}}),
-        _Resp({"code": 0, "data": {"files": [{"token": "d2", "name": "b", "type": "docx"}],
-                                   "has_more": False}}),
-    ]
-    calls = []
-
-    def _req(method, url, params=None, **k):
-        calls.append(params.get("page_token"))
-        return pages.pop(0)
-
-    monkeypatch.setattr(f.httpx, "request", _req)
-    files = f.FeishuClient().list_folder_files("ROOT")
-    assert [x["token"] for x in files] == ["d1", "d2"]
-    assert calls == [None, "PG2"]   # 第二页带上 page_token
-
-
-# --- delete_file ---
-
-def test_delete_file_calls_delete_endpoint(monkeypatch):
+def test_get_raw_content_returns_plain_text(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
     captured = {}
 
-    def _req(method, url, params=None, **k):
-        captured["method"] = method
-        captured["url"] = url
-        captured["params"] = params
-        return _Resp({"code": 0, "msg": "success"})
+    def _req(method, url, **k):
+        captured.update(method=method, url=url, headers=k["headers"])
+        return _Resp({"code": 0, "data": {"content": "标题\nselect * from t"}})
 
     monkeypatch.setattr(f.httpx, "request", _req)
-    f.FeishuClient().delete_file("DOCTOK", "docx")
-    assert captured["method"] == "DELETE"
-    assert captured["url"].endswith("/open-apis/drive/v1/files/DOCTOK")
-    assert captured["params"] == {"type": "docx"}
+    text = f.FeishuClient().get_raw_content("DOC")
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/open-apis/docx/v1/documents/DOC/raw_content")
+    assert captured["headers"]["Authorization"] == "Bearer TOK"
+    assert text == "标题\nselect * from t"
 
 
-def test_delete_file_error_raises(monkeypatch):
+def test_get_raw_content_business_error_raises(monkeypatch):
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
     monkeypatch.setattr(f.httpx, "request",
-                        lambda *a, **k: _Resp({"code": 99941002, "msg": "no perm"}))
+                        lambda *a, **k: _Resp({"code": 1770002, "msg": "doc not found"}))
     with pytest.raises(ExternalAPIError):
-        f.FeishuClient().delete_file("DOC")
+        f.FeishuClient().get_raw_content("NOPE")
+
+
+def test_get_raw_content_missing_content_raises(monkeypatch):
+    f._reset_token_cache()
+    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
+    monkeypatch.setattr(f.httpx, "request",
+                        lambda *a, **k: _Resp({"code": 0, "data": {}}))
+    with pytest.raises(ExternalAPIError, match="content"):
+        f.FeishuClient().get_raw_content("DOC")
 
 
 # --- list_bitable_fields ---
-
-def test_list_tables_returns_items(monkeypatch):
-    """GET /apps/{app}/tables → [{table_id, name}]，自动翻页。"""
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    captured = {}
-
-    def _req(method, url, params=None, **k):
-        captured["url"] = url
-        captured["method"] = method
-        return _Resp({"code": 0, "data": {"items": [
-            {"table_id": "tbl1", "name": "指标", "revision": 1},
-            {"table_id": "tbl2", "name": "维度", "revision": 2}],
-            "has_more": False}})
-
-    monkeypatch.setattr(f.httpx, "request", _req)
-    tables = f.FeishuClient().list_tables("APP")
-    assert captured["method"] == "GET"
-    assert captured["url"].endswith("/open-apis/bitable/v1/apps/APP/tables")
-    assert [t["table_id"] for t in tables] == ["tbl1", "tbl2"]
-
 
 def test_list_bitable_fields_returns_raw_items(monkeypatch):
     f._reset_token_cache()
@@ -311,110 +251,19 @@ def test_token_non_json_body_raises_external(monkeypatch):
         f._get_tenant_token()
 
 
-def test_list_folder_files_breaks_when_has_more_but_no_token(monkeypatch):
-    """has_more=True 但缺 next_page_token/page_token → 防御性 break，不无限循环。"""
+def test_list_bitable_records_breaks_when_has_more_but_no_token(monkeypatch):
+    """has_more=True 但缺 page_token → 防御性 break，不无限循环。"""
     f._reset_token_cache()
     monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
     calls = []
 
-    def _req(method, url, params=None, **k):
+    def _req(method, url, json=None, **k):
         calls.append(1)
-        return _Resp({"code": 0, "data": {"files": [
-            {"token": "d1", "name": "a", "type": "docx"}],
+        return _Resp({"code": 0, "data": {"items": [
+            {"record_id": "r1", "fields": {}}],
             "has_more": True}})  # 故意无 token
 
     monkeypatch.setattr(f.httpx, "request", _req)
-    files = f.FeishuClient().list_folder_files("ROOT")
-    assert len(files) == 1 and files[0]["token"] == "d1"
+    items = f.FeishuClient().list_bitable_records("APP", "tbl1")
+    assert len(items) == 1 and items[0]["record_id"] == "r1"
     assert len(calls) == 1   # 只调一次即 break，未陷入死循环
-
-
-def test_create_doc_returns_document_id(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    monkeypatch.setattr(f.httpx, "request",
-                        lambda *a, **k: _Resp({"code": 0, "data": {"document": {"document_id": "DOCNEW"}}}))
-    assert f.FeishuClient().create_doc("FOLDER", "标题") == "DOCNEW"
-
-
-def test_insert_descendants_payload(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    captured = {}
-    def _req(method, url, json=None, **k):
-        captured["url"] = url
-        captured["body"] = json
-        return _Resp({"code": 0, "data": {"document_revision_id": 2}})
-    monkeypatch.setattr(f.httpx, "request", _req)
-    f.FeishuClient().insert_descendants("DOC", [{"block_type": 2}], ["b1"])
-    assert captured["url"].endswith("/blocks/DOC/descendant")
-    assert captured["body"] == {"children_id": ["b1"], "descendants": [{"block_type": 2}]}
-
-
-def test_list_blocks_returns_items(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    monkeypatch.setattr(f.httpx, "request", lambda *a, **k: _Resp({
-        "code": 0, "data": {"items": [{"block_id": "P", "block_type": 1, "children": ["a", "b", "c"]},
-                                      {"block_id": "a", "block_type": 2}]}}))
-    items = f.FeishuClient().list_blocks("DOC")
-    assert len(items) == 2
-    assert items[0]["block_type"] == 1
-
-
-def test_list_blocks_pins_every_page_to_revision(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    pages = [
-        _Resp({"code": 0, "data": {"items": [{"block_id": "P", "block_type": 1}],
-                                        "has_more": True, "page_token": "NEXT"}}),
-        _Resp({"code": 0, "data": {"items": [{"block_id": "T", "block_type": 2}],
-                                        "has_more": False}}),
-    ]
-    params_seen = []
-
-    def _req(method, url, params=None, **kwargs):
-        params_seen.append(params)
-        return pages.pop(0)
-
-    monkeypatch.setattr(f.httpx, "request", _req)
-    f.FeishuClient().list_blocks("DOC", document_revision_id=23)
-    assert [params["document_revision_id"] for params in params_seen] == [23, 23]
-
-
-def test_batch_update_blocks_uses_revision_and_native_requests(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    captured = {}
-
-    def _req(method, url, params=None, json=None, **kwargs):
-        captured.update(method=method, url=url, params=params, body=json)
-        return _Resp({"code": 0, "data": {"document_revision_id": 24, "blocks": []}})
-
-    monkeypatch.setattr(f.httpx, "request", _req)
-    requests = [{"block_id": "B", "update_text_elements": {"elements": []}}]
-    out = f.FeishuClient().batch_update_blocks("DOC", 23, requests)
-    assert captured["method"] == "PATCH"
-    assert captured["url"].endswith("/documents/DOC/blocks/batch_update")
-    assert captured["params"]["document_revision_id"] == 23
-    assert captured["params"]["client_token"]
-    assert captured["body"] == {"requests": requests}
-    assert out["data"]["document_revision_id"] == 24
-
-
-def test_delete_children_uses_revision_and_half_open_range(monkeypatch):
-    f._reset_token_cache()
-    monkeypatch.setattr(f, "_get_tenant_token", lambda: "TOK")
-    captured = {}
-
-    def _req(method, url, params=None, json=None, **kwargs):
-        captured.update(method=method, url=url, params=params, body=json)
-        return _Resp({"code": 0, "data": {"document_revision_id": 25}})
-
-    monkeypatch.setattr(f.httpx, "request", _req)
-    f.FeishuClient().delete_children("DOC", "PARENT", 24, 1, 3)
-    assert captured["method"] == "DELETE"
-    assert "/blocks/PARENT/children/batch_delete" in captured["url"]
-    assert captured["params"]["document_revision_id"] == 24
-    assert captured["body"] == {"start_index": 1, "end_index": 3}
-

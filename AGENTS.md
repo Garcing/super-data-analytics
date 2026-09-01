@@ -6,7 +6,7 @@
 
 ## 1. 维护目标
 
-- 对外保持一个稳定的 Streamable HTTP MCP 服务和清晰的 19 工具契约。
+- 对外保持一个稳定的 Streamable HTTP MCP 服务和清晰的 18 工具契约。
 - 用 `skills/` 承载分析方法、流程和工具编排，用 `sda_mcp/skills/` 承载确定性执行。
 - 工具说明应让模型从 tool list 中理解功能、关键约束、入参和返回结果，但“何时使用”的长篇方法论留给对应 Skill。
 - 配置、凭证和环境差异留在部署环境，不进入代码、镜像或 Git 历史。
@@ -60,7 +60,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 
 ## 4. 工具与 Skill 对应关系
 
-当前共 19 个工具。新增或删除工具时，必须同步更新本节、README、工具测试和相关 Skill。
+当前共 18 个工具。新增或删除工具时，必须同步更新本节、README、工具测试和相关 Skill。
 
 | Skill / 分组 | 工具 | 维护重点 |
 |---|---|---|
@@ -68,7 +68,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 | `querying-data` | `powerbi_query`、`powerbi_schema` | 仅用于显式 Power BI/DAX；先确认模型 schema |
 | `retrieving-context` | `retrieve_search` | 默认 Hybrid 检索；返回检索证据和受控图上下文 |
 | `retrieving-context` | `retrieve_cypher`、`retrieve_schema` | 受约束 Cypher 与 Neo4j 实时 schema |
-| `retrieving-context` | `retrieve_doc_read`、`retrieve_doc_update` | 默认 compact 读取经 revision 前后校验的飞书扁平块快照，full 按需返回 `content.elements`；按 block ID 批量改文本、插入子树或删除子块；更新属于外部写入 |
+| `retrieving-context` | `retrieve_doc_read`、`sync` | 按官方 raw_content 接口只读飞书文档纯文本正文；语义层内容维护在飞书侧完成（人工或 agent 经 lark-cli + lark-doc/lark-base），`sync` 全量重建图 |
 | `retrieving-context` | `sync` | `dry_run=false` 会全量重建语义图，必须先预检 |
 | `diagnosing-anomalies` | `contribute` | 加法、乘法/LMDI、比率贡献度分解 |
 | `predicting-trends` | `forecast` | 可解释基线预测、回测和区间 |
@@ -82,7 +82,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 工具代码分组：
 
 - `sda_mcp/tools/query_tools.py`：4 个查询工具。
-- `sda_mcp/tools/retrieve_tools.py`：6 个语义层工具。
+- `sda_mcp/tools/retrieve_tools.py`：5 个语义层工具。
 - `sda_mcp/tools/analyze_tools.py`：3 个分析工具。
 - `sda_mcp/tools/visualize_tools.py`：1 个可视化工具。
 - `sda_mcp/tools/report_tools.py`：5 个报告工具。
@@ -282,7 +282,7 @@ docker compose -p sda-neo4j -f deploy/neo4j/docker-compose.yml up -d
 sudo cp ~/sda-mcp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl restart caddy
 ```
 
-证书由 Let's Encrypt 自动签发（80 空闲走 http-01，否则 TLS-ALPN-01 用 443）。验收：本机无 Token POST `https://mcp.super-data-analytics.online/mcp` 返回 401，`python scripts/mcp_debug.py list` 返回 19 个工具。完成后必须在云控制台关闭 3100 入站规则，公网只留 22/80/443。
+证书由 Let's Encrypt 自动签发（80 空闲走 http-01，否则 TLS-ALPN-01 用 443）。验收：本机无 Token POST `https://mcp.super-data-analytics.online/mcp` 返回 401，`python scripts/mcp_debug.py list` 返回 18 个工具。完成后必须在云控制台关闭 3100 入站规则，公网只留 22/80/443。
 
 如果 `~/sda-mcp` 是旧 archive 解压目录，不要直接在其中 `git init`。先 clone 到同级新目录、复制 `.env`、完成 build 验证后再切换；旧目录保留一个发布周期用于回退。
 
@@ -382,7 +382,7 @@ docker compose up -d --build --force-recreate
 
 1. 容器处于 running，日志没有循环崩溃。
 2. 无 Token 请求返回 401。
-3. 合法客户端成功发现 19 个工具。
+3. 合法客户端成功发现 18 个工具。
 4. `retrieve_schema`、只读查询或其他低风险代表性工具成功。
 5. 若修改语义检索，再运行受治理检索 gold case 或代表性真实问题。
 6. 若修改报告/图片能力，只在用户明确允许外部写入或费用时做真实冒烟。
@@ -419,7 +419,7 @@ ln -s ~/sda-mcp/skills ~/.hermes/skills/super-data-analytics
 验证两步（都过才算就绪；交互式 shell 中 `hermes` 命令默认已注册）：
 
 ```bash
-# MCP：应显示 Connected 且 Tools discovered: 19
+# MCP：应显示 Connected 且 Tools discovered: 18
 hermes mcp test sda
 # skills：应列出 9 个 super-data-analytics 分类的 enabled local 技能
 hermes skills list

@@ -1,6 +1,6 @@
 # Super Data Analytics MCP
 
-Super Data Analytics（SDA）是一个面向 AI Agent 的数据分析 MCP 服务。它把受治理语义检索、数据查询、确定性分析、图表和报告交付统一暴露为 19 个 MCP 工具，并配套 9 个分析 Skill，帮助 Agent 从业务问题一路完成到可交付结果。
+Super Data Analytics（SDA）是一个面向 AI Agent 的数据分析 MCP 服务。它把受治理语义检索、数据查询、确定性分析、图表和报告交付统一暴露为 18 个 MCP 工具，并配套 9 个分析 Skill，帮助 Agent 从业务问题一路完成到可交付结果。
 
 服务基于 FastMCP 和 Python，使用 Streamable HTTP，对外只需要一个 MCP URL 和 Bearer Token。运行时可连接 Neo4j、Hologres/PostgreSQL、Power BI、飞书、Vercel Blob 和火山方舟。
 
@@ -11,7 +11,7 @@ Super Data Analytics（SDA）是一个面向 AI Agent 的数据分析 MCP 服务
 | SQL 查询 | `sql_query`、`sql_schema` | 查询 Hologres/PostgreSQL 数据与物理表结构 |
 | Power BI | `powerbi_query`、`powerbi_schema` | 查询指定 Power BI 语义模型与模型 schema |
 | 业务语义层 | `retrieve_search`、`retrieve_cypher`、`retrieve_schema` | 检索指标、维度、数据资产、业务层级和报告模板 |
-| 语义层维护 | `retrieve_doc_read`、`retrieve_doc_update`、`sync` | 默认紧凑读取经过 revision 一致性校验的飞书结构化块，按需读取完整行内元素并按 block ID 精确更新，再同步飞书多维表到 Neo4j |
+| 语义层维护 | `retrieve_doc_read`、`sync` | 按官方 raw_content 接口读取飞书文档纯文本正文，同步飞书多维表到 Neo4j；文档内容维护在飞书侧完成 |
 | 分析计算 | `contribute`、`forecast`、`impact` | 贡献度归因、趋势预测、A/B、DID、ROI 与样本量计算 |
 | 数据可视化 | `chart` | 将声明式 JSON 图表规格渲染为准确的 PNG/SVG |
 | 报告交付 | `report_html_publish`、`report_html_list`、`report_html_get`、`report_html_delete`、`report_image_generate` | 发布 HTML 报告或生成单张图片报告 |
@@ -50,7 +50,7 @@ Claude / Codex / Hermes / 其他 MCP Client
                               Blob / 火山方舟
 ```
 
-- `sda_mcp/tools/`：19 个 MCP 工具的注册、参数模型、说明和返回封装。
+- `sda_mcp/tools/`：18 个 MCP 工具的注册、参数模型、说明和返回封装。
 - `sda_mcp/skills/`：可独立测试的 Python 执行内核。
 - `skills/`：供 Agent 阅读的分析方法和工具编排说明。
 - `tests/`：单元测试及可选真实服务集成测试。

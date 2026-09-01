@@ -58,7 +58,7 @@ def _tools():
 def test_tool_schemas_are_flat():
     """所有工具 input_schema 平铺：properties 不含 params 包装，字段直接展开。"""
     tools = _tools()
-    assert len(tools) == 19
+    assert len(tools) == 18
     for name, tool in tools.items():
         props = tool.input_schema.get("properties", {})
         assert "params" not in props, f"{name} 仍有 params 包装"
@@ -99,7 +99,7 @@ def test_tool_metadata_is_complete_and_safety_accurate():
         assert tools[name].annotations.read_only_hint is True
         assert tools[name].annotations.destructive_hint is False
 
-    for name in ("retrieve_cypher", "retrieve_doc_update", "sync",
+    for name in ("retrieve_cypher", "sync",
                  "report_html_publish", "report_html_delete"):
         assert tools[name].annotations.destructive_hint is True
 
@@ -302,81 +302,34 @@ def test_report_image_b64_returns_image_block(monkeypatch):
     assert [getattr(block, "type", "") for block in content] == ["image", "text"]
 
 
-def test_retrieve_doc_update(monkeypatch):
-    monkeypatch.setattr(
-        retrieve_tools,
-        "_update_doc",
-        lambda doc, revision, operations: {
-            "updated": True,
-            "document_id": doc,
-            "previous_revision_id": revision,
-            "revision_id": revision + 1,
-            "affected_block_ids": [operations[0]["block_id"]],
-            "block_id_relations": [],
-            "warnings": [],
-        },
-    )
-    sc, err, _ = _call("retrieve_doc_update", {
-        "doc": "DOC1",
-        "expected_revision_id": 7,
-        "operations": [{"op": "replace_text", "block_id": "B1", "text": "select *"}],
-    })
-    assert not err
-    assert sc["revision_id"] == 8
-    assert sc["affected_block_ids"] == ["B1"]
-
-
-def test_retrieve_doc_read_passes_detail(monkeypatch):
+def test_retrieve_doc_read(monkeypatch):
     captured = {}
 
-    def _read(doc, root_block_id, max_depth, detail):
-        captured.update(
-            doc=doc, root_block_id=root_block_id, max_depth=max_depth, detail=detail,
-        )
-        return {
-            "document_id": doc,
-            "title": "标题",
-            "revision_id": 7,
-            "detail": detail,
-            "root_block_id": root_block_id or doc,
-            "blocks": [],
-            "total_blocks": 0,
-            "warnings": [],
-        }
+    def _read(doc):
+        captured["doc"] = doc
+        return {"document_id": doc, "content": "标题\nselect * from t"}
 
     monkeypatch.setattr(retrieve_tools, "_doc", _read)
-    sc, err, _ = _call("retrieve_doc_read", {
-        "doc": "DOC", "root_block_id": "B1", "max_depth": 0, "detail": "full",
-    })
+    sc, err, _ = _call("retrieve_doc_read", {"doc": "DOC"})
     assert not err
-    assert sc["detail"] == "full"
-    assert captured == {
-        "doc": "DOC", "root_block_id": "B1", "max_depth": 0, "detail": "full",
-    }
+    assert sc == {"document_id": "DOC", "content": "标题\nselect * from t"}
+    assert captured == {"doc": "DOC"}
 
 
-def test_retrieve_doc_tools_advertise_structured_revision_contract():
+def test_retrieve_doc_read_advertises_plain_text_contract():
     tools = _tools()
     read = tools["retrieve_doc_read"]
-    update = tools["retrieve_doc_update"]
-    assert "content" not in read.output_schema["properties"]
-    for field in ("revision_id", "root_block_id", "blocks", "warnings"):
-        assert field in read.output_schema["properties"]
-    detail = read.input_schema["properties"]["detail"]
-    assert detail["default"] == "compact"
-    assert set(detail["enum"]) == {"compact", "full"}
-    assert "expected_revision_id" in update.input_schema["required"]
-    assert "operations" in update.input_schema["required"]
-    assert "content" not in update.input_schema["properties"]
+    assert set(read.output_schema["properties"]) == {"document_id", "content"}
+    assert set(read.input_schema["required"]) == {"doc"}
+    assert set(read.input_schema["properties"]) == {"doc"}
 
 
 def test_retrieve_doc_inputs_only_advertise_docx_token():
     tools = _tools()
-    for name in ("retrieve_doc_read", "retrieve_doc_update"):
-        description = tools[name].input_schema["properties"]["doc"]["description"]
-        assert "docx 文档 token" in description
-        assert "不支持完整 URL" in description
-        assert "URL 或 token" not in description
+    description = tools["retrieve_doc_read"].input_schema["properties"]["doc"]["description"]
+    assert "docx 文档 token" in description
+    assert "不支持完整 URL" in description
+    assert "URL 或 token" not in description
 
 
 def test_retrieve_schema_tool(monkeypatch):

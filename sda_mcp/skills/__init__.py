@@ -10,7 +10,7 @@ from sda_mcp.skills.querying_data import (
 )
 from sda_mcp.skills.retrieving_context import (
     search as retrieve_search, cypher as retrieve_cypher,
-    schema as retrieve_schema, doc as retrieve_doc, update_doc,
+    schema as retrieve_schema, doc as retrieve_doc,
 )
 from sda_mcp.skills.retrieving_context_sync import sync_graph
 from sda_mcp.skills.building_reports import (
@@ -25,7 +25,7 @@ __all__ = [
     "render_chart", "ChartResult",
     "sql_query", "sql_schema", "sql_test_connection", "SqlResult",
     "powerbi_list_tools", "powerbi_schema", "powerbi_query",
-    "retrieve_search", "retrieve_cypher", "retrieve_schema", "retrieve_doc", "update_doc", "sync_graph",
+    "retrieve_search", "retrieve_cypher", "retrieve_schema", "retrieve_doc", "sync_graph",
     "publish_report", "list_reports", "get_report", "delete_report",
     "generate_image",
 ]

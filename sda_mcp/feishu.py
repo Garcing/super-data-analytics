@@ -1,15 +1,13 @@
 """飞书开放平台 REST 客户端（httpx 直连，tenant_access_token 鉴权）。
 
-替代 lark-cli 子进程：docx 原始块读写、drive 文件列表/删除、bitable 字段/记录。
-对齐 VercelBlobClient 模式：失败抛 ConfigError(缺凭证)/ExternalAPIError(HTTP/code!=0)。
-
-接口契约见 docs/superpowers/specs/2026-08-10-feishu-openapi-replace-lark-cli-design.md。
+只读客户端，仅覆盖语义层所需能力：docx 纯文本正文（raw_content）与 bitable
+字段/记录。对齐 VercelBlobClient 模式：失败抛
+ConfigError(缺凭证)/ExternalAPIError(HTTP/code!=0)。
 """
 from __future__ import annotations
 
 import time
 from typing import Any
-from uuid import uuid4
 
 import httpx
 
@@ -20,7 +18,7 @@ _FEISHU_BASE = "https://open.feishu.cn"
 _TIMEOUT = httpx.Timeout(30.0)
 _TOKEN_REFRESH_MARGIN = 300  # 过期前 5 分钟刷新
 
-# bitable 字段类型（开放平台用 int；lark-cli 用字符串名）
+# bitable 字段类型（开放平台用 int）
 # 已用真实 base（BHINbLiOKa4rXDsLTlQcRwuSn9c）逐字段验证值结构（2026-08-10）：
 #   Text(1)/SingleSelect(3) → 裸字符串；MultiSelect(4) → 字符串列表；
 #   Formula(20)/Lookup(19) 文本结果 → [{text,type}] 片段数组（官方：查找引用本质=公式，value 同构）。
@@ -88,7 +86,7 @@ def _get_tenant_token() -> str:
 
 
 def _next_token(data: dict[str, Any]) -> str | None:
-    """drive 返回 next_page_token，bitable 返回 page_token；兼容两者。"""
+    """提取翻页 token（bitable 返回 page_token）。"""
     payload = data.get("data") or data
     return payload.get("next_page_token") or payload.get("page_token")
 
@@ -120,67 +118,18 @@ class FeishuClient:
             msg = data.get("msg") or data.get("message") or "未知错误"
             raise ExternalAPIError(f"飞书 API {path} 返回错误: {str(msg)[:300]}")
 
-    def get_document(self, doc_token: str) -> dict[str, Any]:
-        """读取 docx 元数据（含 title、revision_id、document_id）。"""
-        path = f"/open-apis/docx/v1/documents/{doc_token}"
-        data = self._request("GET", path)
-        document = (data.get("data") or {}).get("document")
-        if not isinstance(document, dict):
-            raise ExternalAPIError(f"飞书文档 {doc_token} 元数据响应缺 document")
-        return document
+    # --- docx 纯文本正文（读）---
+    def get_raw_content(self, doc_token: str) -> str:
+        """读取 docx 纯文本正文。GET /open-apis/docx/v1/documents/{token}/raw_content。
 
-    # --- drive 文件列表（读）---
-    def list_folder_files(self, folder_token: str) -> list[dict[str, Any]]:
-        """列出文件夹下文件（含子文件夹）。GET /open-apis/drive/v1/files，自动翻页。"""
-        path = "/open-apis/drive/v1/files"
-        files: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while True:
-            params: dict[str, Any] = {"folder_token": folder_token, "page_size": 200}
-            if page_token:
-                params["page_token"] = page_token
-            data = self._request("GET", path, params=params)
-            self._check(data, path)
-            payload = data.get("data") or {}
-            files.extend(payload.get("files") or [])
-            if not payload.get("has_more"):
-                break
-            page_token = _next_token(data)
-            if not page_token:
-                break
-        return files
-
-    # --- drive 删除 ---
-    def delete_file(self, file_token: str, file_type: str = "docx") -> None:
-        """删除文件。DELETE /open-apis/drive/v1/files/{file_token}?type=。"""
-        path = f"/open-apis/drive/v1/files/{file_token}"
-        data = self._request("DELETE", path, params={"type": file_type})
-        self._check(data, path)
-
-    # --- bitable 数据表（读）---
-    def list_tables(self, app_token: str) -> list[dict[str, Any]]:
-        """列出多维表下的全部数据表。GET /open-apis/bitable/v1/apps/{app_token}/tables。
-
-        返回 [{table_id, name, revision}, ...]，自动翻页。给 app_token 即可发现表，
-        无需事先知道 table_id。
+        官方接口直出全文纯文本：标题、段落、代码块拍平为文本行，无分页。
         """
-        path = f"/open-apis/bitable/v1/apps/{app_token}/tables"
-        items: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while True:
-            params: dict[str, Any] = {"page_size": 100}
-            if page_token:
-                params["page_token"] = page_token
-            data = self._request("GET", path, params=params)
-            self._check(data, path)
-            payload = data.get("data") or {}
-            items.extend(payload.get("items") or [])
-            if not payload.get("has_more"):
-                break
-            page_token = _next_token(data)
-            if not page_token:
-                break
-        return items
+        path = f"/open-apis/docx/v1/documents/{doc_token}/raw_content"
+        data = self._request("GET", path)
+        content = (data.get("data") or {}).get("content")
+        if not isinstance(content, str):
+            raise ExternalAPIError(f"飞书文档 {doc_token} raw_content 响应缺 content")
+        return content
 
     # --- bitable 字段（读，原始）---
     def list_bitable_fields(self, app_token: str, table_id: str) -> list[dict[str, Any]]:
@@ -228,85 +177,3 @@ class FeishuClient:
                 break
         return items
 
-    def create_doc(self, folder_token: str, title: str) -> str:
-        """建空 docx 文档，返回 document_id。POST /open-apis/docx/v1/documents。"""
-        path = "/open-apis/docx/v1/documents"
-        data = self._request("POST", path, json_body={"folder_token": folder_token, "title": title})
-        self._check(data, path)
-        doc_id = (data.get("data") or {}).get("document", {}).get("document_id")
-        if not doc_id:
-            raise ExternalAPIError(f"创建文档失败：响应缺 document_id: {str(data)[:200]}")
-        return doc_id
-
-    def insert_descendants(
-        self,
-        doc_id: str,
-        blocks: list[dict[str, Any]],
-        children_id: list[str],
-        *,
-        parent_block_id: str | None = None,
-        revision_id: int = -1,
-        index: int | None = None,
-    ) -> dict[str, Any]:
-        """一次插入带临时 ID 的扁平块图；children_id 指定新子树根块。"""
-        parent = parent_block_id or doc_id
-        path = f"/open-apis/docx/v1/documents/{doc_id}/blocks/{parent}/descendant"
-        body: dict[str, Any] = {"children_id": children_id, "descendants": blocks}
-        if index is not None:
-            body["index"] = index
-        return self._request("POST", path, params={
-            "document_revision_id": revision_id,
-            "client_token": str(uuid4()),
-        }, json_body=body)
-
-    def list_blocks(
-        self, doc_id: str, document_revision_id: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """列出文档全部块（自动翻页，page_size=500）。GET .../blocks。"""
-        path = f"/open-apis/docx/v1/documents/{doc_id}/blocks"
-        items: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while True:
-            params: dict[str, Any] = {"page_size": 500}
-            if page_token:
-                params["page_token"] = page_token
-            if document_revision_id is not None:
-                params["document_revision_id"] = document_revision_id
-            data = self._request("GET", path, params=params)
-            self._check(data, path)
-            payload = data.get("data") or {}
-            items.extend(payload.get("items") or [])
-            if not payload.get("has_more"):
-                break
-            page_token = _next_token(data)
-            if not page_token:
-                break
-        return items
-
-    def batch_update_blocks(
-        self, doc_id: str, revision_id: int, requests: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """在指定 revision 上批量更新已有块，返回飞书完整响应。"""
-        path = f"/open-apis/docx/v1/documents/{doc_id}/blocks/batch_update"
-        return self._request("PATCH", path, params={
-            "document_revision_id": revision_id,
-            "client_token": str(uuid4()),
-        }, json_body={"requests": requests})
-
-    def delete_children(
-        self,
-        doc_id: str,
-        parent_block_id: str,
-        revision_id: int,
-        start_index: int,
-        end_index: int,
-    ) -> dict[str, Any]:
-        """删除父块 children 的半开区间 [start_index, end_index)。"""
-        path = (
-            f"/open-apis/docx/v1/documents/{doc_id}/blocks/{parent_block_id}"
-            "/children/batch_delete"
-        )
-        return self._request("DELETE", path, params={
-            "document_revision_id": revision_id,
-            "client_token": str(uuid4()),
-        }, json_body={"start_index": start_index, "end_index": end_index})

@@ -38,7 +38,7 @@ description: 执行 SDA 数据查询。默认用只读 Hologres/PostgreSQL SQL �
 - 指标定义、表达式、过滤条件。
 - 统计实体、去重键和目标粒度。
 - 时间字段、范围、时区和完整周期。
-- 参与表、稳定别名、实现方式和最新 SQL 文档 code 块逐字文本。
+- 参与表、稳定别名、实现方式和最新 SQL 文档代码逐字文本。
 - 指标直接引用的表关系 ID、基数与 JOIN 表达式。
 - 分组/筛选维度及其直接字段或维表 JOIN。
 - 输出列、排序/数量限制与必要检查。
@@ -52,7 +52,7 @@ description: 执行 SDA 数据查询。默认用只读 Hologres/PostgreSQL SQL �
 `实现方式="sql_query"` 的表是逻辑表：
 
 1. 从语义层取得 `表别名` 和 `SQL文档`。
-2. 用 `retrieve_doc_read` 默认 compact 读取文档最新结构化块快照，按文档顺序定位 `type="code"` 的块并使用其逐字 `text`；SQL 读取不需要 full 的 `content.elements`，也不要补 Markdown 围栏。多个代码块的组合方式不明确时先回到 retrieving-context 判断相邻说明，不盲目拼接。
+2. 用 `retrieve_doc_read` 读取文档纯文本正文并采用其中的代码文本；正文已拍平、无 Markdown 围栏，不要自行补围栏。多段代码的组合方式不明确时先回到 retrieving-context 判断相邻说明，不盲目拼接。
 3. 将确认后的完整查询定义作为对应别名的 CTE：
 
 ```sql
