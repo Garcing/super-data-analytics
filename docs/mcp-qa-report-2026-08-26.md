@@ -56,7 +56,7 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 | # | 问题 | 证据/根因 |
 |---|---|---|
 | 1 | `retrieve_cypher` 只要 RETURN 图元素(`RETURN n`、`properties(n)`)必挂,`LIMIT 10` 也挂,与体积无关 | 对照实验:标量/逐属性/labels()/type()/count()/字面量 map/list 全正常;错误一律 `Error executing tool retrieve_cypher` 零细节。Cypher 最标准写法不可用且无文档警示 |
-| 2 | 飞书 docx **导出接口**把 `"` `&` `<` `>` HTML 实体化(勘误:初版误判为写入路径) | 探针实证(2026-08-27):docx 存储层干净(list_blocks 文本原样),`docs/v1/content` 导出时先实体化(`&#34; &amp; &lt; &gt;`)再做 markdown 反斜杠转义 → 机器读取通道拿到 `\&\#34;` 残留;SQL 模板 `>=` 变 `&gt;=` 不可执行。已修复:读取侧解码,读写往返幂等。**(2026-08-31 根治:发现第三类污染——代码围栏内斜体 run 被序列化为 `*` 定界符,读路径整体弃用导出端点改为原始块自序列化,旧防御已删,见修复进度)** |
+| 2 | 飞书 docx **导出接口**把 `"` `&` `<` `>` HTML 实体化(勘误:初版误判为写入路径) | 探针实证(2026-08-27):docx 存储层干净(list_blocks 文本原样),`docs/v1/content` 导出时先实体化(`&#34; &amp; &lt; &gt;`)再做 markdown 反斜杠转义 → 机器读取通道拿到 `\&\#34;` 残留;SQL 模板 `>=` 变 `&gt;=` 不可执行。已修复:读取侧解码,读写往返幂等。**(2026-08-31 根治:发现第三类污染——代码围栏内斜体 run 被序列化为 `*` 定界符,读路径整体弃用导出端点改为原始块自序列化,旧防御已删,见修复进度)** **(2026-09-01 终局:读路径再弃块结构、改官方 raw_content 纯文本直出,写路径整体删除,污染面不复存在,见修复进度)** |
 | 3 | `sda-vpn` 转发器间歇断连 → sql_query ~11% 抖动(4/36 次健康路径失败,重试即恢复) | 日志多次 `psycopg.OperationalError: connection to server at "127.0.0.1", port 15432 failed: server closed the connection unexpectedly`;容器却显示 healthy,看门狗失明 |
 | 4 | `sql_schema` 对不存在表/逻辑语义表静默返回 `columns:[]` 不报错 | 两个 agent 独立踩中(`public.no_such_table_xyz` 与 `semantic.fact_user_period_lifecycle`);与 querying-data Skill"会报 relation does not exist"描述相反(文档漂移);宽表输出无裁剪,4 表一次 78,435 字符溢出转存 |
 | 5 | forecast 不校验 grain 与日期间隔 | 月度数据标 grain=day 静默输出逐日日期(2025-12-02/03/04),"每月+3"被标成"每日+3",结论失真无警告 |
@@ -106,6 +106,8 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 - 导出侧对 `+` `.` `(` 等做装饰性反斜杠转义,但多轮往返不累积(稳定在单层)。
 - 伪造 token 错误路径快速失败不挂起(好),但报错零细节。
 
+*(2026-09-01:`retrieve_doc_update` 已删除,写路径不复存在,本节往返损耗条目全部失效;伪造 token 报错细节已由 P0-2 修复覆盖。见修复进度。)*
+
 **语义层内容治理**
 - 5 个报告模板中 3 个名为"占位符1/2/3"且共用同一测试文档 token,治理内容未填实。
 
@@ -139,6 +141,8 @@ ExternalAPIError: 索引乐观锁重试 5 次仍失败: Vercel Blob 条件写失
 > **后续架构收口(2026-08-31)**:上述自序列化是止血版本，现已进一步从正确性链路中完全删除 Markdown。`retrieve_doc_read` 改为固定 `revision_id` 拉取全部原始块并返回扁平结构化快照(`block_id/parent_id/children/type/content/elements/text`)，代码块 `text` 直接逐字拼接 run；未知块显式以 `raw+warnings` 透出。`retrieve_doc_update` 删除"完整 Markdown → convert → 清空全文 → 重灌"路径，改为强制 `expected_revision_id` 的块操作：多个 `replace_text/replace_elements` 一次 batch update，`insert_subtree` 一次 descendant 写入整棵临时 ID 子树，`delete_children` 删除父块半开区间。真实测试文档 `V6TYdWScDoms5axrSmkcM5FHn0b` 验证了 95 块扁平读取(含嵌套列表与 table→cell→text)、嵌套插入→子 code 更新→敏感字符逐字回读→顶层清理闭环；首次闭环 revision 23→26，多次回归后当前 revision 33，始终为 95 块/26 个顶层块且临时 marker 为 0。额外并发探针发现飞书会接受 `latest-1` 的 revision 参数，因此内核补了写前读取最新元数据并与 `expected_revision_id` 显式比较的服务端前置校验，不能把飞书参数本身宣传成严格乐观锁。旧 `blocks_to_markdown/get_doc_markdown/convert_markdown_to_blocks/delete_all_children` 与 Markdown 矩阵测试已删除，Skill 同步改为按 block ID+revision 工作流。新基线 **214 passed / 9 skipped**；工具名仍为 19 个，但两个 doc 工具输入/输出契约属于显式 breaking change。
 >
 > **结构化读取收敛(2026-08-31)**:`retrieve_doc_read` 新增 `detail=compact|full` 且默认 compact；compact 保留块 ID/父子关系/逐字 `text` 与非行内 `content`，省略冗长 `content.elements`，full 才原样返回行内元素。删除此前重复的块顶层 `elements`，富文本更新统一从 full 的 `content.elements` 取值。真实 SQL 文档 `A5S1dw2YMoFnw9xPzbUcVjSDnWe` 发现飞书 blocks 对 latest/省略 revision 返回 200，却对元数据所报当前 revision=5 返回 403(code=1770032)，因此普通读取改为 `revision=-1`，并在 blocks 前后读取轻量元数据；revision 变化即丢弃并有界重试，稳定后才返回可用于更新的 revision。更新前读取目标块也改用 latest，并在前后显式核对 `expected_revision_id`。离线基线 **221 passed / 10 skipped**；真实飞书读写集成 **4 passed**（含该只读文档兼容回归）。
+>
+> **终局架构定稿(2026-09-01)**:读路径再弃结构化块快照，改官方纯文本接口 `GET /open-apis/docx/v1/documents/{id}/raw_content`——块快照虽根治伪影，但 block_id/elements/style 噪音使上下文爆炸，而 SQL 模板文档真正需要的只是逐字文本。`retrieve_doc_read` 收敛为单参数 docx token，返回 `{document_id, content}`(标题/段落/代码块全部拍平为文本行，无围栏、无定界符、无 HTML 实体)；`root_block_id/max_depth/detail` 参数与 revision 一致性读取机制随块路径一并删除。**`retrieve_doc_update` 工具彻底删除(19→18 工具)**，`docx_blocks.py` 与飞书 docx 块/写端点(`get_document/list_blocks/insert_descendants/batch_update_blocks/delete_children`)整体移除，`feishu.py` 收敛为只读客户端(raw_content + bitable 读)；文档与语义源维护改为人工在飞书编辑，或 agent 侧官方 lark-cli + lark-doc/lark-base skill。至此 P1-2 污染链与 P2"飞书文档往返损耗"整节随写路径消失而关闭。验证:离线 **192 passed / 7 skipped**；真实文档冒烟——格式陷阱文档(`V6TYdWScDoms5axrSmkcM5FHn0b`，粗体/斜体/行内代码/表格混合)与投诉工单 SQL 文档(`GJBWd9uProPovzxiEvyctBVKnFf`，含 `case when`/`->>`/`~` 正则/中文别名)读回逐字干净；已部署 hermes(commit `539a858`)，线上 tools/list=18、无 Token 401、真实只读调用通过。错误路径复核:token 复制带入不可见 U+009D 控制字符时飞书返 400，服务端完整透出 URL+HTTP 状态(P0-2 修复在真机持续生效)；27 位 token 格式护栏(显式报"请重新复制")为可选加固，尚未实施。
 
 1. **错误透出**(P0-2):tools 层 catch `SkillError` → 结构化错误。一处模式,19 工具受益,让后续所有问题可诊断。
 2. **publish 修复**(P0-1):summary 兼容字符串 + 索引读取绕开 CDN 陈旧缓存;清理孤儿 Blob。
