@@ -121,6 +121,38 @@ def test_search_rejects_unknown_strategy(monkeypatch):
         r.search("GMV", strategy="magic")
 
 
+def test_search_rejects_unknown_context_mode(monkeypatch):
+    monkeypatch.setattr(r, "load_config", lambda: {"graph-config": GC})
+    with pytest.raises(ValidationError, match="context_mode"):
+        r.search("GMV", context_mode="full")
+
+
+def test_search_context_none_skips_graph_expansion(monkeypatch):
+    monkeypatch.setattr(
+        r, "load_config",
+        lambda: {"graph-config": GC, "env": {"NEO4J_PASSWORD": "p"}},
+    )
+    monkeypatch.setattr(r, "embed", lambda text: [0.1] * 512)
+    context_calls = []
+
+    class FakeClient:
+        def __init__(self): pass
+        def close(self): pass
+        def find_vector_index_name(self, label): return "idx" if label == "指标" else None
+        def search_vector_index(self, idx, label, emb, top_k):
+            return [{"id": "a", "score": 0.9, "properties": {"name": "A"}}]
+        def fetch_graph_context_batch(self, hits, rels, entities):
+            context_calls.append((hits, rels, entities))
+            return {hit["id"]: {"表": {"items": [], "total": 0, "truncated": False}}
+                    for hit in hits}
+
+    monkeypatch.setattr(r, "Neo4jClient", FakeClient)
+    out = r.search("GMV", strategy="vector", context_mode="none")
+
+    assert context_calls == []
+    assert all(item["context"] == {} for item in out["results"])
+
+
 def test_search_empty_question(monkeypatch):
     monkeypatch.setattr(r, "load_config", lambda: {"graph-config": GC, "env": {"NEO4J_PASSWORD": "p"}})
     with pytest.raises(ValidationError):

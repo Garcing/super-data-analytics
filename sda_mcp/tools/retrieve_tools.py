@@ -45,16 +45,22 @@ def retrieve_search(
         default="hybrid",
         description="hybrid（默认）=向量+CJK全文+精确命中后 RRF 融合；vector=纯向量回退基线。",
     )] = "hybrid",
+    context_mode: Annotated[Literal["auto", "none"], Field(
+        default="auto",
+        description="auto（默认）展开受高基数阈值控制的图邻居；none 不查询图邻居。",
+    )] = "auto",
 ) -> RetrieveSearchOutput:
-    """检索受治理的指标、维度、表和业务上下文，并扩展图邻居。
+    """检索受治理的指标、维度、表和业务上下文，并按需扩展图邻居。
 
     返回 ``question``、``strategy``、``results[]``；每个结果含实体
     ``label``、业务 ``properties``、图 ``context``，hybrid 另含
     ``retrieval`` 排序证据。``context`` 按邻居实体类型分桶，桶为
-    ``{"items", "total", "truncated"}``；``truncated=true`` 表示邻居超过
-    保留上限被截断（``total`` 为真实总数），完整邻居改用 ``retrieve_cypher``。
+    ``{"items", "total", "truncated"}``；邻居超过服务端高基数阈值时
+    ``items=[]``、``truncated=true`` 并返回 ``omitted_reason``（``total`` 为
+    真实总数）。完整邻居改用 ``retrieve_cypher``；``context_mode=none``
+    可完全跳过图邻居查询。
     """
-    return _search(question, top_k, targets, strategy)
+    return _search(question, top_k, targets, strategy, context_mode)
 
 
 @mcp.tool(

@@ -480,11 +480,14 @@ def search(
     top_k: int = 5,
     targets: list[str] | None = None,
     strategy: str = "hybrid",
+    context_mode: str = "auto",
 ) -> dict[str, Any]:
     if not isinstance(question, str) or not question.strip():
         raise ValidationError("question 不能为空")
     if strategy not in ("vector", "hybrid"):
         raise ValidationError("strategy 必须是 vector|hybrid")
+    if context_mode not in ("auto", "none"):
+        raise ValidationError("context_mode 必须是 auto|none")
     gc = load_config().get("graph-config", {})
     entities = gc.get("entities") or {}
     relationships = gc.get("relationships") or []
@@ -523,7 +526,7 @@ def search(
 
         contexts = (
             client.fetch_graph_context_batch(candidates, relationships, entities)
-            if relationships and candidates else {}
+            if context_mode == "auto" and relationships and candidates else {}
         )
         results = []
         for hit in candidates:

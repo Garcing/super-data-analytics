@@ -64,7 +64,7 @@ def test_tool_schemas_are_flat():
         assert "params" not in props, f"{name} 仍有 params 包装"
 
     rs = tools["retrieve_search"].input_schema["properties"]
-    assert set(rs) == {"question", "top_k", "targets", "strategy"}
+    assert set(rs) == {"question", "top_k", "targets", "strategy", "context_mode"}
     # Annotated Field 约束保留（ge=1/le=20 → minimum/maximum）
     assert rs["top_k"]["maximum"] == 20
     assert rs["top_k"]["minimum"] == 1
@@ -72,6 +72,8 @@ def test_tool_schemas_are_flat():
     assert rs["question"]["minLength"] == 1
     # description 保留
     assert "Hybrid" in rs["strategy"]["description"] or "hybrid" in rs["strategy"]["description"]
+    assert rs["context_mode"]["default"] == "auto"
+    assert set(rs["context_mode"]["enum"]) == {"auto", "none"}
 
     chart = tools["chart"].input_schema["properties"]
     assert chart["dpi"]["minimum"] == 72 and chart["dpi"]["maximum"] == 300
@@ -162,12 +164,21 @@ def test_skill_error_becomes_is_error(monkeypatch):
 
 
 def test_retrieve_search(monkeypatch):
-    monkeypatch.setattr(retrieve_tools, "_search",
-                        lambda question, top_k=5, targets=None, strategy="vector":
-                        {"question": question, "strategy": strategy, "results": []})
+    calls = []
+
+    def fake_search(question, top_k=5, targets=None, strategy="vector", context_mode="auto"):
+        calls.append((question, top_k, targets, strategy, context_mode))
+        return {"question": question, "strategy": strategy, "results": []}
+
+    monkeypatch.setattr(retrieve_tools, "_search", fake_search)
     sc, err, _ = _call("retrieve_search", {"question": "Q"})
     assert sc["results"] == []
     assert sc["strategy"] == "hybrid"
+    _call("retrieve_search", {"question": "Q", "context_mode": "none"})
+    assert calls == [
+        ("Q", 5, None, "hybrid", "auto"),
+        ("Q", 5, None, "hybrid", "none"),
+    ]
 
 
 def test_contribute(monkeypatch):
