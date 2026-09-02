@@ -17,7 +17,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 
 | 工具 | 职责 |
 |---|---|
-| `retrieve_search` | 用自然语言发现候选实体；默认 `strategy="hybrid"` |
+| `retrieve_search` | 用自然语言发现候选实体；默认 `strategy="hybrid"`、`context_mode="auto"` |
 | `retrieve_schema` | 从 Neo4j 实时内省节点属性与关系；写 Cypher 前先用 |
 | `retrieve_cypher` | 精确列举、计数或沿实时关系取完整上下文；默认只写只读 `MATCH` |
 | `retrieve_doc_read` | 按 docx token 读取 SQL 文档或报告模板的纯文本正文；代码原样拍平，无 Markdown 围栏 |
@@ -28,9 +28,9 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 ## 默认检索流程
 
 1. 从用户问题提取指标/概念、统计对象、时间、分组或筛选维度、业务范围与期望答案。
-2. 用 `retrieve_search` 做宽召回。默认 hybrid；有明确领域时用 `targets` 限定，但不确定就不传，避免漏掉跨实体答案。
+2. 用 `retrieve_search` 做宽召回。默认 hybrid，并用 `context_mode="auto"` 展开受高基数阈值控制的一跳邻居；只需候选、不需要关系上下文时用 `context_mode="none"`。有明确领域时用 `targets` 限定，但不确定就不传，避免漏掉跨实体答案。
 3. 比较候选的名称/ID、定义、范围、业务归属和图邻居。`retrieval.fusion_score` 只用于排序；不要把它解释为置信概率，也不要直接比较 vector/fulltext 两种分数。
-4. 若答案需要完整列表、精确关系或搜索结果的邻居被截断，先 `retrieve_schema`，再按实时 label/属性/关系写只读 Cypher。
+4. 若答案需要完整列表、精确关系，或搜索结果的高基数邻居桶被省略，先 `retrieve_schema`，再按实时 label/属性/关系写有界的只读 Cypher。
 5. 对语义表或模板链接，剥出 docx token 后用 `retrieve_doc_read` 读取最新纯文本正文；不要依赖对话中的旧副本。SQL 直接采用正文中的代码文本，不要补 Markdown 围栏；模板按文本内容理解章节与示例。
 6. 返回已采用实体、定义、关键属性、来源层级和仍未解决的歧义。需要数值时把确定好的契约交给 querying-data。
 
@@ -109,7 +109,7 @@ description: 检索和维护 SDA 受治理业务语义层。用户询问指标�
 - 本工具集对飞书文档只读；不要构造写请求，也不要绕道修改语义源文档。
 - `sync(dry_run=false)` 会清空并重建图，是运维操作，不因普通搜索分数低就执行。
 - 文档和表必须已共享给飞书应用；403 是权限问题，不是空内容。
-- 搜索 `context` 每类邻居可能截断；要完整集合改用 Cypher。
+- 搜索 `context` 每命中、每类邻居标签不超过 10 条时返回全部；超过 10 条时 `items=[]` 并保留真实 `total`。要完整集合改用有界的只读 Cypher。
 
 ## 参考
 
