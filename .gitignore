@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 .venv/
+.worktrees/
 
 # 环境文件（compose 用，含 token，不进 git）
 .env
