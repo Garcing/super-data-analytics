@@ -1,7 +1,15 @@
 # 笔记本经公网接入：mcp.super-data-analytics.online -> localhost:3100
-# 证书 Let's Encrypt 自动签发：80 空闲时走 http-01，被占时 Caddy 自动改用 443 TLS-ALPN-01
+# Caddy 自动签发和续期 HTTPS 证书；公网 MCP 只经 443 进入，3100 不开放。
 mcp.super-data-analytics.online {
 	reverse_proxy localhost:3100
 	# Bearer 由客户端（笔记本/hermes）自带；Caddy 仅做 TLS 转发
 	# 如需双保险，可在此加 header_up / basic_auth，非必需
+}
+
+# 以下站点与 Super Data Analytics MCP 项目功能无关，仅复用本机 Caddy。
+# 用途：为 Hermes Agent 的 hermes-studio 插件提供 HTTPS Dashboard 入口。
+# 上游项目：https://github.com/EKKOLearnAI/hermes-studio
+# hermes-web-ui 的 npm 运行方式默认监听 8648；公网不要开放 8648，只由 Caddy 在本机反代。
+hermes.super-data-analytics.online {
+	reverse_proxy 127.0.0.1:8648
 }
