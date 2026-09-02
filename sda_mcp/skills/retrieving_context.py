@@ -17,8 +17,8 @@ _INTERNAL_PROPS = {
     "search_text", "embedding", "embedding_model", "embedding_dimensions", "embedding_updated_at",
 }
 
-# 检索结果 context 每命中、每类邻居标签的保留上限；超限截断并置 truncated。
-CONTEXT_NEIGHBOR_LIMIT = 20
+# 检索结果 context 每命中、每类邻居标签的展开阈值；超限只返回计数。
+CONTEXT_EXPANSION_THRESHOLD = 10
 
 
 def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
@@ -286,12 +286,16 @@ class Neo4jClient:
             return []
 
     def fetch_graph_context_batch(
-        self, hits: list[dict[str, Any]], relationships: list[dict],
+        self,
+        hits: list[dict[str, Any]],
+        relationships: list[dict],
+        entities: dict[str, dict[str, Any]],
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """按关系方向批量扩展图上下文，限制每个命中每类邻居的数量。
+        """按关系方向批量扩展图上下文，高基数桶只保留计数。
 
         每个桶为 ``{"items": [...], "total": 邻居总数, "truncated": 是否超限截断}``；
-        ``truncated=true`` 时完整邻居应改用 ``retrieve_cypher`` 遍历。
+        邻居数超过阈值时 ``items=[]`` 并附 ``omitted_reason``，完整邻居应改用
+        ``retrieve_cypher`` 遍历。
         """
         contexts: dict[str, dict[str, dict[str, Any]]] = {
             hit["id"]: {} for hit in hits
@@ -304,11 +308,18 @@ class Neo4jClient:
             if not node_ids:
                 return
             esc_other = other_label.replace("`", "``")
+            other_key = (entities.get(other_label) or {}).get("key_field")
+            if not other_key:
+                raise ValidationError(
+                    f"graph-config.entities.{other_label}.key_field 不能为空"
+                )
+            esc_other_key = str(other_key).replace("`", "``")
             self_exclude = " AND elementId(other) <> elementId(n)" if self_loop else ""
             cypher = (
                 f"MATCH (n){rel_pattern}(other:`{esc_other}`) "
                 f"WHERE elementId(n) IN $nodeIds{self_exclude} "
-                "RETURN elementId(n) AS nodeId, properties(other) AS props"
+                "RETURN elementId(n) AS nodeId, properties(other) AS props "
+                f"ORDER BY other.`{esc_other_key}`"
             )
             try:
                 with self._session() as s:
@@ -325,10 +336,12 @@ class Neo4jClient:
                         "items": [], "total": 0, "truncated": False,
                     }
                 entry["total"] += 1
-                if len(entry["items"]) < CONTEXT_NEIGHBOR_LIMIT:
+                if entry["total"] <= CONTEXT_EXPANSION_THRESHOLD:
                     entry["items"].append(_clean_properties(dict(rec["props"])))
-                else:
+                elif entry["total"] == CONTEXT_EXPANSION_THRESHOLD + 1:
+                    entry["items"] = []
                     entry["truncated"] = True
+                    entry["omitted_reason"] = "high_cardinality"
 
         for rel in relationships:
             from_label = rel.get("from")
@@ -509,7 +522,7 @@ def search(
             candidates = _fuse_ranked_sources(ranked_sources)[:top_k]
 
         contexts = (
-            client.fetch_graph_context_batch(candidates, relationships)
+            client.fetch_graph_context_batch(candidates, relationships, entities)
             if relationships and candidates else {}
         )
         results = []

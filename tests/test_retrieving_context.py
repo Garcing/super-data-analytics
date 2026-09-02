@@ -106,7 +106,8 @@ def test_search_sorts_and_cleans(monkeypatch):
         def search_vector_index(self, idx, label, emb, top_k):
             return [{"id": "a", "score": 0.9, "properties": {"name": "A", "embedding": [0]}},
                     {"id": "b", "score": 0.5, "properties": {"name": "B"}}]
-        def fetch_graph_context_batch(self, hits, rels): return {h["id"]: {} for h in hits}
+        def fetch_graph_context_batch(self, hits, rels, entities):
+            return {h["id"]: {} for h in hits}
     monkeypatch.setattr(r, "Neo4jClient", FakeClient)
     out = r.search("GMV", top_k=5, strategy="vector")
     assert out["results"][0]["score"] == 0.9
@@ -187,7 +188,9 @@ def test_batch_context_self_loop_is_undirected(monkeypatch):
     """from == to == label：自环走无向 -[:T]-。"""
     client, session = _make_client(monkeypatch)
     rels = [{"type": "关联", "from": "指标", "to": "指标"}]
-    client.fetch_graph_context_batch([{"id": "node-1", "label": "指标"}], rels)
+    client.fetch_graph_context_batch(
+        [{"id": "node-1", "label": "指标"}], rels, GC["entities"],
+    )
     assert any("-[:`关联`]-" in c for c in session.captured_cyphers), session.captured_cyphers
 
 
@@ -195,8 +198,11 @@ def test_batch_context_outgoing_is_directed(monkeypatch):
     """from == label 且 to != label：出边走 -[:T]->。"""
     client, session = _make_client(monkeypatch)
     rels = [{"type": "属于", "from": "指标", "to": "表"}]
-    client.fetch_graph_context_batch([{"id": "node-1", "label": "指标"}], rels)
+    client.fetch_graph_context_batch(
+        [{"id": "node-1", "label": "指标"}], rels, GC["entities"],
+    )
     assert any("-[:`属于`]->" in c for c in session.captured_cyphers), session.captured_cyphers
+    assert any("ORDER BY other.`表ID`" in c for c in session.captured_cyphers)
 
 
 class _SearchSession(_FakeSession):
@@ -290,6 +296,7 @@ def test_batch_context_groups_ids_by_relationship(monkeypatch):
     hits = [{"id": "m1", "label": "指标"}, {"id": "m2", "label": "指标"}]
     client.fetch_graph_context_batch(
         hits, [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
     )
     assert len(session.captured_cyphers) == 1
     assert "elementId(n) IN $nodeIds" in session.captured_cyphers[0]
@@ -315,17 +322,36 @@ def _make_record_client(monkeypatch, records):
     return client
 
 
-def test_batch_context_marks_truncation_over_limit(monkeypatch):
-    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(25)]
+def test_batch_context_over_threshold_omits_items(monkeypatch):
+    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(11)]
     client = _make_record_client(monkeypatch, records)
     ctx = client.fetch_graph_context_batch(
         [{"id": "m1", "label": "指标"}],
         [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
     )
     bucket = ctx["m1"]["表"]
-    assert bucket["total"] == 25
-    assert len(bucket["items"]) == r.CONTEXT_NEIGHBOR_LIMIT
-    assert bucket["truncated"] is True
+    assert bucket == {
+        "items": [],
+        "total": 11,
+        "truncated": True,
+        "omitted_reason": "high_cardinality",
+    }
+
+
+def test_batch_context_at_threshold_returns_all(monkeypatch):
+    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(10)]
+    client = _make_record_client(monkeypatch, records)
+    ctx = client.fetch_graph_context_batch(
+        [{"id": "m1", "label": "指标"}],
+        [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
+    )
+    assert ctx["m1"]["表"] == {
+        "items": [{"表名称": f"t{i}"} for i in range(10)],
+        "total": 10,
+        "truncated": False,
+    }
 
 
 def test_batch_context_under_limit_not_truncated(monkeypatch):
@@ -334,6 +360,7 @@ def test_batch_context_under_limit_not_truncated(monkeypatch):
     ctx = client.fetch_graph_context_batch(
         [{"id": "m1", "label": "指标"}],
         [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
     )
     assert ctx["m1"]["表"] == {
         "items": [{"表名称": "t0"}, {"表名称": "t1"}, {"表名称": "t2"}],
