@@ -286,7 +286,6 @@ sudo cp ~/sda-mcp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl restart caddy
 
 仓库 `Caddyfile` 还保留一个明确标注的非 SDA 站点：`hermes.super-data-analytics.online` 反向代理到宿主机 `127.0.0.1:8648`，供 [hermes-studio](https://github.com/EKKOLearnAI/hermes-studio) Dashboard 使用。它只是复用同一 Caddy，不属于本项目能力或标准部署链路；维护 SDA 代理时不要误删。Hermes Studio 的 8648 只应作为本机上游，云防火墙不得开放该端口，或应将进程 `BIND_HOST` 设为 `127.0.0.1`；公网仅通过 Caddy 的 443 访问。
 
-如果 `~/sda-mcp` 是旧 archive 解压目录，不要直接在其中 `git init`。先 clone 到同级新目录、复制 `.env`、完成 build 验证后再切换；旧目录保留一个发布周期用于回退。
 
 本机配置是唯一真相源。部署前在本机执行以下命令，将已验证的 JSON 安全同步到服务器；脚本会在服务器保留上一份 `.bak`、设置 600 权限并核对 SHA-256，不打印密钥：
 
