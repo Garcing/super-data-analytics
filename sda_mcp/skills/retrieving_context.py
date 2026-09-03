@@ -21,7 +21,9 @@ _INTERNAL_PROPS = {
 # 检索结果 context 每命中、每类邻居标签的展开阈值；超限只返回计数。
 CONTEXT_EXPANSION_THRESHOLD = 10
 # 同一桶清洗后 items 的 UTF-8 序列化字节预算；累计超限整桶丢弃、只留计数。
-CONTEXT_BUCKET_BYTE_BUDGET = 3072
+# 按线上真实桶校准：保留 6 条完整指标定义的同族口径桶（约 3.7KB），
+# 只砍 7+ 条胖实体桶（约 4.2KB 起）。
+CONTEXT_BUCKET_BYTE_BUDGET = 4096
 
 
 def _item_bytes(item: dict[str, Any]) -> int:
