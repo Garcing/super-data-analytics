@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping
 from functools import lru_cache
+import json
 import re
 from typing import Any
 
@@ -19,6 +20,13 @@ _INTERNAL_PROPS = {
 
 # 检索结果 context 每命中、每类邻居标签的展开阈值；超限只返回计数。
 CONTEXT_EXPANSION_THRESHOLD = 10
+# 同一桶清洗后 items 的 UTF-8 序列化字节预算；累计超限整桶丢弃、只留计数。
+CONTEXT_BUCKET_BYTE_BUDGET = 3072
+
+
+def _item_bytes(item: dict[str, Any]) -> int:
+    """键序无关的 UTF-8 序列化字节数，保证门限触发点可复现。"""
+    return len(json.dumps(item, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8"))
 
 
 def _clean_properties(raw: dict[str, Any]) -> dict[str, Any]:
@@ -291,11 +299,13 @@ class Neo4jClient:
         relationships: list[dict],
         entities: dict[str, dict[str, Any]],
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """按关系方向批量扩展图上下文，高基数桶只保留计数。
+        """按关系方向批量扩展图上下文，超限桶只保留计数。
 
-        每个桶为 ``{"items": [...], "total": 邻居总数, "truncated": 是否超限截断}``；
-        邻居数超过阈值时 ``items=[]`` 并附 ``omitted_reason``，完整邻居应改用
-        ``retrieve_cypher`` 遍历。
+        每个桶为 ``{"items": [...], "total": 邻居总数, "truncated": 是否超限截断}``。
+        两道门任一超限即整桶丢弃 ``items`` 并附 ``omitted_reason``：邻居数超过
+        ``CONTEXT_EXPANSION_THRESHOLD`` 报 ``high_cardinality``（双超限时优先），
+        累计序列化字节超过 ``CONTEXT_BUCKET_BYTE_BUDGET`` 报 ``byte_budget``。
+        完整邻居应改用 ``retrieve_cypher`` 遍历。
         """
         contexts: dict[str, dict[str, dict[str, Any]]] = {
             hit["id"]: {} for hit in hits
@@ -303,6 +313,8 @@ class Neo4jClient:
         ids_by_label: dict[str, list[str]] = defaultdict(list)
         for hit in hits:
             ids_by_label[hit["label"]].append(hit["id"])
+        # 字节记账侧表：键为 (nodeId, 邻居标签)；同一桶可能跨多条关系累计。
+        bucket_bytes: dict[tuple[str, str], int] = defaultdict(int)
 
         def expand(node_ids: list[str], rel_pattern: str, other_label: str, *, self_loop: bool) -> None:
             if not node_ids:
@@ -336,12 +348,23 @@ class Neo4jClient:
                         "items": [], "total": 0, "truncated": False,
                     }
                 entry["total"] += 1
-                if entry["total"] <= CONTEXT_EXPANSION_THRESHOLD:
-                    entry["items"].append(_clean_properties(dict(rec["props"])))
-                elif entry["total"] == CONTEXT_EXPANSION_THRESHOLD + 1:
+                if entry["total"] > CONTEXT_EXPANSION_THRESHOLD:
+                    # 计数门优先：即使字节门先触发，超数也覆盖为 high_cardinality。
                     entry["items"] = []
                     entry["truncated"] = True
                     entry["omitted_reason"] = "high_cardinality"
+                    continue
+                if entry.get("omitted_reason"):
+                    continue
+                item = _clean_properties(dict(rec["props"]))
+                byte_key = (rec["nodeId"], other_label)
+                bucket_bytes[byte_key] += _item_bytes(item)
+                if bucket_bytes[byte_key] > CONTEXT_BUCKET_BYTE_BUDGET:
+                    entry["items"] = []
+                    entry["truncated"] = True
+                    entry["omitted_reason"] = "byte_budget"
+                    continue
+                entry["items"].append(item)
 
         for rel in relationships:
             from_label = rel.get("from")
@@ -528,6 +551,9 @@ def search(
             client.fetch_graph_context_batch(candidates, relationships, entities)
             if context_mode == "auto" and relationships and candidates else {}
         )
+        context_bytes = len(
+            json.dumps(contexts, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ) if contexts else 0
         results = []
         for hit in candidates:
             result = {
@@ -549,7 +575,12 @@ def search(
                     "exact_rank": hit["exact_rank"],
                 }
             results.append(result)
-        return {"question": question, "strategy": strategy, "results": results}
+        return {
+            "question": question,
+            "strategy": strategy,
+            "results": results,
+            "context_bytes": context_bytes,
+        }
     finally:
         client.close()
 

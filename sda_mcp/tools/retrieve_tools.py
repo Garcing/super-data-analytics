@@ -47,18 +47,20 @@ def retrieve_search(
     )] = "hybrid",
     context_mode: Annotated[Literal["auto", "none"], Field(
         default="auto",
-        description="auto（默认）展开受高基数阈值控制的图邻居；none 不查询图邻居。",
+        description="auto（默认）展开受数量阈值与字节预算控制的图邻居；none 不查询图邻居。",
     )] = "auto",
 ) -> RetrieveSearchOutput:
     """检索受治理的指标、维度、表和业务上下文，并按需扩展图邻居。
 
-    返回 ``question``、``strategy``、``results[]``；每个结果含实体
+    返回 ``question``、``strategy``、``results[]`` 与顶层 ``context_bytes``
+    （context 部分的 UTF-8 序列化字节数，``none`` 模式为 0）；每个结果含实体
     ``label``、业务 ``properties``、图 ``context``，hybrid 另含
     ``retrieval`` 排序证据。``context`` 按邻居实体类型分桶，桶为
-    ``{"items", "total", "truncated"}``；邻居超过服务端高基数阈值时
-    ``items=[]``、``truncated=true`` 并返回 ``omitted_reason``（``total`` 为
-    真实总数）。完整邻居改用 ``retrieve_cypher``；``context_mode=none``
-    可完全跳过图邻居查询。
+    ``{"items", "total", "truncated"}``；邻居数超过高基数阈值、或桶内
+    ``items`` 累计序列化字节超过字节预算时，整桶 ``items=[]``、
+    ``truncated=true`` 并返回 ``omitted_reason``（``"high_cardinality"``
+    或 ``"byte_budget"``，双超限报前者；``total`` 恒为真实总数）。完整邻居
+    改用 ``retrieve_cypher``；``context_mode=none`` 可完全跳过图邻居查询。
     """
     return _search(question, top_k, targets, strategy, context_mode)
 

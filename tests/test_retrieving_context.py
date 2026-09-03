@@ -1,4 +1,6 @@
 """retrieving_context 内核 mock 单元测试（离线）。"""
+import json
+
 import pytest
 from sda_mcp.errors import DataSourceError, ExternalAPIError, ValidationError
 from sda_mcp.skills import retrieving_context as r
@@ -151,6 +153,31 @@ def test_search_context_none_skips_graph_expansion(monkeypatch):
 
     assert context_calls == []
     assert all(item["context"] == {} for item in out["results"])
+    assert out["context_bytes"] == 0
+
+
+def test_search_reports_context_bytes(monkeypatch):
+    monkeypatch.setattr(
+        r, "load_config",
+        lambda: {"graph-config": GC, "env": {"NEO4J_PASSWORD": "p"}},
+    )
+    monkeypatch.setattr(r, "embed", lambda text: [0.1] * 512)
+    contexts = {"a": {"表": {"items": [{"表名称": "t"}], "total": 1, "truncated": False}}}
+
+    class FakeClient:
+        def __init__(self): pass
+        def close(self): pass
+        def find_vector_index_name(self, label): return "idx" if label == "指标" else None
+        def search_vector_index(self, idx, label, emb, top_k):
+            return [{"id": "a", "score": 0.9, "properties": {"name": "A"}}]
+        def fetch_graph_context_batch(self, hits, rels, entities):
+            return contexts
+
+    monkeypatch.setattr(r, "Neo4jClient", FakeClient)
+    out = r.search("GMV", strategy="vector")
+    assert out["context_bytes"] == len(
+        json.dumps(contexts, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    )
 
 
 def test_search_empty_question(monkeypatch):
@@ -398,4 +425,60 @@ def test_batch_context_under_limit_not_truncated(monkeypatch):
         "items": [{"表名称": "t0"}, {"表名称": "t1"}, {"表名称": "t2"}],
         "total": 3,
         "truncated": False,
+    }
+
+
+def test_item_bytes_is_deterministic_across_key_order():
+    assert r._item_bytes({"表名称": "t", "表ID": "x"}) == r._item_bytes({"表ID": "x", "表名称": "t"})
+
+
+def test_batch_context_over_byte_budget_omits_items(monkeypatch):
+    """数量未超阈值但序列化字节超预算：整桶丢弃并标注 byte_budget。"""
+    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(3)]
+    monkeypatch.setattr(r, "CONTEXT_BUCKET_BYTE_BUDGET", 1)
+    client = _make_record_client(monkeypatch, records)
+    ctx = client.fetch_graph_context_batch(
+        [{"id": "m1", "label": "指标"}],
+        [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
+    )
+    assert ctx["m1"]["表"] == {
+        "items": [],
+        "total": 3,
+        "truncated": True,
+        "omitted_reason": "byte_budget",
+    }
+
+
+def test_batch_context_at_byte_budget_keeps_items(monkeypatch):
+    """字节预算边界含等号：累计恰好等于预算时整桶保留。"""
+    items = [{"表名称": "t0"}, {"表名称": "t1"}]
+    records = [{"nodeId": "m1", "props": item} for item in items]
+    monkeypatch.setattr(
+        r, "CONTEXT_BUCKET_BYTE_BUDGET", sum(r._item_bytes(item) for item in items)
+    )
+    client = _make_record_client(monkeypatch, records)
+    ctx = client.fetch_graph_context_batch(
+        [{"id": "m1", "label": "指标"}],
+        [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
+    )
+    assert ctx["m1"]["表"] == {"items": items, "total": 2, "truncated": False}
+
+
+def test_batch_context_count_gate_takes_precedence_over_byte(monkeypatch):
+    """数量与字节双超限时计数门优先：omitted_reason 报 high_cardinality。"""
+    records = [{"nodeId": "m1", "props": {"表名称": f"t{i}"}} for i in range(11)]
+    monkeypatch.setattr(r, "CONTEXT_BUCKET_BYTE_BUDGET", 1)
+    client = _make_record_client(monkeypatch, records)
+    ctx = client.fetch_graph_context_batch(
+        [{"id": "m1", "label": "指标"}],
+        [{"type": "使用", "from": "指标", "to": "表"}],
+        GC["entities"],
+    )
+    assert ctx["m1"]["表"] == {
+        "items": [],
+        "total": 11,
+        "truncated": True,
+        "omitted_reason": "high_cardinality",
     }

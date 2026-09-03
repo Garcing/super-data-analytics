@@ -168,12 +168,13 @@ def test_retrieve_search(monkeypatch):
 
     def fake_search(question, top_k=5, targets=None, strategy="vector", context_mode="auto"):
         calls.append((question, top_k, targets, strategy, context_mode))
-        return {"question": question, "strategy": strategy, "results": []}
+        return {"question": question, "strategy": strategy, "results": [], "context_bytes": 0}
 
     monkeypatch.setattr(retrieve_tools, "_search", fake_search)
     sc, err, _ = _call("retrieve_search", {"question": "Q"})
     assert sc["results"] == []
     assert sc["strategy"] == "hybrid"
+    assert sc["context_bytes"] == 0
     _call("retrieve_search", {"question": "Q", "context_mode": "none"})
     assert calls == [
         ("Q", 5, None, "hybrid", "auto"),

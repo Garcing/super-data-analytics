@@ -36,6 +36,7 @@ class RetrieveSearchOutput(TypedDict):
     question: str
     strategy: str
     results: list[dict[str, Any]]
+    context_bytes: int
 
 
 class RetrieveCypherOutput(TypedDict):
