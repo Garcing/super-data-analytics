@@ -10,7 +10,7 @@ Super Data Analytics（SDA）是一个面向 AI Agent 的数据分析 MCP 服务
 |---|---|---|
 | SQL 查询 | `sql_query`、`sql_schema` | 查询 Hologres/PostgreSQL 数据与物理表结构 |
 | Power BI | `powerbi_query`、`powerbi_schema` | 查询指定 Power BI 语义模型与模型 schema |
-| 业务语义层 | `retrieve_search`、`retrieve_cypher`、`retrieve_schema` | 检索指标、维度、数据资产、业务层级和报告模板；图上下文可关闭，高基数邻居默认只返回计数 |
+| 业务语义层 | `retrieve_search`、`retrieve_cypher`、`retrieve_schema` | 检索指标、维度、数据资产、业务层级和报告模板；图上下文可关闭，超数量阈值或字节预算的邻居桶默认只返回计数 |
 | 语义层维护 | `retrieve_doc_read`、`sync` | 按官方 raw_content 接口读取飞书文档纯文本正文，同步飞书多维表到 Neo4j；文档内容维护在飞书侧完成 |
 | 分析计算 | `contribute`、`forecast`、`impact` | 贡献度归因、趋势预测、A/B、DID、ROI 与样本量计算 |
 | 数据可视化 | `chart` | 将声明式 JSON 图表规格渲染为准确的 PNG/SVG |

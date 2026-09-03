@@ -38,8 +38,8 @@
 `retrieve_search` 的图上下文扩展（`fetch_graph_context_batch`）有两个关键行为：
 
 - **发生在融合截断之后**：先 WRRF 融合各来源候选、截取全局 `top_k`，只对最终候选查邻居——所以不会为落选候选浪费查询。
-- **每命中、每类邻居标签应用固定阈值 10**：总数不超过 10 时返回按邻居实体 `key_field` 排序的全部邻居；超过 10 时返回 `items=[]`、真实 `total`、`truncated=true` 和 `omitted_reason="high_cardinality"`。自环关系（from=to）双向扩展且排除自身。
-- **图扩展可关闭**：默认 `context_mode="auto"`；只需候选发现时传 `context_mode="none"`，服务端跳过邻居查询并为每个结果返回 `context={}`。
+- **每命中、每类邻居标签应用两道门，任一超限整桶丢弃 items**：总数不超过 10、且桶内 `items` 累计 UTF-8 序列化字节不超过服务端字节预算（3KB 量级）时，返回按邻居实体 `key_field` 排序的全部邻居；否则返回 `items=[]`、真实 `total`、`truncated=true` 和 `omitted_reason`——超数报 `"high_cardinality"`（双超限优先），仅超字节报 `"byte_budget"`。自环关系（from=to）双向扩展且排除自身。
+- **图扩展可关闭**：默认 `context_mode="auto"`；只需候选发现时传 `context_mode="none"`，服务端跳过邻居查询并为每个结果返回 `context={}`。响应顶层 `context_bytes` 标出 context 部分的序列化字节数（`none` 模式为 0），可用来监控实际开销。
 
 因此检索结果 `context` 里高基数邻居只保留计数属于正常现象：某指标关联 50 张表时 `items=[]`，但 `total=50`、`truncated=true`。需要完整邻居（全量列举、递归层级）时，改用 `retrieve_schema` + `retrieve_cypher` 自己写有界遍历，例如：
 
