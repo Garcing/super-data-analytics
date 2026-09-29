@@ -25,6 +25,7 @@
 | `skills/` | 9 个面向 Agent 的分析工作流 Skill 与 references |
 | `tests/` | 单元测试、契约测试和按环境变量启用的集成测试 |
 | `docs/` | 当前仍有效的架构调研和设计依据 |
+| `deploy/` | 部署与环境接入 runbook：VPN 转发器、Neo4j 容器（服务器侧）；Hermes 接入（`deploy/hermes/`）与智谱 Coding Plan MCP 客户端接入（两者可选） |
 | `Dockerfile`、`docker-compose.yml`、`Caddyfile` | 服务构建、运行和反向代理配置 |
 
 Python 要求 `>=3.10`，依赖、构建和 pytest 配置以 `pyproject.toml` 为准。
@@ -395,45 +396,7 @@ docker compose up -d --build --force-recreate
 
 ## 11. Hermes Agent 接入（可选）
 
-本节不属于标准部署链路。仅当服务器同时运行 Hermes Agent（HERMES_HOME 为 `~/.hermes`，gateway 常驻）且用户在部署时明确要求接入时才执行。此配置属于服务器环境差异，不进本仓库 Git。
-
-接入 MCP（静态 Bearer，无需 OAuth 流程）：
-
-```bash
-ssh hermes
-cp -p ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-sda
-TOKEN=$(grep "^SDA_MCP_TOKEN=" ~/sda-mcp/.env | cut -d= -f2-)
-cat >> ~/.hermes/config.yaml <<EOF
-
-mcp_servers:
-  sda:
-    url: "http://127.0.0.1:3100/mcp"
-    headers:
-      Authorization: "Bearer $TOKEN"
-    timeout: 600        # sync 为分钟级长任务
-    connect_timeout: 60
-EOF
-```
-
-同步 skills 用符号链接指向仓库目录，`git pull` 即生效、无需手动再同步；分类描述符即仓库 `skills/DESCRIPTION.md`：
-
-```bash
-rm -rf ~/.hermes/skills/super-data-analytics
-ln -s ~/sda-mcp/skills ~/.hermes/skills/super-data-analytics
-```
-
-验证两步（都过才算就绪；交互式 shell 中 `hermes` 命令默认已注册）：
-
-```bash
-# MCP：应显示 Connected 且 Tools discovered: 18
-hermes mcp test sda
-# skills：应列出 9 个 super-data-analytics 分类的 enabled local 技能
-hermes skills list
-```
-
-最后由用户在 Hermes 对话里执行 `/reload-mcp`，出现 `Added: sda` 才算接入完成；工具以 `mcp_sda_` 前缀注册。
-
-维护约定：skills 经符号链接实时生效，服务器 `git pull --ff-only` 即完成更新；轮换 `SDA_MCP_TOKEN` 时同步更新 config.yaml 中的 Bearer 值并重新 `/reload-mcp`。
+不属于标准部署链路。仅当服务器同时运行 Hermes Agent（HERMES_HOME 为 `~/.hermes`，gateway 常驻）且用户在部署时明确要求接入时才执行；配置属于服务器环境差异，不进本仓库 Git。完整接入步骤、验证命令、维护约定和服务器环境备忘（视觉模型配置、myqcloud.com DNS 分流）见 [`deploy/hermes/README.md`](deploy/hermes/README.md)。
 
 ## 12. 文档职责
 
@@ -441,6 +404,8 @@ hermes skills list
 - `AGENTS.md`：面向维护 Agent，说明代码边界、工具/Skill 映射、变更规则、配置、测试和部署运维。
 - `skills/*/SKILL.md`：面向执行分析任务的 Agent，说明何时使用、工作流、证据要求和工具顺序。
 - `skills/*/references/`：保存详细契约、方法和可按需加载的背景材料。
+- `deploy/hermes/README.md`：Hermes Agent 接入 runbook 与 hermes 服务器环境备忘（可选链路，不属于标准部署）。
+- `deploy/zhipu-coding-plan-mcp.md`：智谱 Coding Plan 官方 MCP（视觉/联网搜索/网页读取）在编码客户端侧的接入 runbook；属开发维护环境的客户端工具链参考，与 SDA 服务自身的能力无关。
 - `docs/`：保存仍对架构决策有价值的研究，不堆积已经失效的实施计划。
 
 如果同一内容在多处出现，以代码和测试为行为真相源，以 `AGENTS.md` 为维护流程真相源；更新时减少重复并修正所有指向关系。

@@ -12,3 +12,7 @@ dist/
 
 # VPN 转发器运行时密钥（ca.crt / ta.key / pass.txt，部署时手工放置）
 deploy/vpn/runtime/
+
+
+## 乱七八糟的东西
+.workspace/
