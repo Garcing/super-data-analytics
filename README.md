@@ -68,7 +68,7 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
-准备 `~/.super-data-analytics/config.json`，并设置服务 Bearer Token 后启动：
+准备 `config.json`（默认读取仓库根目录，也可用 `SDA_CONFIG_PATH` 指定；旧位置 `~/.super-data-analytics/` 仍向后兼容），并设置服务 Bearer Token 后启动：
 
 ```bash
 export SDA_MCP_TOKEN="replace-with-a-long-random-token"

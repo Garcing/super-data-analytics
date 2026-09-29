@@ -1,0 +1,9 @@
+# 密钥绝不进入构建上下文。Dockerfile 只 COPY pyproject.toml 与 sda_mcp/，
+# 此处兜底：即使根目录放有密钥文件，也不会被送进 Docker daemon（含服务器侧 .env）。
+config.json
+tencent-lighthouse.pem
+.env
+
+# 与镜像构建无关的大目录
+.git
+.venv

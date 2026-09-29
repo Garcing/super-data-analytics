@@ -139,7 +139,7 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 
 ## 7. 配置与凭证
 
-唯一业务配置来源是 `~/.super-data-analytics/config.json`，容器内由 `SDA_CONFIG_PATH` 指向只读挂载文件。服务鉴权 Token 单独通过 `SDA_MCP_TOKEN` 提供。
+本机配置真相源是仓库根目录 `config.json`（gitignore + dockerignore 双重排除，绝不提交）；`scripts/sync_server_config.py` 将其同步到服务器 `~/.super-data-analytics/config.json`，容器内由 `SDA_CONFIG_PATH` 指向只读挂载文件。`sda_mcp/config.py` 的解析顺序为 `SDA_CONFIG_PATH` → 仓库根目录 → 旧 home 路径回退。服务鉴权 Token 单独通过 `SDA_MCP_TOKEN` 提供。
 
 常用配置：
 
@@ -158,7 +158,8 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 
 - 禁止提交 `.env`、`config.json`、Bearer Token、API Key、Client Secret 或真实数据库密码。
 - 示例一律使用明显占位符，不要把临时测试密钥写进文档或测试 fixture。
-- `config.json` 通过只读卷挂载，不复制进 Docker 镜像。
+- 服务器登录密钥 `tencent-lighthouse.pem` 与 `config.json` 同放仓库根目录，由 `.gitignore` 排除出 Git、`.dockerignore` 排除出构建上下文；`hermes` SSH 别名由 `scripts/setup_workstation.py` 安装进 `~/.ssh/config`。
+- `config.json` 通过只读卷挂载，不复制进 Docker 镜像，也不进构建上下文。
 - Token 通过 `.env` 或运行环境注入；泄露后立即轮换并重建容器。
 
 ## 8. 本地开发与验证
@@ -190,7 +191,7 @@ python -m sda_mcp.server
 python -m pytest -q
 ```
 
-当前基线：221 passed、10 skipped。真实外部服务测试默认跳过；配置完备后设置 `SDA_INTEGRATION=1`。不要为了让 CI 通过而把真实服务测试改成隐式联网。
+当前基线：200 passed、7 skipped（共 207 项）。真实外部服务测试默认跳过；配置完备后设置 `SDA_INTEGRATION=1`。不要为了让 CI 通过而把真实服务测试改成隐式联网。
 
 提交前至少执行 `python -m pytest -q` 和 `git diff --check`，并确认：
 
@@ -199,6 +200,24 @@ python -m pytest -q
 - 相关 Skill 和 references 已同步。
 - 没有真实密钥、临时结果、虚拟环境或缓存进入暂存区。
 - 破坏性或付费工具的 annotations、说明和测试没有弱化。
+
+### 工作站接入（新维护机初始化）
+
+仓库不含任何凭证。换机或新维护机接入时先运行一次：
+
+```bash
+python scripts/setup_workstation.py
+```
+
+脚本幂等完成：迁移/校验仓库根目录 `config.json`（旧位置 `~/.super-data-analytics/` 自动搬移）、复制 `tencent-lighthouse.pem` 到仓库根目录、向 `~/.ssh/config` 写入带标记的受管 `Host hermes` 块，并做 `ssh -G` 生效配置校验与真实连通探测。
+
+| 前提 | 约定位置 | 说明 |
+|---|---|---|
+| `config.json` | 仓库根目录（gitignore + dockerignore） | 本机配置真相源；`sync_server_config.py --source` 默认指向此处 |
+| `tencent-lighthouse.pem` 与 `hermes` 别名 | 密钥在仓库根目录；别名在 `~/.ssh/config` | 部署、配置同步、VPN 验收等全部 runbook 命令依赖 `ssh hermes`；别名定义不能进仓库，由脚本安装 |
+| GitHub 推送凭证 | 凭证管理器或 `gh auth login` | 本机走 HTTPS 推送；SSH Deploy Key 仅服务器侧使用 |
+
+服务器路径（`~/.super-data-analytics/config.json`、`~/sda-mcp/.env`）是同步与部署目标，不随本机约定变化。Python 开发测试环境按本节上文安装。
 
 ## 9. 服务器部署
 

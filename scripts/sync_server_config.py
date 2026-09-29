@@ -52,7 +52,8 @@ def main() -> None:
     parser.add_argument(
         "--source",
         type=Path,
-        default=Path.home() / ".super-data-analytics" / "config.json",
+        default=Path(__file__).resolve().parent.parent / "config.json",
+        help="本机配置真相源，默认仓库根目录 config.json",
     )
     parser.add_argument("--dry-run", action="store_true", help="只做本地校验")
     args = parser.parse_args()
