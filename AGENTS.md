@@ -153,6 +153,16 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 | HTML 报告 | `BLOB_READ_WRITE_TOKEN`、`VERCEL_REPORTS_URL` |
 | 图片报告 | `VOLCENGINE_ARK_API_KEY`、`VOLCENGINE_ARK_BASE_URL`、`VOLCENGINE_ARK_IMAGE_MODEL` |
 | 语义图 | `graph-config.embedding`、`graph-config.entities`、`graph-config.relationships` |
+| 服务鉴权 | `SDA_MCP_TOKEN`（唯一静态 Bearer Token；生命周期见下节） |
+
+### 服务鉴权 Token（SDA_MCP_TOKEN）
+
+`docker-compose.yml` 在 `up` 时从 `~/sda-mcp/.env` 插值注入容器环境变量，`sda_mcp/tools/_common.py` 导入期据此挂 `StaticTokenVerifier`。部署循环（pull/build/recreate）与 `.env` 零接触，因此重新部署不需要、也不会改动 Token。
+
+- **生成**：`python -c "import secrets; print(secrets.token_urlsafe(32))"`，一次性手工动作。
+- **权威副本**：服务器 `~/sda-mcp/.env`（600 权限、gitignore、不进镜像）；各 MCP 客户端各自保存同一 Token。本机开发用 `export SDA_MCP_TOKEN=...`（§8），不运行服务则无需配置。
+- **轮换即吊销**：改 `.env` 后必须 `docker compose up -d --force-recreate`（`restart` 不重读 `.env`）；新容器生效的一刻旧 Token 立即失效，需同步更新全部客户端。泄露响应同此。
+- **缺失即裸奔（fail-open）**：环境变量为空时服务退化为无鉴权实例，而不是拒绝所有请求——部署验收的"无 Token → 401"防的就是这个失败模式，不可省略。
 
 安全规则：
 
@@ -160,7 +170,6 @@ sda_mcp/skills         确定性业务执行，不感知 MCP 客户端
 - 示例一律使用明显占位符，不要把临时测试密钥写进文档或测试 fixture。
 - 服务器登录密钥 `tencent-lighthouse.pem` 与 `config.json` 同放仓库根目录，由 `.gitignore` 排除出 Git、`.dockerignore` 排除出构建上下文；`hermes` SSH 别名由 `scripts/setup_workstation.py` 安装进 `~/.ssh/config`。
 - `config.json` 通过只读卷挂载，不复制进 Docker 镜像，也不进构建上下文。
-- Token 通过 `.env` 或运行环境注入；泄露后立即轮换并重建容器。
 
 ## 8. 本地开发与验证
 
@@ -407,7 +416,7 @@ docker compose up -d --build --force-recreate
 部署完成后的验收顺序：
 
 1. 容器处于 running，日志没有循环崩溃。
-2. 无 Token 请求返回 401。
+2. 无 Token 请求返回 401（防 `.env` 丢失后服务无鉴权裸跑，见 §7 fail-open 说明）。
 3. 合法客户端成功发现 18 个工具。
 4. `retrieve_schema`、只读查询或其他低风险代表性工具成功。
 5. 若修改语义检索，再运行受治理检索 gold case 或代表性真实问题。
