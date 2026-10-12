@@ -6,6 +6,13 @@ mcp.super-data-analytics.online {
 	# 如需双保险，可在此加 header_up / basic_auth，非必需
 }
 
+# SDA 测试环境（新项目语义层验证用）：mcp-test -> localhost:3101。
+# 与正式环境完全隔离：独立实例、独立 Neo4j（7688）、独立 token（服务器 ~/sda-test/.env）。
+# 容器编排不在本仓库（服务器 ~/sda-test/docker-compose.yml，Git 之外）；测试环境下线时整块删除。
+mcp-test.super-data-analytics.online {
+	reverse_proxy localhost:3101
+}
+
 # 以下站点与 Super Data Analytics MCP 项目功能无关，仅复用本机 Caddy。
 # 用途：为 Hermes Agent 的 hermes-studio 插件提供 HTTPS Dashboard 入口。
 # 上游项目：https://github.com/EKKOLearnAI/hermes-studio

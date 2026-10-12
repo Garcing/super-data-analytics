@@ -313,6 +313,8 @@ sudo cp ~/sda-mcp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl restart caddy
 
 证书由 Let's Encrypt 自动签发（80 空闲走 http-01，否则 TLS-ALPN-01 用 443）。验收：本机无 Token POST `https://mcp.super-data-analytics.online/mcp` 返回 401，`python scripts/mcp_debug.py list` 返回 18 个工具。完成后必须在云控制台关闭 3100 入站规则，公网只留 22/80/443。
 
+`Caddyfile` 另反代一个 SDA 测试站点：`mcp-test.super-data-analytics.online` → `localhost:3101`（测试环境与新项目语义层验证，独立 token；容器编排文件在服务器 `~/sda-test/`，刻意不进本仓库 Git）。测试环境下线时删除该站点块并重载 Caddy。
+
 仓库 `Caddyfile` 还保留一个明确标注的非 SDA 站点：`hermes.super-data-analytics.online` 反向代理到宿主机 `127.0.0.1:8648`，供 [hermes-studio](https://github.com/EKKOLearnAI/hermes-studio) Dashboard 使用。它只是复用同一 Caddy，不属于本项目能力或标准部署链路；维护 SDA 代理时不要误删。Hermes Studio 的 8648 只应作为本机上游，云防火墙不得开放该端口，或应将进程 `BIND_HOST` 设为 `127.0.0.1`；公网仅通过 Caddy 的 443 访问。
 
 
