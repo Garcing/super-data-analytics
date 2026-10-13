@@ -75,6 +75,18 @@ cd ~/sda-test && docker compose -p sda-test up -d --force-recreate sda-mcp-test
 - 新增占用约 550MB，几乎全部是 volume `sda-test_neo4j-test-data`（Neo4j 全新 volume 的系统库 + 事务日志基线 ~540MB，图数据本身很小）。
 - 镜像零新增（与生产共享）。回收：`docker compose -p sda-test down -v`。
 
+## 内存与运行策略（2026-10-13 事故后强制）
+
+**事故复盘**：测试栈常驻 + 生产 `sda-mcp` 的 python 进程连续数周运行后从 ~280MB 滞涨至 1.4GB（fastembed/onnx 内存滞留），在仅 3.7GB 内存 + 2GB swap 的机器上耗尽内存，整机 thrash 冻结（load ~100，SSH banner 超时），OOM 杀生产 python 后 `restart` 策略反复拉起形成风暴，生产 MCP 不可用约 30 分钟。停掉测试栈后恢复。
+
+规则：
+
+- **测试栈默认不常驻**：验证时 `docker compose -p sda-test up -d`，用完 `docker compose -p sda-test stop`（volume 保留，数据不丢）。
+- 容器内存上限已写入服务器 compose：`sda-mcp-test` `mem_limit: 640m`、`sda-neo4j-test` `mem_limit: 768m`（JVM 堆 256m + 页缓存 128m + 开销）。上限是兜底不是许可，仍按需启停。
+- 拉起测试栈前先看 `free -m`：available < 1.5GB 时不要拉。生产 MCP python 的滞涨随运行时长增长，生产容器已运行数周时尤其小心。
+- 想双环境同时常驻，先升配（≥8G 内存）再谈。
+
+
 ## 下线流程
 
 1. 仓库：删 `Caddyfile` 的 `mcp-test` 站点块、本文件、AGENTS.md 相应段落，commit/push；服务器 `git pull --ff-only` 后 `sudo cp Caddyfile /etc/caddy/Caddyfile && sudo systemctl restart caddy`。
