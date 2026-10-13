@@ -19,7 +19,7 @@
 | 文件 | 用途 |
 |---|---|
 | `.env`（600） | `SDA_MCP_TOKEN`（测试独立 token，与生产不同）+ `NEO4J_AUTH` |
-| `config-test.json`（600） | 生产 `config.json` 副本，当前仅改 `env.NEO4J_URI=bolt://127.0.0.1:7688`；bitable 仍为生产同款（冒烟用） |
+| `config-test.json`（600） | 生产 `config.json` 副本，仅改 `env.NEO4J_URI=bolt://127.0.0.1:7688`；2026-10-13 起已切到新项目 base（指标 58 / 维度 57） |
 | `docker-compose.yml` | 两个测试容器；只引用镜像名，**绝不 build** |
 
 本机工作站的测试 token 存 `~/.sda_mcp_token_test.txt`（与生产 `~/.sda_mcp_token.txt` 同款约定）。
@@ -85,7 +85,6 @@ cd ~/sda-test && docker compose -p sda-test up -d --force-recreate sda-mcp-test
 - 容器内存上限已写入服务器 compose：`sda-mcp-test` `mem_limit: 640m`、`sda-neo4j-test` `mem_limit: 768m`（JVM 堆 256m + 页缓存 128m + 开销）。上限是兜底不是许可，仍按需启停。
 - 拉起测试栈前先看 `free -m`：available < 1.5GB 时不要拉。生产 MCP python 的滞涨随运行时长增长，生产容器已运行数周时尤其小心。
 - 想双环境同时常驻，先升配（≥8G 内存）再谈。
-
 
 ## 下线流程
 
